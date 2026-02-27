@@ -10,12 +10,19 @@ import requests
 from fastmcp import FastMCP
 from pydantic import Field
 
-from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER
+from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER, PROVIDERS
 from cli_agent_orchestrator.mcp_server.models import HandoffResult
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.terminal import generate_session_name, wait_until_terminal_status
 
 logger = logging.getLogger(__name__)
+
+REQUEST_TIMEOUT_SECONDS = 15
+REQUEST_RETRY_ATTEMPTS = 3
+REQUEST_RETRY_BACKOFF_SECONDS = 0.5
+PROVIDER_READY_TIMEOUT_SECONDS = 120.0
+PROVIDER_READY_STATUSES = {TerminalStatus.IDLE, TerminalStatus.COMPLETED}
 
 # Environment variable to enable/disable working_directory parameter
 ENABLE_WORKING_DIRECTORY = os.getenv("CAO_ENABLE_WORKING_DIRECTORY", "false").lower() == "true"
@@ -37,14 +44,38 @@ mcp = FastMCP(
 )
 
 
+def _request_with_retry(method: str, url: str, **kwargs: Any) -> requests.Response:
+    """Send HTTP request with simple retry for transient connection errors."""
+    timeout = kwargs.pop("timeout", REQUEST_TIMEOUT_SECONDS)
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
+        try:
+            response = requests.request(method=method, url=url, timeout=timeout, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as exc:
+            last_error = exc
+            if attempt == REQUEST_RETRY_ATTEMPTS:
+                break
+            time.sleep(REQUEST_RETRY_BACKOFF_SECONDS * attempt)
+
+    if last_error is None:
+        raise RuntimeError("Request failed without exception details")
+    raise last_error
+
+
 def _create_terminal(
-    agent_profile: str, working_directory: Optional[str] = None
+    agent_profile: str,
+    working_directory: Optional[str] = None,
+    provider: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Create a new terminal with the specified agent profile.
 
     Args:
         agent_profile: Agent profile for the terminal
         working_directory: Optional working directory for the terminal
+        provider: Optional provider override
 
     Returns:
         Tuple of (terminal_id, provider)
@@ -52,62 +83,88 @@ def _create_terminal(
     Raises:
         Exception: If terminal creation fails
     """
-    provider = DEFAULT_PROVIDER
+    inherited_provider = DEFAULT_PROVIDER
+    resolved_provider = provider
+
+    if resolved_provider and resolved_provider not in PROVIDERS:
+        raise ValueError(
+            f"Invalid provider '{resolved_provider}'. Available providers: {', '.join(PROVIDERS)}"
+        )
 
     # Get current terminal ID from environment
     current_terminal_id = os.environ.get("CAO_TERMINAL_ID")
     if current_terminal_id:
         # Get terminal metadata via API
-        response = requests.get(f"{API_BASE_URL}/terminals/{current_terminal_id}")
-        response.raise_for_status()
+        response = _request_with_retry("GET", f"{API_BASE_URL}/terminals/{current_terminal_id}")
         terminal_metadata = response.json()
 
-        provider = terminal_metadata["provider"]
+        inherited_provider = terminal_metadata["provider"]
         session_name = terminal_metadata["session_name"]
 
         # If no working_directory specified, get conductor's current directory
         if working_directory is None:
             try:
-                response = requests.get(
-                    f"{API_BASE_URL}/terminals/{current_terminal_id}/working-directory"
+                response = _request_with_retry(
+                    "GET",
+                    f"{API_BASE_URL}/terminals/{current_terminal_id}/working-directory",
                 )
-                if response.status_code == 200:
-                    working_directory = response.json().get("working_directory")
-                    logger.info(f"Inherited working directory from conductor: {working_directory}")
-                else:
-                    logger.warning(
-                        f"Failed to get conductor's working directory (status {response.status_code}), "
-                        "will use server default"
-                    )
+                working_directory = response.json().get("working_directory")
+                logger.info(f"Inherited working directory from conductor: {working_directory}")
             except Exception as e:
                 logger.warning(
                     f"Error fetching conductor's working directory: {e}, will use server default"
                 )
 
+        if resolved_provider is None:
+            try:
+                profile = load_agent_profile(agent_profile)
+                if profile.provider is not None:
+                    resolved_provider = profile.provider.value
+            except Exception:
+                pass
+
+        if resolved_provider is None:
+            resolved_provider = inherited_provider
+
         # Create new terminal in existing session - always pass working_directory
-        params = {"provider": provider, "agent_profile": agent_profile}
+        params = {"provider": resolved_provider, "agent_profile": agent_profile}
         if working_directory:
             params["working_directory"] = working_directory
 
-        response = requests.post(f"{API_BASE_URL}/sessions/{session_name}/terminals", params=params)
-        response.raise_for_status()
+        response = _request_with_retry(
+            "POST",
+            f"{API_BASE_URL}/sessions/{session_name}/terminals",
+            params=params,
+        )
         terminal = response.json()
     else:
         # Create new session with terminal
         session_name = generate_session_name()
+        if resolved_provider is None:
+            try:
+                profile = load_agent_profile(agent_profile)
+                if profile.provider is not None:
+                    resolved_provider = profile.provider.value
+            except Exception:
+                pass
+        if resolved_provider is None:
+            resolved_provider = DEFAULT_PROVIDER
+
         params = {
-            "provider": provider,
+            "provider": resolved_provider,
             "agent_profile": agent_profile,
             "session_name": session_name,
         }
         if working_directory:
             params["working_directory"] = working_directory
 
-        response = requests.post(f"{API_BASE_URL}/sessions", params=params)
-        response.raise_for_status()
+        response = _request_with_retry("POST", f"{API_BASE_URL}/sessions", params=params)
         terminal = response.json()
 
-    return terminal["id"], provider
+    if resolved_provider is None:
+        resolved_provider = DEFAULT_PROVIDER
+
+    return terminal["id"], resolved_provider
 
 
 def _send_direct_input(terminal_id: str, message: str) -> None:
@@ -120,10 +177,9 @@ def _send_direct_input(terminal_id: str, message: str) -> None:
     Raises:
         Exception: If sending fails
     """
-    response = requests.post(
-        f"{API_BASE_URL}/terminals/{terminal_id}/input", params={"message": message}
+    _request_with_retry(
+        "POST", f"{API_BASE_URL}/terminals/{terminal_id}/input", params={"message": message}
     )
-    response.raise_for_status()
 
 
 def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
@@ -144,24 +200,30 @@ def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
     if not sender_id:
         raise ValueError("CAO_TERMINAL_ID not set - cannot determine sender")
 
-    response = requests.post(
+    response = _request_with_retry(
+        "POST",
         f"{API_BASE_URL}/terminals/{receiver_id}/inbox/messages",
         params={"sender_id": sender_id, "message": message},
     )
-    response.raise_for_status()
     return response.json()
 
 
 # Implementation functions
 async def _handoff_impl(
-    agent_profile: str, message: str, timeout: int = 600, working_directory: Optional[str] = None
+    agent_profile: str,
+    message: str,
+    timeout: int = 600,
+    working_directory: Optional[str] = None,
+    provider: Optional[str] = None,
 ) -> HandoffResult:
     """Implementation of handoff logic."""
     start_time = time.time()
 
     try:
         # Create terminal
-        terminal_id, provider = _create_terminal(agent_profile, working_directory)
+        terminal_id, provider = _create_terminal(
+            agent_profile, working_directory=working_directory, provider=provider
+        )
 
         # Wait for terminal to be ready (IDLE or COMPLETED) before sending
         # the handoff message. Accept COMPLETED in addition to IDLE because
@@ -178,12 +240,15 @@ async def _handoff_impl(
         # Provider initialization can be slow (~15-45s depending on provider).
         if not wait_until_terminal_status(
             terminal_id,
-            {TerminalStatus.IDLE, TerminalStatus.COMPLETED},
-            timeout=120.0,
+            PROVIDER_READY_STATUSES,
+            timeout=PROVIDER_READY_TIMEOUT_SECONDS,
         ):
             return HandoffResult(
                 success=False,
-                message=f"Terminal {terminal_id} did not reach ready status within 120 seconds",
+                message=(
+                    f"Terminal {terminal_id} did not reach ready status within "
+                    f"{int(PROVIDER_READY_TIMEOUT_SECONDS)} seconds"
+                ),
                 output=None,
                 terminal_id=terminal_id,
             )
@@ -225,16 +290,14 @@ async def _handoff_impl(
             )
 
         # Get the response
-        response = requests.get(
-            f"{API_BASE_URL}/terminals/{terminal_id}/output", params={"mode": "last"}
+        response = _request_with_retry(
+            "GET", f"{API_BASE_URL}/terminals/{terminal_id}/output", params={"mode": "last"}
         )
-        response.raise_for_status()
         output_data = response.json()
         output = output_data["output"]
 
         # Send provider-specific exit command to cleanup terminal
-        response = requests.post(f"{API_BASE_URL}/terminals/{terminal_id}/exit")
-        response.raise_for_status()
+        _request_with_retry("POST", f"{API_BASE_URL}/terminals/{terminal_id}/exit")
 
         execution_time = time.time() - start_time
 
@@ -255,7 +318,7 @@ async def _handoff_impl(
 if ENABLE_WORKING_DIRECTORY:
 
     @mcp.tool()
-    async def handoff(
+    async def handoff(  # type: ignore[misc]
         agent_profile: str = Field(
             description='The agent profile to hand off to (e.g., "developer", "analyst")'
         ),
@@ -265,6 +328,10 @@ if ENABLE_WORKING_DIRECTORY:
             description="Maximum time to wait for the agent to complete the task (in seconds)",
             ge=1,
             le=3600,
+        ),
+        provider: Optional[str] = Field(
+            default=None,
+            description="Optional provider override for the target agent terminal",
         ),
         working_directory: Optional[str] = Field(
             default=None,
@@ -303,17 +370,24 @@ if ENABLE_WORKING_DIRECTORY:
             agent_profile: The agent profile for the new terminal
             message: The task/message to send
             timeout: Maximum wait time in seconds
+            provider: Optional provider override
             working_directory: Optional directory path where agent should execute
 
         Returns:
             HandoffResult with success status, message, and agent output
         """
-        return await _handoff_impl(agent_profile, message, timeout, working_directory)
+        return await _handoff_impl(
+            agent_profile,
+            message,
+            timeout,
+            working_directory=working_directory,
+            provider=provider,
+        )
 
 else:
 
     @mcp.tool()
-    async def handoff(
+    async def handoff(  # type: ignore[misc]
         agent_profile: str = Field(
             description='The agent profile to hand off to (e.g., "developer", "analyst")'
         ),
@@ -323,6 +397,10 @@ else:
             description="Maximum time to wait for the agent to complete the task (in seconds)",
             ge=1,
             le=3600,
+        ),
+        provider: Optional[str] = Field(
+            default=None,
+            description="Optional provider override for the target agent terminal",
         ),
     ) -> HandoffResult:
         """Hand off a task to another agent via CAO terminal and wait for completion.
@@ -349,21 +427,43 @@ else:
             agent_profile: The agent profile for the new terminal
             message: The task/message to send
             timeout: Maximum wait time in seconds
+            provider: Optional provider override
 
         Returns:
             HandoffResult with success status, message, and agent output
         """
-        return await _handoff_impl(agent_profile, message, timeout, None)
+        return await _handoff_impl(
+            agent_profile, message, timeout, working_directory=None, provider=provider
+        )
 
 
 # Implementation function for assign
 def _assign_impl(
-    agent_profile: str, message: str, working_directory: Optional[str] = None
+    agent_profile: str,
+    message: str,
+    working_directory: Optional[str] = None,
+    provider: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Implementation of assign logic."""
     try:
         # Create terminal
-        terminal_id, _ = _create_terminal(agent_profile, working_directory)
+        terminal_id, resolved_provider = _create_terminal(
+            agent_profile, working_directory=working_directory, provider=provider
+        )
+
+        if not wait_until_terminal_status(
+            terminal_id,
+            PROVIDER_READY_STATUSES,
+            timeout=PROVIDER_READY_TIMEOUT_SECONDS,
+        ):
+            return {
+                "success": False,
+                "terminal_id": terminal_id,
+                "message": (
+                    f"Assignment failed: terminal {terminal_id} did not become ready within "
+                    f"{int(PROVIDER_READY_TIMEOUT_SECONDS)} seconds"
+                ),
+            }
 
         # Send message immediately
         _send_direct_input(terminal_id, message)
@@ -371,7 +471,10 @@ def _assign_impl(
         return {
             "success": True,
             "terminal_id": terminal_id,
-            "message": f"Task assigned to {agent_profile} (terminal: {terminal_id})",
+            "message": (
+                f"Task assigned to {agent_profile} ({resolved_provider}) "
+                f"(terminal: {terminal_id})"
+            ),
         }
 
     except Exception as e:
@@ -382,12 +485,16 @@ def _assign_impl(
 if ENABLE_WORKING_DIRECTORY:
 
     @mcp.tool()
-    async def assign(
+    async def assign(  # type: ignore[misc]
         agent_profile: str = Field(
             description='The agent profile for the worker agent (e.g., "developer", "analyst")'
         ),
         message: str = Field(
             description="The task message to send. Include callback instructions for the worker to send results back."
+        ),
+        provider: Optional[str] = Field(
+            default=None,
+            description="Optional provider override for the worker terminal",
         ),
         working_directory: Optional[str] = Field(
             default=None, description="Optional working directory where the agent should execute"
@@ -409,22 +516,29 @@ if ENABLE_WORKING_DIRECTORY:
         Args:
             agent_profile: Agent profile for the worker terminal
             message: Task message (include callback instructions)
+            provider: Optional provider override
             working_directory: Optional directory path where agent should execute
 
         Returns:
             Dict with success status, worker terminal_id, and message
         """
-        return _assign_impl(agent_profile, message, working_directory)
+        return _assign_impl(
+            agent_profile, message, working_directory=working_directory, provider=provider
+        )
 
 else:
 
     @mcp.tool()
-    async def assign(
+    async def assign(  # type: ignore[misc]
         agent_profile: str = Field(
             description='The agent profile for the worker agent (e.g., "developer", "analyst")'
         ),
         message: str = Field(
             description="The task message to send. Include callback instructions for the worker to send results back."
+        ),
+        provider: Optional[str] = Field(
+            default=None,
+            description="Optional provider override for the worker terminal",
         ),
     ) -> Dict[str, Any]:
         """Assigns a task to another agent without blocking.
@@ -437,11 +551,12 @@ else:
         Args:
             agent_profile: Agent profile for the worker terminal
             message: Task message (include callback instructions)
+            provider: Optional provider override
 
         Returns:
             Dict with success status, worker terminal_id, and message
         """
-        return _assign_impl(agent_profile, message, None)
+        return _assign_impl(agent_profile, message, working_directory=None, provider=provider)
 
 
 @mcp.tool()
