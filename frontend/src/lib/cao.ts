@@ -149,6 +149,7 @@ export interface ConsoleTaskScheduledItem {
 
 export interface ConsoleTaskTeam {
   leader: ConsoleAgent;
+  team_alias?: string;
   members: ConsoleAgent[];
   instant_tasks: ConsoleTaskInstantItem[];
   scheduled_tasks: ConsoleTaskScheduledItem[];

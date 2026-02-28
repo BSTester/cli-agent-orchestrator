@@ -17,13 +17,14 @@ import {
   StatusPill,
 } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
-import { caoRequest, ConsoleAgent, ConsoleOrganization } from "@/lib/cao";
+import { caoRequest, ConsoleAgent, ConsoleOrganization, ConsoleTasksResponse } from "@/lib/cao";
 import { isStatusActive, toStatusLabel } from "@/lib/status";
 
 export default function AgentsPage() {
   const [organization, setOrganization] = useState<ConsoleOrganization | null>(null);
   const [error, setError] = useState("");
   const [activeAgent, setActiveAgent] = useState<ConsoleAgent | null>(null);
+  const [taskTitleByAgent, setTaskTitleByAgent] = useState<Record<string, string>>({});
 
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -31,12 +32,34 @@ export default function AgentsPage() {
   const wsRef = useRef<WebSocket | null>(null);
 
   const loadOrganization = useCallback(async () => {
-    const result = await caoRequest<ConsoleOrganization>("GET", "/console/organization");
-    if (!result.ok) {
+    const [organizationResult, tasksResult] = await Promise.all([
+      caoRequest<ConsoleOrganization>("GET", "/console/organization"),
+      caoRequest<ConsoleTasksResponse>("GET", "/console/tasks"),
+    ]);
+
+    if (!organizationResult.ok) {
       setError("获取团队结构失败");
       return;
     }
-    setOrganization(result.data);
+
+    setOrganization(organizationResult.data);
+
+    if (tasksResult.ok) {
+      const nextTaskMap: Record<string, string> = {};
+      for (const team of tasksResult.data.teams || []) {
+        for (const instantTask of team.instant_tasks || []) {
+          const terminalId = String(instantTask.terminal_id || "").trim();
+          const taskTitle = String(instantTask.task_title || "").trim();
+          if (terminalId && taskTitle) {
+            nextTaskMap[terminalId] = taskTitle;
+          }
+        }
+      }
+      setTaskTitleByAgent(nextTaskMap);
+    } else {
+      setTaskTitleByAgent({});
+    }
+
     setError("");
   }, []);
 
@@ -218,6 +241,7 @@ export default function AgentsPage() {
         return null;
       };
       let isComposing = false;
+      let imeEchoSuppression = "";
       const resizeObserver = new ResizeObserver(() => {
         fitAddon.fit();
         emitResize();
@@ -232,7 +256,10 @@ export default function AgentsPage() {
       };
       const handleCompositionEnd = (event: CompositionEvent) => {
         isComposing = false;
-        sendInput(event.data);
+        if (event.data) {
+          imeEchoSuppression += event.data;
+          sendInput(event.data);
+        }
       };
       helperTextarea?.addEventListener("compositionstart", handleCompositionStart);
       helperTextarea?.addEventListener("compositionend", handleCompositionEnd);
@@ -272,9 +299,29 @@ export default function AgentsPage() {
       });
 
       const disposeData = term.onData((data) => {
-        if (!isComposing) {
-          sendInput(data);
+        if (isComposing) {
+          return;
         }
+
+        if (imeEchoSuppression) {
+          if (imeEchoSuppression.startsWith(data)) {
+            imeEchoSuppression = imeEchoSuppression.slice(data.length);
+            return;
+          }
+
+          if (data.startsWith(imeEchoSuppression)) {
+            const remaining = data.slice(imeEchoSuppression.length);
+            imeEchoSuppression = "";
+            if (remaining) {
+              sendInput(remaining);
+            }
+            return;
+          }
+
+          imeEchoSuppression = "";
+        }
+
+        sendInput(data);
       });
 
       const previousCleanup = () => {
@@ -383,6 +430,21 @@ export default function AgentsPage() {
                       active={isStatusActive(group.leader.status)}
                     />
                   </div>
+                  {taskTitleByAgent[group.leader.id] && (
+                    <div
+                      title={taskTitleByAgent[group.leader.id]}
+                      style={{
+                        color: "var(--text-dim)",
+                        fontSize: 12,
+                        marginTop: 6,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      当前任务：{taskTitleByAgent[group.leader.id]}
+                    </div>
+                  )}
                 </div>
 
                 {memberProfileGroups.length === 0 ? (
@@ -433,6 +495,21 @@ export default function AgentsPage() {
                                   active={isStatusActive(member.status)}
                                 />
                               </div>
+                              {taskTitleByAgent[member.id] && (
+                                <div
+                                  title={taskTitleByAgent[member.id]}
+                                  style={{
+                                    color: "var(--text-dim)",
+                                    fontSize: 12,
+                                    marginTop: 6,
+                                    whiteSpace: "nowrap",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                  }}
+                                >
+                                  当前任务：{taskTitleByAgent[member.id]}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>

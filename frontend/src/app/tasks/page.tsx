@@ -278,7 +278,7 @@ Share one interesting world trivia for today.
           teams.map((team) => (
             <SectionCard key={team.leader.id}>
               <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>
-                团队：{team.leader.session_name || team.leader.id}
+                团队：{team.team_alias || team.leader.session_name || team.leader.id}
               </div>
               <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
                 <StatusPill text={`即时 ${team.instant_tasks.length}`} active={team.instant_tasks.length > 0} />
@@ -313,7 +313,18 @@ Share one interesting world trivia for today.
                         }}
                       >
                         {task.task_title ? (
-                          <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{task.task_title}</div>
+                          <div
+                            title={task.task_title}
+                            style={{
+                              color: "var(--text-bright)",
+                              fontWeight: 700,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            当前任务：{task.task_title}
+                          </div>
                         ) : null}
                         <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 4 }}>
                           {task.agent_profile || "unknown"} · {task.terminal_id}

@@ -1140,6 +1140,7 @@ async def console_tasks() -> Dict[str, Any]:
             teams.append(
                 {
                     "leader": leader,
+                    "team_alias": group.get("team_alias"),
                     "members": members,
                     "instant_tasks": instant_tasks,
                     "scheduled_tasks": team_scheduled_tasks,

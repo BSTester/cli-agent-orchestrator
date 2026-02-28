@@ -15,6 +15,7 @@ function BarChartCard({
   title: string;
   rows: Array<{ label: string; value: number }>;
 }) {
+  const barTrackHeight = 160;
   const sortedRows = [...rows].sort((a, b) => b.value - a.value);
   const total = sortedRows.reduce((sum, row) => sum + row.value, 0);
   const palette = [
@@ -63,7 +64,7 @@ function BarChartCard({
           >
           {sortedRows.map((row, index) => {
             const percent = total > 0 ? Math.round((row.value / total) * 100) : 0;
-            const barHeight = maxValue > 0 ? Math.max(8, (row.value / maxValue) * 150) : 8;
+            const barHeight = maxValue > 0 ? (row.value / maxValue) * barTrackHeight : 0;
             return (
               <div
                 key={row.label}
@@ -87,7 +88,7 @@ function BarChartCard({
                   title={`${row.label}: ${row.value} (${percent}%)`}
                   style={{
                     width: 26,
-                    height: 160,
+                    height: barTrackHeight,
                     display: "flex",
                     alignItems: "flex-end",
                     background: "var(--surface)",
@@ -100,7 +101,7 @@ function BarChartCard({
                     style={{
                       width: "100%",
                       height: barHeight,
-                      opacity: row.value === 0 ? 0.4 : 1,
+                      opacity: 1,
                       background: palette[index % palette.length],
                     }}
                   />
@@ -182,6 +183,22 @@ export default function DashboardPage() {
   const providerRows = Object.entries(overview?.provider_counts || {});
   const statusRows = Object.entries(overview?.status_counts || {});
   const mainAgents: ConsoleAgent[] = useMemo(() => overview?.main_agents || [], [overview?.main_agents]);
+  const teamNameByLeaderId = useMemo(() => {
+    const teams = tasksOverview?.teams || [];
+    const mapping = new Map<string, string>();
+    teams.forEach((team) => {
+      const leaderId = String(team.leader?.id || "").trim();
+      if (!leaderId) {
+        return;
+      }
+      const teamName =
+        (team.team_alias || "").trim() ||
+        (team.leader?.session_name || "").trim() ||
+        leaderId;
+      mapping.set(leaderId, teamName);
+    });
+    return mapping;
+  }, [tasksOverview?.teams]);
 
   const leaderTaskRows = useMemo(() => {
     const teams = tasksOverview?.teams || [];
@@ -192,10 +209,14 @@ export default function DashboardPage() {
     });
 
     return mainAgents.map((leader) => ({
-      label: leader.alias || leader.session_name || leader.id,
+      label:
+        teamNameByLeaderId.get(leader.id) ||
+        leader.alias ||
+        leader.session_name ||
+        leader.id,
       value: taskMap.get(leader.id) || 0,
     }));
-  }, [mainAgents, tasksOverview?.teams]);
+  }, [mainAgents, tasksOverview?.teams, teamNameByLeaderId]);
 
   return (
     <RequireAuth>
@@ -234,8 +255,9 @@ export default function DashboardPage() {
         </CardGrid>
 
         <SectionCard>
-          <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队负责人看板</div>
-          <BarChartCard title="负责人团队任务数" rows={leaderTaskRows} />
+          <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队看板</div>
+          <BarChartCard title="团队任务数" rows={leaderTaskRows} />
+          <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队负责人列表</div>
           {mainAgents.length === 0 ? (
             <EmptyState text="当前没有在营团队" />
           ) : (
@@ -252,7 +274,7 @@ export default function DashboardPage() {
               >
                 <div style={{ color: "var(--text-bright)", fontFamily: "var(--mono)", fontSize: 12 }}>{agent.id}</div>
                 <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                  会话标题：{agent.session_name || "-"} · {agent.agent_profile} · {agent.provider} · {toStatusLabel(agent.status)}
+                  所属团队：{teamNameByLeaderId.get(agent.id) || agent.session_name || agent.id} · 会话标题：{agent.session_name || "-"} · {agent.agent_profile} · {agent.provider} · {toStatusLabel(agent.status)}
                 </div>
               </div>
             ))

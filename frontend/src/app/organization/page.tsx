@@ -525,6 +525,8 @@ export default function OrganizationPage() {
                     </option>
                   ))}
                 </SelectInput>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
                 <SelectInput
                   value={workerLeaderId}
                   onChange={(e) => setWorkerLeaderId(e.target.value)}
@@ -532,12 +534,10 @@ export default function OrganizationPage() {
                   <option value="">不分配团队（独立团队编制）</option>
                   {leaders.map((leader: ConsoleAgent) => (
                     <option key={leader.id} value={leader.id}>
-                      {leader.id} · {leader.agent_profile}
+                      {(groupAliases.get(leader.id) || leader.id)} · {leader.agent_profile}
                     </option>
                   ))}
                 </SelectInput>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
                 <TextInput
                   value={workerAlias}
                   onChange={(e) => setWorkerAlias(e.target.value)}
