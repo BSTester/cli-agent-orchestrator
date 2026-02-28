@@ -438,3 +438,122 @@ def test_proxy_delete_request(client: TestClient) -> None:
 
         assert response.status_code == 204
         mock_request.assert_called_once()
+
+
+def test_console_tasks_success(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._get_terminals_from_sessions", return_value=[]),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._build_organization",
+            return_value={
+                "leaders": [],
+                "workers": [],
+                "leader_groups": [
+                    {
+                        "leader": {"id": "leader1", "agent_profile": "code_supervisor"},
+                        "members": [
+                            {
+                                "id": "worker1",
+                                "agent_profile": "developer",
+                                "status": "PROCESSING",
+                                "session_name": "cao-a",
+                            }
+                        ],
+                    }
+                ],
+                "unassigned_workers": [],
+            },
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._list_flow_team_links", return_value={"flowA": "leader1"}),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+    ):
+        mock_request_cao.return_value = MagicMock()
+        mock_json.return_value = [
+            {
+                "name": "flowA",
+                "file_path": "examples/flow/morning-trivia.md",
+                "schedule": "*/5 * * * *",
+                "agent_profile": "developer",
+                "provider": "kiro_cli",
+                "enabled": True,
+                "last_run": None,
+                "next_run": None,
+            }
+        ]
+
+        response = client.get("/console/tasks")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["teams"]) == 1
+        assert body["teams"][0]["leader"]["id"] == "leader1"
+        assert len(body["teams"][0]["scheduled_tasks"]) == 1
+        assert body["teams"][0]["scheduled_tasks"][0]["name"] == "flowA"
+
+
+def test_console_create_scheduled_task_success(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch("cli_agent_orchestrator.control_panel.main._set_flow_team_link") as mock_set_link,
+    ):
+        mock_request_cao.return_value = MagicMock()
+        mock_json.return_value = {
+            "name": "flowA",
+            "file_path": "examples/flow/morning-trivia.md",
+            "schedule": "*/5 * * * *",
+            "agent_profile": "developer",
+            "provider": "kiro_cli",
+            "enabled": True,
+        }
+
+        response = client.post(
+            "/console/tasks/scheduled",
+            json={"file_path": "examples/flow/morning-trivia.md", "leader_id": "leader1"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["flow"]["name"] == "flowA"
+        mock_set_link.assert_called_once_with("flowA", "leader1")
+
+
+def test_console_run_enable_disable_scheduled_task_success(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text", return_value={"success": True}),
+    ):
+        mock_request_cao.return_value = MagicMock()
+
+        run_resp = client.post("/console/tasks/scheduled/flowA/run")
+        enable_resp = client.post("/console/tasks/scheduled/flowA/enable")
+        disable_resp = client.post("/console/tasks/scheduled/flowA/disable")
+
+        assert run_resp.status_code == 200
+        assert enable_resp.status_code == 200
+        assert disable_resp.status_code == 200
+
+
+def test_console_delete_scheduled_task_success(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text", return_value={"success": True}),
+        patch("cli_agent_orchestrator.control_panel.main._remove_flow_team_link") as mock_remove_link,
+    ):
+        mock_request_cao.return_value = MagicMock()
+
+        response = client.delete("/console/tasks/scheduled/flowA")
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        mock_remove_link.assert_called_once_with("flowA")
