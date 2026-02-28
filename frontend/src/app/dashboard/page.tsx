@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import ConsoleNav from "@/components/ConsoleNav";
 import { CardGrid, EmptyState, ErrorBanner, PageIntro, PageShell, SectionCard, SectionTitle, StatCard } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
-import { caoRequest, ConsoleAgent, ConsoleOverview } from "@/lib/cao";
+import { caoRequest, ConsoleAgent, ConsoleOverview, ConsoleTasksResponse } from "@/lib/cao";
 import { toStatusLabel } from "@/lib/status";
 
 function BarChartCard({
@@ -28,6 +28,7 @@ function BarChartCard({
   ];
 
   const normalizedRows = rows.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
+  const maxValue = normalizedRows.reduce((max, row) => Math.max(max, row.value), 0);
 
   return (
     <div
@@ -42,49 +43,83 @@ function BarChartCard({
       {normalizedRows.length === 0 ? (
         <EmptyState text="暂无数据" />
       ) : (
-        <div style={{ display: "grid", gap: 10 }}>
+        <div
+          style={{
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            background: "var(--surface2)",
+            padding: "10px 8px 8px",
+            overflowX: "auto",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-end",
+              gap: 10,
+              minHeight: 210,
+              minWidth: Math.max(280, normalizedRows.length * 70),
+            }}
+          >
           {normalizedRows.map((row, index) => {
             const percent = total > 0 ? Math.round((row.value / total) * 100) : 0;
-            const barWidth = total > 0 ? Math.max(4, (row.value / total) * 100) : 0;
+            const barHeight = maxValue > 0 ? Math.max(8, (row.value / maxValue) * 150) : 0;
             return (
-              <div key={row.label}>
+              <div
+                key={row.label}
+                style={{
+                  width: 60,
+                  display: "grid",
+                  justifyItems: "center",
+                  gap: 6,
+                }}
+              >
                 <div
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    marginBottom: 6,
-                    gap: 8,
-                    alignItems: "center",
+                    color: "var(--text-dim)",
+                    fontSize: 11,
+                    textAlign: "center",
                   }}
                 >
-                  <span style={{ color: "var(--text)", fontSize: 13 }}>{row.label}</span>
-                  <span style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                    {row.value} ({percent}%)
-                  </span>
+                  {row.value}
                 </div>
                 <div
+                  title={`${row.label}: ${row.value} (${percent}%)`}
                   style={{
-                    width: "100%",
-                    height: 10,
-                    borderRadius: 999,
-                    background: "var(--surface2)",
+                    width: 26,
+                    height: 160,
+                    display: "flex",
+                    alignItems: "flex-end",
+                    background: "var(--surface)",
                     border: "1px solid var(--border)",
+                    borderRadius: 8,
                     overflow: "hidden",
                   }}
                 >
                   <div
-                    title={`${row.label}: ${row.value} (${percent}%)`}
                     style={{
-                      width: `${barWidth}%`,
-                      minWidth: 4,
-                      height: "100%",
+                      width: "100%",
+                      height: barHeight,
                       background: palette[index % palette.length],
                     }}
                   />
                 </div>
+                <div
+                  style={{
+                    color: "var(--text)",
+                    fontSize: 11,
+                    textAlign: "center",
+                    lineHeight: 1.2,
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {row.label}
+                </div>
+                <div style={{ color: "var(--text-dim)", fontSize: 10 }}>{percent}%</div>
               </div>
             );
           })}
+          </div>
         </div>
       )}
     </div>
@@ -100,21 +135,33 @@ function formatUptime(seconds: number): string {
 
 export default function DashboardPage() {
   const [overview, setOverview] = useState<ConsoleOverview | null>(null);
+  const [tasksOverview, setTasksOverview] = useState<ConsoleTasksResponse | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let canceled = false;
 
     async function fetchOverview() {
-      const result = await caoRequest<ConsoleOverview>("GET", "/console/overview");
+      const [overviewResult, tasksResult] = await Promise.all([
+        caoRequest<ConsoleOverview>("GET", "/console/overview"),
+        caoRequest<ConsoleTasksResponse>("GET", "/console/tasks"),
+      ]);
+
       if (canceled) {
         return;
       }
-      if (!result.ok) {
+
+      if (!overviewResult.ok) {
         setError("获取控制台统计失败");
         return;
       }
-      setOverview(result.data);
+
+      setOverview(overviewResult.data);
+      if (tasksResult.ok) {
+        setTasksOverview(tasksResult.data);
+      } else {
+        setTasksOverview(null);
+      }
       setError("");
     }
 
@@ -140,6 +187,20 @@ export default function DashboardPage() {
       value,
     }));
   }, [mainAgents]);
+
+  const leaderTaskRows = useMemo(() => {
+    const teams = tasksOverview?.teams || [];
+    return teams
+      .map((team) => {
+        const taskCount = team.instant_tasks.length + team.scheduled_tasks.length;
+        return {
+          label: team.leader.alias || team.leader.session_name || team.leader.id,
+          value: taskCount,
+        };
+      })
+      .filter((row) => row.value > 0)
+      .sort((a, b) => b.value - a.value);
+  }, [tasksOverview?.teams]);
 
   return (
     <RequireAuth>
@@ -179,11 +240,12 @@ export default function DashboardPage() {
 
         <SectionCard>
           <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队负责人看板</div>
-          {mainStatusRows.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
+          <CardGrid minWidth={320} gap={12}>
+            {mainStatusRows.length > 0 && (
               <BarChartCard title="负责人状态分布" rows={mainStatusRows} />
-            </div>
-          )}
+            )}
+            <BarChartCard title="负责人团队任务数" rows={leaderTaskRows} />
+          </CardGrid>
           {mainAgents.length === 0 ? (
             <EmptyState text="当前没有在营团队" />
           ) : (
