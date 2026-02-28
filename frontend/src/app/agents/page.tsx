@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { FitAddon } from "@xterm/addon-fit";
+import type { Terminal as XTerm } from "@xterm/xterm";
 
 import ConsoleNav from "@/components/ConsoleNav";
 import {
@@ -11,52 +11,24 @@ import {
   ErrorBanner,
   PageIntro,
   PageShell,
-  PrimaryButton,
   SecondaryButton,
   SectionCard,
   StatCard,
   StatusPill,
-  TextAreaInput,
 } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
 import { caoRequest, ConsoleAgent, ConsoleOrganization } from "@/lib/cao";
 import { isStatusActive, toStatusLabel } from "@/lib/status";
-import { summarizeTaskTitle } from "@/lib/taskTitle";
-
-interface ChatItem {
-  role: "user" | "assistant";
-  content: string;
-  at: number;
-}
-
-function formatChatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function stripAnsi(input: string): string {
-  return input.replace(/\u001b\[[0-9;]*m/g, "");
-}
 
 export default function AgentsPage() {
   const [organization, setOrganization] = useState<ConsoleOrganization | null>(null);
   const [error, setError] = useState("");
-
   const [activeAgent, setActiveAgent] = useState<ConsoleAgent | null>(null);
-  const [chatItems, setChatItems] = useState<ChatItem[]>([]);
-  const [chatItemsByAgent, setChatItemsByAgent] = useState<Record<string, ChatItem[]>>({});
-  const [taskTitleByAgent, setTaskTitleByAgent] = useState<Record<string, string>>({});
-  const [message, setMessage] = useState("");
-  const [sending, setSending] = useState(false);
-  const [currentOutput, setCurrentOutput] = useState("");
-  const [streamTargetOutput, setStreamTargetOutput] = useState("");
-  const [autoScroll, setAutoScroll] = useState(true);
 
-  const chatRef = useRef<HTMLDivElement | null>(null);
-  const messageFormRef = useRef<HTMLFormElement | null>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const terminalContainerRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<XTerm | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const loadOrganization = useCallback(async () => {
     const result = await caoRequest<ConsoleOrganization>("GET", "/console/organization");
@@ -81,164 +53,250 @@ export default function AgentsPage() {
     };
   }, [loadOrganization]);
 
-  useEffect(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+  const disconnectTerminal = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
     }
+    if (terminalRef.current) {
+      terminalRef.current.dispose();
+      terminalRef.current = null;
+    }
+    fitAddonRef.current = null;
+  }, []);
 
-    if (!activeAgent?.id) {
+  useEffect(() => {
+    if (!activeAgent?.id || !terminalContainerRef.current) {
       return;
     }
 
-    const eventSource = new EventSource(
-      `/api/cao/console/agents/${activeAgent.id}/stream`,
-      { withCredentials: true }
-    );
-    eventSourceRef.current = eventSource;
+    let disposed = false;
+    disconnectTerminal();
 
-    eventSource.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data) as { output?: string };
-        const outputText = String(payload.output || "").trim();
-        if (!outputText) {
+    const setupTerminal = async () => {
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ]);
+
+      if (disposed || !terminalContainerRef.current) {
+        return;
+      }
+
+      const term = new Terminal({
+        convertEol: true,
+        cursorBlink: true,
+        cursorStyle: "block",
+        fontFamily: "var(--mono)",
+        fontSize: 13,
+        theme: {
+          background: "#0d1117",
+          foreground: "#d1d5db",
+          cursor: "#6aa0ff",
+        },
+      });
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(terminalContainerRef.current);
+      fitAddon.fit();
+      term.writeln("正在连接 tmux 终端...");
+
+      terminalRef.current = term;
+      fitAddonRef.current = fitAddon;
+
+      const handleResize = () => fitAddon.fit();
+      window.addEventListener("resize", handleResize);
+
+      const tokenResult = await caoRequest<{ token: string }>("POST", "/console/ws-token");
+      if (!tokenResult.ok || !tokenResult.data?.token) {
+        term.writeln("[错误] 获取 WS 令牌失败");
+        return;
+      }
+
+      const controlPanelHttp =
+        process.env.NEXT_PUBLIC_CAO_CONTROL_PANEL_URL || "http://localhost:8000";
+      const wsBase = controlPanelHttp.replace(/^http/i, "ws").replace(/\/$/, "");
+      const wsUrl = `${wsBase}/console/agents/${activeAgent.id}/tmux/ws?token=${encodeURIComponent(
+        tokenResult.data.token
+      )}`;
+
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      const emitResize = () => {
+        if (ws.readyState !== WebSocket.OPEN) {
           return;
         }
-        setStreamTargetOutput(outputText);
-      } catch {
-        // ignore malformed events
-      }
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-      if (eventSourceRef.current === eventSource) {
-        eventSourceRef.current = null;
-      }
-    };
-
-    return () => {
-      eventSource.close();
-      if (eventSourceRef.current === eventSource) {
-        eventSourceRef.current = null;
-      }
-    };
-  }, [activeAgent?.id]);
-
-  useEffect(() => {
-    if (!streamTargetOutput) {
-      return;
-    }
-
-    if (streamTargetOutput === currentOutput) {
-      return;
-    }
-
-    if (!streamTargetOutput.startsWith(currentOutput)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setCurrentOutput(streamTargetOutput);
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      setCurrentOutput((previous) => {
-        if (previous === streamTargetOutput) {
-          window.clearInterval(intervalId);
-          return previous;
+        ws.send(JSON.stringify({ cols: term.cols, rows: term.rows }));
+      };
+      const sendInput = (text: string) => {
+        if (!text || ws.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        ws.send(JSON.stringify({ input: text }));
+      };
+      const mapKeyboardToAnsi = (event: KeyboardEvent): string | null => {
+        if (event.isComposing || event.keyCode === 229) {
+          return null;
         }
 
-        if (!streamTargetOutput.startsWith(previous)) {
-          window.clearInterval(intervalId);
-          return streamTargetOutput;
+        const functionKeyMap: Record<string, string> = {
+          F1: "\u001bOP",
+          F2: "\u001bOQ",
+          F3: "\u001bOR",
+          F4: "\u001bOS",
+          F5: "\u001b[15~",
+          F6: "\u001b[17~",
+          F7: "\u001b[18~",
+          F8: "\u001b[19~",
+          F9: "\u001b[20~",
+          F10: "\u001b[21~",
+          F11: "\u001b[23~",
+          F12: "\u001b[24~",
+        };
+
+        const keyMap: Record<string, string> = {
+          ArrowUp: "\u001b[A",
+          ArrowDown: "\u001b[B",
+          ArrowRight: "\u001b[C",
+          ArrowLeft: "\u001b[D",
+          Home: "\u001b[H",
+          End: "\u001b[F",
+          PageUp: "\u001b[5~",
+          PageDown: "\u001b[6~",
+          Insert: "\u001b[2~",
+          Delete: "\u001b[3~",
+          Escape: "\u001b",
+        };
+
+        if (event.key in functionKeyMap) {
+          return functionKeyMap[event.key];
         }
 
-        const remaining = streamTargetOutput.length - previous.length;
-        const step = Math.max(1, Math.min(6, Math.ceil(remaining / 24)));
-        const nextOutput = streamTargetOutput.slice(0, previous.length + step);
-
-        if (nextOutput === streamTargetOutput) {
-          window.clearInterval(intervalId);
+        if (event.key === "Tab") {
+          return event.shiftKey ? "\u001b[Z" : "\t";
         }
 
-        return nextOutput;
+        if (event.key === "Enter") {
+          return "\r";
+        }
+
+        if (event.key === "Backspace") {
+          return "\u007f";
+        }
+
+        if (event.ctrlKey && !event.altKey && !event.metaKey) {
+          if (event.key === " ") {
+            return "\u0000";
+          }
+
+          if (/^[a-zA-Z]$/.test(event.key)) {
+            const upper = event.key.toUpperCase();
+            return String.fromCharCode(upper.charCodeAt(0) - 64);
+          }
+
+          const ctrlSymbolMap: Record<string, string> = {
+            "[": "\u001b",
+            "\\": "\u001c",
+            "]": "\u001d",
+            "^": "\u001e",
+            "_": "\u001f",
+          };
+
+          if (event.key in ctrlSymbolMap) {
+            return ctrlSymbolMap[event.key];
+          }
+        }
+
+        if (event.altKey && !event.ctrlKey && !event.metaKey && event.key.length === 1) {
+          return `\u001b${event.key}`;
+        }
+
+        if (event.key in keyMap) {
+          return keyMap[event.key];
+        }
+
+        return null;
+      };
+      let isComposing = false;
+      const resizeObserver = new ResizeObserver(() => {
+        fitAddon.fit();
+        emitResize();
       });
-    }, 24);
+      resizeObserver.observe(terminalContainerRef.current);
+
+      const helperTextarea = terminalContainerRef.current.querySelector(
+        ".xterm-helper-textarea"
+      ) as HTMLTextAreaElement | null;
+      const handleCompositionStart = () => {
+        isComposing = true;
+      };
+      const handleCompositionEnd = (event: CompositionEvent) => {
+        isComposing = false;
+        sendInput(event.data);
+      };
+      helperTextarea?.addEventListener("compositionstart", handleCompositionStart);
+      helperTextarea?.addEventListener("compositionend", handleCompositionEnd);
+
+      ws.onopen = () => {
+        term.writeln("[已连接] 终端已就绪");
+        fitAddon.fit();
+        emitResize();
+        term.focus();
+      };
+
+      ws.onmessage = (event) => {
+        if (typeof event.data === "string") {
+          term.write(event.data);
+        }
+      };
+
+      ws.onerror = () => {
+        term.writeln("\r\n[错误] WebSocket 连接异常");
+      };
+
+      ws.onclose = () => {
+        term.writeln("\r\n[连接关闭]");
+      };
+
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.type !== "keydown") {
+          return true;
+        }
+        const sequence = mapKeyboardToAnsi(event);
+        if (!sequence) {
+          return true;
+        }
+        sendInput(sequence);
+        event.preventDefault();
+        return false;
+      });
+
+      const disposeData = term.onData((data) => {
+        if (!isComposing) {
+          sendInput(data);
+        }
+      });
+
+      const previousCleanup = () => {
+        disposeData.dispose();
+        resizeObserver.disconnect();
+        helperTextarea?.removeEventListener("compositionstart", handleCompositionStart);
+        helperTextarea?.removeEventListener("compositionend", handleCompositionEnd);
+        window.removeEventListener("resize", handleResize);
+      };
+
+      (term as unknown as { __caoCleanup?: () => void }).__caoCleanup = previousCleanup;
+    };
+
+    void setupTerminal();
 
     return () => {
-      window.clearInterval(intervalId);
+      disposed = true;
+      const term = terminalRef.current as unknown as { __caoCleanup?: () => void } | null;
+      term?.__caoCleanup?.();
+      disconnectTerminal();
     };
-  }, [currentOutput, streamTargetOutput]);
-
-  useEffect(() => {
-    if (!currentOutput) {
-      return;
-    }
-
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setChatItems((prev) => {
-      if (prev.length === 0 || prev[prev.length - 1].role !== "assistant") {
-        return [...prev, { role: "assistant", content: currentOutput, at: Date.now() }];
-      }
-
-      const lastItem = prev[prev.length - 1];
-      if (lastItem.content === currentOutput) {
-        return prev;
-      }
-
-      return [
-        ...prev.slice(0, -1),
-        {
-          ...lastItem,
-          content: currentOutput,
-        },
-      ];
-    });
-  }, [currentOutput]);
-
-  useEffect(() => {
-    if (!autoScroll || !chatRef.current) {
-      return;
-    }
-    chatRef.current.scrollTop = chatRef.current.scrollHeight;
-  }, [chatItems, autoScroll]);
-
-  useEffect(() => {
-    if (!activeAgent?.id) {
-      return;
-    }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setChatItemsByAgent((prev) => ({
-      ...prev,
-      [activeAgent.id]: chatItems,
-    }));
-  }, [activeAgent?.id, chatItems]);
-
-  async function sendMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const text = message.trim();
-    if (!activeAgent?.id || !text) {
-      return;
-    }
-
-    setSending(true);
-    const result = await caoRequest("POST", `/console/agents/${activeAgent.id}/input`, {
-      body: { message: text },
-    });
-
-    if (!result.ok) {
-      setError("发送消息失败");
-      setSending(false);
-      return;
-    }
-
-    setChatItems((prev) => [...prev, { role: "user", content: text, at: Date.now() }]);
-    setTaskTitleByAgent((prev) => ({
-      ...prev,
-      [activeAgent.id]: summarizeTaskTitle(text),
-    }));
-    setMessage("");
-    setSending(false);
-  }
+  }, [activeAgent?.id, disconnectTerminal]);
 
   const leaderGroups = organization?.leader_groups || [];
 
@@ -249,23 +307,13 @@ export default function AgentsPage() {
     return organization.leaders_total + organization.workers_total;
   }, [organization]);
 
-  function closeAgentChat() {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
+  function closeAgentDrawer() {
+    disconnectTerminal();
     setActiveAgent(null);
   }
 
-  function openAgentChat(agent: ConsoleAgent) {
-    const cachedItems = chatItemsByAgent[agent.id] || [];
-    const latestAssistant = [...cachedItems].reverse().find((item) => item.role === "assistant");
+  function openAgentDrawer(agent: ConsoleAgent) {
     setActiveAgent(agent);
-    setChatItems(cachedItems);
-    setCurrentOutput(latestAssistant?.content || "");
-    setStreamTargetOutput(latestAssistant?.content || "");
-    setMessage("");
-    setAutoScroll(true);
   }
 
   return (
@@ -274,7 +322,7 @@ export default function AgentsPage() {
       <PageShell>
         <PageIntro
           title="团队管理"
-          description="以团队为单位查看在线情况，点击任意成员卡片可进入会话与执行内容视图。"
+          description="以团队为单位查看在线情况，点击成员可打开实时控制台并直接执行终端命令。"
         />
 
         {error && <ErrorBanner text={error} />}
@@ -290,14 +338,17 @@ export default function AgentsPage() {
           <EmptyState text="暂无团队数据" />
         ) : (
           leaderGroups.map((group) => {
-            const membersByProfile = group.members.reduce<Record<string, ConsoleAgent[]>>((acc, member) => {
-              const profile = member.agent_profile || "unknown";
-              if (!acc[profile]) {
-                acc[profile] = [];
-              }
-              acc[profile].push(member);
-              return acc;
-            }, {});
+            const membersByProfile = group.members.reduce<Record<string, ConsoleAgent[]>>(
+              (acc, member) => {
+                const profile = member.agent_profile || "unknown";
+                if (!acc[profile]) {
+                  acc[profile] = [];
+                }
+                acc[profile].push(member);
+                return acc;
+              },
+              {}
+            );
 
             const memberProfileGroups = Object.entries(membersByProfile).sort(([a], [b]) =>
               a.localeCompare(b)
@@ -310,7 +361,7 @@ export default function AgentsPage() {
                 </div>
 
                 <div
-                  onClick={() => openAgentChat(group.leader)}
+                  onClick={() => openAgentDrawer(group.leader)}
                   style={{
                     border: "1px solid var(--border)",
                     borderRadius: 10,
@@ -361,7 +412,7 @@ export default function AgentsPage() {
                           {members.map((member) => (
                             <div
                               key={member.id}
-                              onClick={() => openAgentChat(member)}
+                              onClick={() => openAgentDrawer(member)}
                               style={{
                                 border: "1px solid var(--border)",
                                 borderRadius: 10,
@@ -404,12 +455,14 @@ export default function AgentsPage() {
               justifyContent: "flex-end",
               zIndex: 40,
             }}
-            onClick={closeAgentChat}
+            onClick={closeAgentDrawer}
           >
             <div
-              onClick={(e) => e.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
               style={{
-                width: "min(640px, 100%)",
+                width: "80vw",
+                minWidth: "min(640px, 100vw)",
+                maxWidth: "100vw",
                 height: "100%",
                 background: "var(--surface)",
                 borderLeft: "1px solid var(--border)",
@@ -448,17 +501,33 @@ export default function AgentsPage() {
                     {(activeAgent.alias || activeAgent.id).slice(0, 1).toUpperCase()}
                   </div>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ color: "var(--text-bright)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <div
+                      style={{
+                        color: "var(--text-bright)",
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
                       {activeAgent.alias || activeAgent.id}
                     </div>
-                    <div style={{ color: "var(--text-dim)", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <div
+                      style={{
+                        color: "var(--text-dim)",
+                        fontSize: 12,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
                       {activeAgent.session_name || "-"} · {toStatusLabel(activeAgent.status)}
                     </div>
                   </div>
                 </div>
                 <SecondaryButton
                   type="button"
-                  onClick={closeAgentChat}
+                  onClick={closeAgentDrawer}
                   style={{ padding: "6px 10px" }}
                 >
                   关闭
@@ -472,308 +541,46 @@ export default function AgentsPage() {
                   flexDirection: "column",
                   minHeight: 0,
                   background: "var(--surface)",
+                  padding: "10px 14px 14px",
                 }}
               >
-                {taskTitleByAgent[activeAgent.id] && (
-                  <section
-                    style={{
-                      margin: "10px 14px",
-                      border: "1px solid var(--border)",
-                      borderRadius: 10,
-                      background: "var(--surface2)",
-                      padding: 10,
-                    }}
-                  >
-                    <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 4 }}>
-                      当前任务
-                    </div>
-                    <div style={{ color: "var(--text-bright)", fontWeight: 700, lineHeight: 1.45 }}>
-                      {taskTitleByAgent[activeAgent.id]}
-                    </div>
-                  </section>
-                )}
-
                 <section
-                  ref={chatRef}
-                  className="console-chat-scroll"
                   style={{
                     flex: 1,
                     minHeight: 0,
-                    overflow: "auto",
-                    padding: taskTitleByAgent[activeAgent.id] ? "4px 14px 10px" : "10px 14px 10px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    background: "var(--surface2)",
+                    overflow: "hidden",
                     display: "flex",
                     flexDirection: "column",
-                    gap: 8,
-                    background: "var(--surface)",
                   }}
                 >
-                  {chatItems.length === 0 ? (
-                    <div
-                      style={{
-                        margin: "auto",
-                        color: "var(--text-dim)",
-                        border: "1px dashed var(--border)",
-                        borderRadius: 10,
-                        padding: "10px 12px",
-                        background: "var(--surface2)",
-                      }}
-                    >
-                      发送消息后开始会话
-                    </div>
-                  ) : (
-                    chatItems.map((item) => {
-                      const isUser = item.role === "user";
-                      return (
-                        <div
-                          key={`${item.role}-${item.at}`}
-                          style={{
-                            display: "flex",
-                            justifyContent: isUser ? "flex-end" : "flex-start",
-                          }}
-                        >
-                          <div
-                            style={{
-                              maxWidth: "84%",
-                              borderRadius: 12,
-                              border: "1px solid var(--border)",
-                              background: isUser ? "var(--accent)" : "var(--surface2)",
-                              color: isUser ? "#fff" : "var(--text)",
-                              padding: "8px 10px",
-                              boxShadow: "0 1px 0 rgba(0,0,0,0.05)",
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: 11,
-                                marginBottom: 4,
-                                color: isUser ? "rgba(255,255,255,0.9)" : "var(--text-dim)",
-                              }}
-                            >
-                              {isUser ? "董事长" : "Agent"} · {formatChatTime(item.at)}
-                            </div>
-                            <div
-                              className={isUser ? "chat-markdown chat-markdown-user" : "chat-markdown"}
-                              style={{ fontSize: 13 }}
-                            >
-                              <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
-                                components={{
-                                  a: ({ ...props }) => (
-                                    <a
-                                      {...props}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      style={{
-                                        color: isUser ? "#fff" : "var(--accent)",
-                                        textDecoration: "underline",
-                                      }}
-                                    />
-                                  ),
-                                  code: ({ className, children, ...props }) => {
-                                    const isBlock = Boolean(className);
-                                    if (!isBlock) {
-                                      return (
-                                        <code
-                                          {...props}
-                                          style={{
-                                            background: isUser ? "rgba(255,255,255,0.2)" : "var(--surface)",
-                                            border: "1px solid var(--border)",
-                                            borderRadius: 6,
-                                            padding: "1px 4px",
-                                            fontFamily: "var(--mono)",
-                                            fontSize: 12,
-                                          }}
-                                        >
-                                          {children}
-                                        </code>
-                                      );
-                                    }
-                                    return (
-                                      <code
-                                        className="chat-code-block"
-                                        {...props}
-                                        style={{
-                                          display: "block",
-                                          whiteSpace: "pre",
-                                          overflowX: "auto",
-                                          padding: 10,
-                                          borderRadius: 8,
-                                          border: "1px solid var(--border)",
-                                          background: isUser ? "rgba(0,0,0,0.2)" : "var(--surface)",
-                                          fontFamily: "var(--mono)",
-                                          fontSize: 12,
-                                        }}
-                                      >
-                                        {children}
-                                      </code>
-                                    );
-                                  },
-                                }}
-                              >
-                                {isUser ? item.content : stripAnsi(item.content)}
-                              </ReactMarkdown>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </section>
-
-                <form
-                  ref={messageFormRef}
-                  onSubmit={sendMessage}
-                  style={{
-                    borderTop: "1px solid var(--border)",
-                    background: "var(--surface2)",
-                    padding: 12,
-                    display: "grid",
-                    gap: 8,
-                  }}
-                >
-                  <TextAreaInput
-                    value={message}
-                    onChange={(event) => setMessage(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.nativeEvent.isComposing) {
-                        return;
-                      }
-                      if (event.key === "Enter" && event.shiftKey) {
-                        event.preventDefault();
-                        messageFormRef.current?.requestSubmit();
-                      }
-                    }}
-                    required
-                    placeholder="输入指令并发送"
-                    rows={4}
+                  <div
                     style={{
+                      padding: "8px 10px",
+                      borderBottom: "1px solid var(--border)",
+                      color: "var(--text-bright)",
+                      fontWeight: 700,
+                      fontSize: 13,
+                    }}
+                  >
+                    实时终端控制台
+                  </div>
+                  <div
+                    ref={terminalContainerRef}
+                    onMouseDown={() => terminalRef.current?.focus()}
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
                       width: "100%",
-                      minHeight: 96,
-                      maxHeight: 180,
-                      marginBottom: 0,
-                      resize: "vertical",
-                      lineHeight: 1.6,
-                      fontSize: 14,
+                      overflow: "hidden",
+                      background: "#0d1117",
                     }}
                   />
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                    <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                      输入内容后点击“发送消息”
-                    </div>
-                    <SecondaryButton
-                      type="button"
-                      onClick={() => setMessage("")}
-                      style={{ padding: "6px 10px" }}
-                    >
-                      清空输入
-                    </SecondaryButton>
-                    <PrimaryButton
-                      type="submit"
-                      disabled={sending}
-                      style={{ minWidth: 108 }}
-                    >
-                      {sending ? "发送中..." : "发送消息"}
-                    </PrimaryButton>
-                  </div>
-                </form>
+                </section>
               </div>
             </div>
-            <style jsx global>{`
-              .console-chat-scroll {
-                scrollbar-color: var(--border) var(--surface2);
-                scrollbar-width: thin;
-              }
-              .console-chat-scroll::-webkit-scrollbar {
-                width: 10px;
-                height: 10px;
-              }
-              .console-chat-scroll::-webkit-scrollbar-track {
-                background: var(--surface2);
-                border-radius: 999px;
-              }
-              .console-chat-scroll::-webkit-scrollbar-thumb {
-                background: var(--border);
-                border-radius: 999px;
-                border: 2px solid var(--surface2);
-              }
-              .console-chat-scroll::-webkit-scrollbar-thumb:hover {
-                background: var(--text-dim);
-              }
-              .chat-markdown p,
-              .chat-markdown ul,
-              .chat-markdown ol,
-              .chat-markdown h1,
-              .chat-markdown h2,
-              .chat-markdown h3,
-              .chat-markdown h4,
-              .chat-markdown pre,
-              .chat-markdown table,
-              .chat-markdown blockquote {
-                margin: 0 0 12px;
-              }
-              .chat-markdown p:last-child,
-              .chat-markdown ul:last-child,
-              .chat-markdown ol:last-child,
-              .chat-markdown h1:last-child,
-              .chat-markdown h2:last-child,
-              .chat-markdown h3:last-child,
-              .chat-markdown h4:last-child,
-              .chat-markdown pre:last-child,
-              .chat-markdown table:last-child,
-              .chat-markdown blockquote:last-child {
-                margin-bottom: 0;
-              }
-              .chat-markdown {
-                line-height: 1.75;
-                letter-spacing: 0.01em;
-                font-size: 14px;
-                word-break: break-word;
-              }
-              .chat-markdown h1,
-              .chat-markdown h2,
-              .chat-markdown h3,
-              .chat-markdown h4 {
-                line-height: 1.45;
-                color: var(--text-bright);
-                font-weight: 700;
-              }
-              .chat-markdown h1 {
-                font-size: 1.2em;
-              }
-              .chat-markdown h2 {
-                font-size: 1.12em;
-              }
-              .chat-markdown h3,
-              .chat-markdown h4 {
-                font-size: 1.04em;
-              }
-              .chat-markdown ul,
-              .chat-markdown ol {
-                padding-left: 20px;
-              }
-              .chat-markdown li + li {
-                margin-top: 4px;
-              }
-              .chat-markdown table {
-                width: 100%;
-                border-collapse: collapse;
-                font-size: 13px;
-              }
-              .chat-markdown th,
-              .chat-markdown td {
-                border: 1px solid var(--border);
-                padding: 6px 8px;
-              }
-              .chat-markdown-user th,
-              .chat-markdown-user td {
-                border-color: rgba(255, 255, 255, 0.3);
-              }
-              .chat-markdown blockquote {
-                border-left: 3px solid var(--border);
-                padding-left: 10px;
-                color: var(--text-dim);
-              }
-            `}</style>
           </div>
         )}
       </PageShell>

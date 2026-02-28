@@ -261,7 +261,7 @@ Share one interesting world trivia for today.
             <PrimaryButton
               type="submit"
               disabled={creating}
-              style={{ minHeight: 38, width: "fit-content", justifySelf: "start", padding: "8px 16px" }}
+              style={{ minHeight: 38, width: "fit-content", justifySelf: "end", padding: "8px 16px" }}
             >
               {creating
                 ? "提交中..."

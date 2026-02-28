@@ -11,7 +11,6 @@ from cli_agent_orchestrator.providers.codebuddy import CodeBuddyProvider
 from cli_agent_orchestrator.providers.copilot import CopilotProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.kiro_cli import KiroCliProvider
-from cli_agent_orchestrator.providers.opencode import OpenCodeProvider
 from cli_agent_orchestrator.providers.qoder_cli import QoderCliProvider
 from cli_agent_orchestrator.providers.q_cli import QCliProvider
 
@@ -49,8 +48,6 @@ class ProviderManager:
                 provider = CodexProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             elif provider_type == ProviderType.QODER_CLI.value:
                 provider = QoderCliProvider(terminal_id, tmux_session, tmux_window)
-            elif provider_type == ProviderType.OPENCODE.value:
-                provider = OpenCodeProvider(terminal_id, tmux_session, tmux_window)
             elif provider_type == ProviderType.CODEBUDDY.value:
                 provider = CodeBuddyProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             elif provider_type == ProviderType.COPILOT.value:

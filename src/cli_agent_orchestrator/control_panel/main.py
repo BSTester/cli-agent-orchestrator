@@ -10,6 +10,7 @@ import asyncio
 import json
 import time
 import uuid
+import contextlib
 from collections import Counter
 from datetime import datetime, timezone
 from importlib import resources
@@ -17,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import requests
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -28,6 +29,7 @@ from cli_agent_orchestrator.constants import (
     DB_DIR,
     LOCAL_AGENT_STORE_DIR,
 )
+from cli_agent_orchestrator.clients.tmux import tmux_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ CAO_SERVER_URL = os.getenv("CAO_SERVER_URL", API_BASE_URL)
 CONSOLE_PASSWORD = os.getenv("CAO_CONSOLE_PASSWORD", "admin")
 SESSION_COOKIE_NAME = "cao_console_session"
 SESSION_TTL_SECONDS = int(os.getenv("CAO_CONSOLE_SESSION_TTL_SECONDS", "43200"))
+WS_TOKEN_TTL_SECONDS = int(os.getenv("CAO_WS_TOKEN_TTL_SECONDS", "120"))
 
 # CORS origins for frontend
 CONTROL_PANEL_CORS_ORIGINS = [
@@ -65,6 +68,7 @@ if CONSOLE_PASSWORD == "admin":
 
 _service_started_at = datetime.now(timezone.utc)
 _sessions: Dict[str, float] = {}
+_ws_tokens: Dict[str, float] = {}
 
 
 def _init_organization_db() -> None:
@@ -479,6 +483,16 @@ class AgentMessageRequest(BaseModel):
     message: str = Field(min_length=1)
 
 
+class AgentTmuxInputRequest(BaseModel):
+    message: str = Field(min_length=1)
+    press_enter: bool = True
+
+
+class WsTokenResponse(BaseModel):
+    token: str
+    expires_in: int
+
+
 class InboxMessageRequest(BaseModel):
     message: str = Field(min_length=1)
     sender_id: Optional[str] = None
@@ -624,9 +638,29 @@ def _cleanup_expired_sessions() -> None:
         _sessions.pop(token, None)
 
 
+def _cleanup_expired_ws_tokens() -> None:
+    now = time.time()
+    expired_tokens = [token for token, expires_at in _ws_tokens.items() if expires_at <= now]
+    for token in expired_tokens:
+        _ws_tokens.pop(token, None)
+
+
 def _session_expires_at(token: str) -> Optional[float]:
     _cleanup_expired_sessions()
     return _sessions.get(token)
+
+
+def _create_ws_token() -> str:
+    _cleanup_expired_ws_tokens()
+    token = secrets.token_urlsafe(24)
+    _ws_tokens[token] = time.time() + WS_TOKEN_TTL_SECONDS
+    return token
+
+
+def _consume_ws_token(token: str) -> bool:
+    _cleanup_expired_ws_tokens()
+    expires_at = _ws_tokens.pop(token, None)
+    return expires_at is not None and expires_at > time.time()
 
 
 def _is_authenticated(request: Request) -> bool:
@@ -676,6 +710,42 @@ def _response_json_or_text(response: requests.Response) -> Any:
         return response.json()
     except ValueError:
         return response.text
+
+
+def _get_terminal_tmux_target(terminal_id: str) -> tuple[str, str]:
+    terminal_response = _request_cao("GET", f"/terminals/{terminal_id}")
+    terminal_data = _response_json_or_text(terminal_response)
+    if not isinstance(terminal_data, dict):
+        raise HTTPException(status_code=502, detail="Invalid terminal metadata from cao-server")
+
+    tmux_session = str(
+        terminal_data.get("tmux_session") or terminal_data.get("session_name") or ""
+    ).strip()
+    tmux_window = str(terminal_data.get("tmux_window") or terminal_data.get("name") or "").strip()
+
+    if tmux_session and tmux_window:
+        return tmux_session, tmux_window
+
+    if tmux_session:
+        try:
+            session_terms_resp = _request_cao("GET", f"/sessions/{tmux_session}/terminals")
+            session_terms_data = _response_json_or_text(session_terms_resp)
+            if isinstance(session_terms_data, list):
+                for item in session_terms_data:
+                    if not isinstance(item, dict):
+                        continue
+                    if str(item.get("id", "")).strip() != terminal_id:
+                        continue
+                    candidate_window = str(item.get("tmux_window") or item.get("name") or "").strip()
+                    if candidate_window:
+                        return tmux_session, candidate_window
+        except Exception as exc:
+            logger.warning("Failed to resolve tmux window from session terminal list: %s", exc)
+
+    if not tmux_session or not tmux_window:
+        raise HTTPException(status_code=404, detail=f"Terminal {terminal_id} has no tmux target")
+
+    return tmux_session, tmux_window
 
 
 def _get_terminals_from_sessions() -> list[Dict[str, Any]]:
@@ -940,6 +1010,12 @@ async def logout(request: Request) -> JSONResponse:
     if token:
         _sessions.pop(token, None)
     return _build_cookie_response({"ok": True}, None)
+
+
+@app.post("/console/ws-token", response_model=WsTokenResponse)
+async def create_console_ws_token() -> WsTokenResponse:
+    token = _create_ws_token()
+    return WsTokenResponse(token=token, expires_in=WS_TOKEN_TTL_SECONDS)
 
 
 @app.get("/auth/me")
@@ -1386,6 +1462,146 @@ async def send_input_to_agent(terminal_id: str, payload: AgentMessageRequest) ->
         raise HTTPException(status_code=502, detail=f"Failed to send input: {exc}")
 
 
+@app.post("/console/agents/{terminal_id}/tmux/input")
+async def send_input_to_agent_tmux(terminal_id: str, payload: AgentTmuxInputRequest) -> Dict[str, Any]:
+    try:
+        tmux_session, tmux_window = _get_terminal_tmux_target(terminal_id)
+        tmux_client.send_raw_input(tmux_session, tmux_window, payload.message)
+        if payload.press_enter:
+            tmux_client.send_special_key(tmux_session, tmux_window, "C-m")
+        return {
+            "ok": True,
+            "terminal_id": terminal_id,
+            "tmux_session": tmux_session,
+            "tmux_window": tmux_window,
+            "press_enter": payload.press_enter,
+        }
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to locate terminal: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to send tmux input: {exc}")
+
+
+@app.get("/console/agents/{terminal_id}/tmux/output")
+async def get_agent_tmux_output(terminal_id: str, lines: int = 300) -> Dict[str, Any]:
+    safe_lines = max(20, min(lines, 1000))
+    try:
+        tmux_session, tmux_window = _get_terminal_tmux_target(terminal_id)
+        output = tmux_client.get_history(tmux_session, tmux_window, tail_lines=safe_lines)
+        return {
+            "terminal_id": terminal_id,
+            "tmux_session": tmux_session,
+            "tmux_window": tmux_window,
+            "lines": safe_lines,
+            "output": output,
+        }
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to locate terminal: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read tmux output: {exc}")
+
+
+@app.websocket("/console/agents/{terminal_id}/tmux/ws")
+async def stream_agent_tmux_ws(websocket: WebSocket, terminal_id: str) -> None:
+    token = websocket.query_params.get("token")
+    if not token or not _consume_ws_token(token):
+        await websocket.close(code=4401)
+        return
+
+    try:
+        tmux_session, tmux_window = _get_terminal_tmux_target(terminal_id)
+    except Exception:
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+
+    last_output = ""
+
+    async def push_output_loop() -> None:
+        nonlocal last_output
+        while True:
+            output = await asyncio.to_thread(
+                tmux_client.get_history,
+                tmux_session,
+                tmux_window,
+                500,
+            )
+            if output != last_output:
+                if output.startswith(last_output):
+                    delta = output[len(last_output) :]
+                    if delta:
+                        await websocket.send_text(delta)
+                else:
+                    await websocket.send_text("\u001bc" + output)
+                last_output = output
+            await asyncio.sleep(0.2)
+
+    sender_task = asyncio.create_task(push_output_loop())
+
+    try:
+        while True:
+            message = await websocket.receive_text()
+            input_text = ""
+            send_enter = False
+            resize_cols: Optional[int] = None
+            resize_rows: Optional[int] = None
+
+            try:
+                payload = json.loads(message)
+                if isinstance(payload, dict):
+                    raw_input = payload.get("input")
+                    if isinstance(raw_input, str):
+                        input_text = raw_input
+                    send_enter = bool(payload.get("enter"))
+                    raw_cols = payload.get("cols")
+                    raw_rows = payload.get("rows")
+                    if isinstance(raw_cols, int) and isinstance(raw_rows, int):
+                        resize_cols = raw_cols
+                        resize_rows = raw_rows
+                else:
+                    input_text = message
+            except json.JSONDecodeError:
+                input_text = message
+
+            if resize_cols is not None and resize_rows is not None:
+                await asyncio.to_thread(
+                    tmux_client.resize_window,
+                    tmux_session,
+                    tmux_window,
+                    resize_cols,
+                    resize_rows,
+                )
+
+            if input_text:
+                await asyncio.to_thread(
+                    tmux_client.send_raw_input,
+                    tmux_session,
+                    tmux_window,
+                    input_text,
+                )
+
+            if send_enter:
+                await asyncio.to_thread(
+                    tmux_client.send_special_key,
+                    tmux_session,
+                    tmux_window,
+                    "C-m",
+                )
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.warning("tmux ws stream failed for %s: %s", terminal_id, exc)
+    finally:
+        sender_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await sender_task
+
+
 @app.get("/console/agents/{terminal_id}/stream")
 async def stream_agent_output(
     terminal_id: str,
@@ -1425,6 +1641,15 @@ async def stream_agent_output(
                         ensure_ascii=False,
                     )
                     yield f"data: {payload}\n\n"
+            except requests.exceptions.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code == 404:
+                    logger.info(
+                        "SSE stream closed for %s: terminal not found upstream",
+                        terminal_id,
+                    )
+                    break
+                logger.warning("SSE stream read failed for %s: %s", terminal_id, exc)
             except Exception as exc:
                 logger.warning("SSE stream read failed for %s: %s", terminal_id, exc)
 

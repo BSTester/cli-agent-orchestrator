@@ -16,7 +16,6 @@ PROVIDERS_REQUIRING_WORKSPACE_ACCESS = {
     "codex",
     "kiro_cli",
     "qoder_cli",
-    "opencode",
     "codebuddy",
     "copilot",
 }
@@ -83,7 +82,25 @@ def launch(agents, session_name, headless, provider, yolo):
             params["session_name"] = session_name
 
         response = requests.post(url, params=params)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError:
+            if response.status_code == 400 and "Working directory not allowed" in response.text:
+                fallback_params = {
+                    "provider": resolved_provider,
+                    "agent_profile": agents,
+                }
+                if session_name:
+                    fallback_params["session_name"] = session_name
+
+                click.echo(
+                    "Working directory is outside allowed scope; retrying launch without "
+                    "working_directory parameter."
+                )
+                response = requests.post(url, params=fallback_params)
+                response.raise_for_status()
+            else:
+                raise
 
         terminal = response.json()
 

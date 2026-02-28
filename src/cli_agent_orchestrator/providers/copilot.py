@@ -11,7 +11,7 @@ class CopilotProvider(SimpleTuiProvider):
             terminal_id=terminal_id,
             session_name=session_name,
             window_name=window_name,
-            start_command="copilot",
+            start_command="copilot --allow-all --no-ask-user --no-alt-screen",
             idle_prompt_pattern=r"[>❯›]\s",
             idle_prompt_pattern_log=r"[>❯›]\s",
         )

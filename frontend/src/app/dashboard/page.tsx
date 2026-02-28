@@ -111,8 +111,13 @@ function BarChartCard({
                     fontSize: 11,
                     textAlign: "center",
                     lineHeight: 1.2,
-                    wordBreak: "break-word",
+                    width: "100%",
+                    height: 14,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
+                  title={row.label}
                 >
                   {row.label}
                 </div>

@@ -42,7 +42,6 @@ const providers = [
   "codex",
   "q_cli",
   "qoder_cli",
-  "opencode",
   "codebuddy",
   "copilot",
 ];
@@ -450,12 +449,14 @@ export default function OrganizationPage() {
               placeholder="系统提示词（markdown 内容）"
               style={{ width: "100%", minHeight: 240, marginBottom: 10 }}
             />
-            <PrimaryButton
-              type="submit"
-              disabled={creatingProfile}
-            >
-              {creatingProfile ? "保存中..." : "保存岗位并完成安装"}
-            </PrimaryButton>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <PrimaryButton
+                type="submit"
+                disabled={creatingProfile}
+              >
+                {creatingProfile ? "保存中..." : "保存岗位并完成安装"}
+              </PrimaryButton>
+            </div>
             </form>
           </SectionCard>
 
@@ -535,19 +536,21 @@ export default function OrganizationPage() {
                     </option>
                   ))}
                 </SelectInput>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
                 <TextInput
                   value={workerAlias}
                   onChange={(e) => setWorkerAlias(e.target.value)}
                   placeholder="员工别名（可选）"
                 />
+                <SuccessButton
+                  type="submit"
+                  disabled={creatingWorker}
+                  style={{ width: "fit-content", justifySelf: "end" }}
+                >
+                  {creatingWorker ? "加入中..." : "加入团队"}
+                </SuccessButton>
               </div>
-              <SuccessButton
-                type="submit"
-                disabled={creatingWorker}
-                style={{ width: "fit-content" }}
-              >
-                {creatingWorker ? "加入中..." : "加入团队"}
-              </SuccessButton>
             </form>
           </SectionCard>
         </section>

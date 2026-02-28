@@ -145,3 +145,29 @@ class TestSendKeys:
         assert mock_subprocess.run.call_count == 4
         load_call = mock_subprocess.run.call_args_list[0]
         assert len(load_call[1]["input"]) == 50000
+
+    def test_send_raw_input_sends_hex_bytes(self, client, mock_subprocess):
+        """Raw input should be sent in one batched tmux send-keys -H command."""
+        client.send_raw_input("sess", "win", "A\n")
+
+        calls = mock_subprocess.run.call_args_list
+        assert len(calls) == 1
+        assert calls[0] == call(
+            ["tmux", "send-keys", "-t", "sess:win", "-H", "41", "0a"],
+            check=True,
+        )
+
+    def test_send_raw_input_chunks_large_payload(self, client, mock_subprocess):
+        """Large raw input should be split into multiple tmux commands."""
+        client.send_raw_input("sess", "win", "A" * 130)
+
+        calls = mock_subprocess.run.call_args_list
+        assert len(calls) == 3
+        assert len(calls[0].args[0]) == 69
+        assert len(calls[1].args[0]) == 69
+        assert len(calls[2].args[0]) == 7
+
+    def test_send_raw_input_ignores_empty(self, client, mock_subprocess):
+        """Empty raw input should not invoke tmux commands."""
+        client.send_raw_input("sess", "win", "")
+        mock_subprocess.run.assert_not_called()

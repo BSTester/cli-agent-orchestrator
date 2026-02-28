@@ -58,6 +58,7 @@ async function proxyToCao(
       headers,
       body,
       cache: "no-store",
+      signal: request.signal,
     });
 
     const responseHeaders = new Headers();

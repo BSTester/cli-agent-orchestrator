@@ -10,6 +10,14 @@ Enable working directory parameter in MCP tools:
 export CAO_ENABLE_WORKING_DIRECTORY=true
 ```
 
+Allow specific directories outside `~` (optional, for `cao-server` and API calls):
+
+```bash
+export CAO_ALLOWED_WORKING_DIRECTORIES="/mnt/j/AGIProjects:/data/workspaces"
+```
+
+`CAO_ALLOWED_WORKING_DIRECTORIES` uses platform path separator (`:` on Linux/macOS, `;` on Windows).
+
 ## Behavior
 
 - **When disabled (default)**: Working directory parameter is hidden from tools, agents start in supervisor's current directory
@@ -45,6 +53,7 @@ All working directory paths are canonicalized and validated before use. Both the
 - The user's home directory itself (`~/`)
 - Any subdirectory under the home directory (`~/projects/foo`)
 - Paths that resolve to the home tree after symlink resolution
+- Any directory under configured allowlist roots from `CAO_ALLOWED_WORKING_DIRECTORIES`
 
 ### Blocked (unsafe) directories
 
@@ -53,6 +62,8 @@ The following system directories are explicitly blocked:
 `/`, `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, `/etc`, `/var`, `/tmp`, `/dev`, `/proc`, `/sys`, `/root`, `/boot`, `/lib`, `/lib64`
 
 Any path outside the user's home directory tree is also rejected.
+
+If `CAO_ALLOWED_WORKING_DIRECTORIES` is configured, paths outside home are allowed only when they are descendants of one of those configured roots.
 
 ### Symlink handling
 

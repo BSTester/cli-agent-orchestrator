@@ -38,7 +38,7 @@ def test_create_terminal_uses_explicit_provider_override(mock_request):
 @patch("cli_agent_orchestrator.mcp_server.server.requests.request")
 @patch("cli_agent_orchestrator.mcp_server.server.load_agent_profile")
 def test_create_terminal_uses_profile_provider_when_no_override(mock_load_profile, mock_request):
-    profile = type("Profile", (), {"provider": ProviderType.OPENCODE})()
+    profile = type("Profile", (), {"provider": ProviderType.COPILOT})()
     mock_load_profile.return_value = profile
 
     metadata_response = MagicMock()
@@ -58,8 +58,8 @@ def test_create_terminal_uses_profile_provider_when_no_override(mock_load_profil
         terminal_id, provider = _create_terminal("developer", working_directory="/tmp/project")
 
     assert terminal_id == "term5678"
-    assert provider == ProviderType.OPENCODE.value
-    assert mock_request.call_args.kwargs["params"]["provider"] == ProviderType.OPENCODE.value
+    assert provider == ProviderType.COPILOT.value
+    assert mock_request.call_args.kwargs["params"]["provider"] == ProviderType.COPILOT.value
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.requests.request")

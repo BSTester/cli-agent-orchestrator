@@ -268,3 +268,47 @@ def test_launch_explicit_provider_overrides_profile_provider():
         assert result.exit_code == 0
         params = mock_post.call_args.kwargs["params"]
         assert params["provider"] == ProviderType.CLAUDE_CODE.value
+
+
+def test_launch_retries_without_working_directory_when_rejected():
+    """Test launch retries without working_directory when API rejects external path."""
+    runner = CliRunner()
+
+    with (
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.subprocess.run"),
+    ):
+        import requests
+
+        first_response = requests.Response()
+        first_response.status_code = 400
+        first_response._content = (
+            b'{"detail":"Working directory not allowed: /mnt/j/project (outside home)"}'
+        )
+        first_response.url = "http://localhost:9889/sessions"
+        first_response.raise_for_status = lambda: (_ for _ in ()).throw(
+            requests.exceptions.HTTPError(response=first_response)
+        )
+
+        second_response = requests.Response()
+        second_response.status_code = 200
+        second_response._content = b'{"session_name":"test-session","name":"test-terminal"}'
+        second_response.url = "http://localhost:9889/sessions"
+        second_response.raise_for_status = lambda: None
+
+        mock_post.side_effect = [first_response, second_response]
+
+        result = runner.invoke(
+            launch,
+            ["--agents", "test-agent", "--provider", "qoder_cli", "--headless", "--yolo"],
+        )
+
+        assert result.exit_code == 0
+        assert "retrying launch without working_directory parameter" in result.output
+        assert mock_post.call_count == 2
+
+        first_call_params = mock_post.call_args_list[0].kwargs["params"]
+        second_call_params = mock_post.call_args_list[1].kwargs["params"]
+
+        assert "working_directory" in first_call_params
+        assert "working_directory" not in second_call_params

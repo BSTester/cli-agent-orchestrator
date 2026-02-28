@@ -9,6 +9,5 @@ class ProviderType(str, Enum):
     CLAUDE_CODE = "claude_code"
     CODEX = "codex"
     QODER_CLI = "qoder_cli"
-    OPENCODE = "opencode"
     CODEBUDDY = "codebuddy"
     COPILOT = "copilot"

@@ -189,6 +189,52 @@ def test_console_agent_input_wrapper(client: TestClient) -> None:
         assert body["terminal_id"] == "abc123"
 
 
+def test_console_ws_token_creation(client: TestClient) -> None:
+    login(client)
+
+    response = client.post("/console/ws-token")
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body.get("token"), str)
+    assert len(body["token"]) > 10
+    assert isinstance(body.get("expires_in"), int)
+    assert body["expires_in"] > 0
+
+
+def test_console_agent_tmux_input_and_output(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+        patch("cli_agent_orchestrator.control_panel.main.tmux_client") as mock_tmux,
+    ):
+        terminal_detail = MagicMock()
+        terminal_detail.raise_for_status.return_value = None
+        terminal_detail.json.return_value = {
+            "id": "abc123",
+            "tmux_session": "cao-test",
+            "tmux_window": "worker-1",
+        }
+        mock_request.return_value = terminal_detail
+        mock_tmux.get_history.return_value = "hello from tmux"
+
+        send_resp = client.post(
+            "/console/agents/abc123/tmux/input",
+            json={"message": "ls -la", "press_enter": True},
+        )
+        assert send_resp.status_code == 200
+        send_body = send_resp.json()
+        assert send_body["ok"] is True
+        mock_tmux.send_raw_input.assert_called_once_with("cao-test", "worker-1", "ls -la")
+        mock_tmux.send_special_key.assert_called_once_with("cao-test", "worker-1", "C-m")
+
+        output_resp = client.get("/console/agents/abc123/tmux/output?lines=222")
+        assert output_resp.status_code == 200
+        output_body = output_resp.json()
+        assert output_body["output"] == "hello from tmux"
+        assert output_body["lines"] == 222
+
+
 def test_console_organization_two_layers(client: TestClient) -> None:
     login(client)
 
@@ -692,6 +738,27 @@ def test_console_agent_output_stream(client: TestClient) -> None:
             assert "text/event-stream" in response.headers.get("content-type", "")
             body = "".join(response.iter_text())
             assert "stream hello" in body
+
+
+def test_console_agent_output_stream_stops_on_upstream_404(client: TestClient) -> None:
+    login(client)
+
+    with patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request:
+        output_response = MagicMock()
+        output_response.status_code = 404
+        output_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "404 Client Error: Not Found",
+            response=output_response,
+        )
+        mock_request.return_value = output_response
+
+        with client.stream("GET", "/console/agents/missing/stream") as response:
+            assert response.status_code == 200
+            assert "text/event-stream" in response.headers.get("content-type", "")
+            body = "".join(response.iter_text())
+            assert body == ""
+
+        assert mock_request.call_count == 1
 
 
 def test_proxy_delete_request(client: TestClient) -> None:

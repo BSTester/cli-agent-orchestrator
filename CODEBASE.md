@@ -91,7 +91,6 @@ src/cli_agent_orchestrator/
 │   ├── claude_code.py     # Claude Code provider (claude_code)
 │   ├── codex.py           # Codex CLI provider (codex)
 │   ├── qoder_cli.py       # Qoder CLI provider (qoder_cli)
-│   ├── opencode.py        # OpenCode provider (opencode)
 │   ├── codebuddy.py       # CodeBuddy provider (codebuddy)
 │   └── copilot.py         # Copilot provider (copilot)
 ├── models/                # Data models

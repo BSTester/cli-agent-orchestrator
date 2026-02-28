@@ -9,7 +9,6 @@ from cli_agent_orchestrator.providers.codebuddy import CodeBuddyProvider
 from cli_agent_orchestrator.providers.copilot import CopilotProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.manager import ProviderManager
-from cli_agent_orchestrator.providers.opencode import OpenCodeProvider
 from cli_agent_orchestrator.providers.qoder_cli import QoderCliProvider
 
 
@@ -185,19 +184,6 @@ def test_create_provider_qoder_cli():
     )
 
     assert isinstance(provider, QoderCliProvider)
-
-
-def test_create_provider_opencode():
-    manager = ProviderManager()
-    provider = manager.create_provider(
-        ProviderType.OPENCODE.value,
-        terminal_id="t1",
-        tmux_session="s1",
-        tmux_window="w1",
-        agent_profile=None,
-    )
-
-    assert isinstance(provider, OpenCodeProvider)
 
 
 @patch("cli_agent_orchestrator.providers.codebuddy.load_agent_profile")

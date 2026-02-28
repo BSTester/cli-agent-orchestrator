@@ -109,7 +109,6 @@ uv run cao --help   # 校验安装
 | **Codex CLI** | [Provider docs](docs/codex-cli.md) · [Installation](https://github.com/openai/codex) | OpenAI API Key |
 | **Q CLI** | [Installation](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line.html) | AWS 凭证 |
 | **Qoder CLI** | [Installation](https://www.npmjs.com/package/@qoder-ai/qodercli) | Qoder 账号/令牌 |
-| **OpenCode CLI** | [Installation](https://opencode.ai/docs/cli/) | 模型提供商凭证 |
 | **CodeBuddy CLI** | [CLI docs](https://www.codebuddy.ai/docs/cli/cli-reference) | CodeBuddy 账号/令牌 |
 | **GitHub Copilot CLI** | [Getting started](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started) | GitHub Copilot 权限 |
 
@@ -157,7 +156,6 @@ cao launch --agents code_supervisor --provider kiro_cli
 cao launch --agents code_supervisor --provider claude_code
 cao launch --agents code_supervisor --provider codex
 cao launch --agents code_supervisor --provider qoder_cli
-cao launch --agents code_supervisor --provider opencode
 cao launch --agents code_supervisor --provider codebuddy
 cao launch --agents code_supervisor --provider copilot
 
