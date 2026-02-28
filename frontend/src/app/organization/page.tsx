@@ -371,6 +371,11 @@ export default function OrganizationPage() {
 
   const groups = data?.leader_groups ?? [];
   const leaders = data?.leaders ?? [];
+  const groupAliases = new Map(
+    groups
+      .map((group) => [group.leader.id, (group.team_alias || "").trim()] as const)
+      .filter(([, alias]) => Boolean(alias))
+  );
   const mainProfileOptions = ["code_supervisor"];
   const workerProfileOptions = profileOptions.filter((profileName) => profileName !== "code_supervisor");
 
