@@ -449,9 +449,52 @@ class AgentProfileUpdateRequest(BaseModel):
 
 
 class ConsoleCreateScheduledTaskRequest(BaseModel):
-    flow_content: str = Field(min_length=1)
+    flow_content: Optional[str] = None
     flow_name: Optional[str] = None
+    file_name: Optional[str] = None
     leader_id: Optional[str] = None
+
+
+def _console_flow_dir() -> Path:
+    flow_dir = DB_DIR / "console_flows"
+    flow_dir.mkdir(parents=True, exist_ok=True)
+    return flow_dir
+
+
+def _list_console_flow_files() -> List[Dict[str, Any]]:
+    flow_dir = _console_flow_dir()
+    files: List[Dict[str, Any]] = []
+    for file_path in sorted(flow_dir.glob("*.md")):
+        files.append(
+            {
+                "file_name": file_path.name,
+                "flow_name": file_path.stem,
+                "file_path": str(file_path),
+            }
+        )
+    return files
+
+
+def _resolve_console_flow_file(file_name: str) -> Path:
+    normalized_name = file_name.strip()
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="file_name cannot be empty")
+
+    # Only allow selecting files by basename from the managed flow directory.
+    if Path(normalized_name).name != normalized_name:
+        raise HTTPException(status_code=400, detail="Invalid file_name")
+
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", normalized_name):
+        raise HTTPException(status_code=400, detail="Invalid file_name")
+
+    if not normalized_name.endswith(".md"):
+        normalized_name = f"{normalized_name}.md"
+
+    flow_path = _console_flow_dir() / normalized_name
+    if not flow_path.exists():
+        raise HTTPException(status_code=404, detail=f"Flow file not found: {normalized_name}")
+
+    return flow_path
 
 
 def _extract_flow_name_from_content(flow_content: str) -> Optional[str]:
@@ -477,9 +520,16 @@ def _save_flow_content_to_file(flow_content: str, flow_name: Optional[str]) -> P
             detail="Invalid flow name. Use letters, numbers, underscore, or hyphen.",
         )
 
-    flow_dir = DB_DIR / "console_flows"
-    flow_dir.mkdir(parents=True, exist_ok=True)
+    flow_dir = _console_flow_dir()
     flow_path = flow_dir / f"{normalized_name}.md"
+    flow_path.write_text(content + "\n", encoding="utf-8")
+    return flow_path
+
+
+def _overwrite_console_flow_file(flow_path: Path, flow_content: str) -> Path:
+    content = flow_content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Flow content cannot be empty")
     flow_path.write_text(content + "\n", encoding="utf-8")
     return flow_path
 
@@ -968,7 +1018,18 @@ async def console_tasks() -> Dict[str, Any]:
 
 @app.post("/console/tasks/scheduled")
 async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskRequest) -> Dict[str, Any]:
-    flow_path = _save_flow_content_to_file(payload.flow_content, payload.flow_name)
+    file_name = payload.file_name.strip() if payload.file_name else ""
+    flow_content = payload.flow_content.strip() if payload.flow_content else ""
+
+    if file_name:
+        flow_path = _resolve_console_flow_file(file_name)
+        if flow_content:
+            flow_path = _overwrite_console_flow_file(flow_path, flow_content)
+    elif flow_content:
+        flow_path = _save_flow_content_to_file(flow_content, payload.flow_name)
+    else:
+        raise HTTPException(status_code=400, detail="Provide either file_name or flow_content")
+
     body = {"file_path": str(flow_path)}
 
     try:
@@ -991,6 +1052,23 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
         }
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to create scheduled task: {exc}")
+
+
+@app.get("/console/tasks/scheduled/files")
+async def console_list_scheduled_task_files() -> Dict[str, Any]:
+    return {"files": _list_console_flow_files()}
+
+
+@app.get("/console/tasks/scheduled/files/{file_name}")
+async def console_get_scheduled_task_file(file_name: str) -> Dict[str, Any]:
+    flow_path = _resolve_console_flow_file(file_name)
+    content = flow_path.read_text(encoding="utf-8")
+    return {
+        "file_name": flow_path.name,
+        "flow_name": flow_path.stem,
+        "file_path": str(flow_path),
+        "content": content,
+    }
 
 
 @app.post("/console/tasks/scheduled/{flow_name}/run")

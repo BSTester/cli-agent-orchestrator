@@ -802,6 +802,117 @@ def test_console_create_scheduled_task_success(client: TestClient) -> None:
         mock_set_link.assert_called_once_with("flowA", "leader1")
 
 
+def test_console_list_scheduled_task_files(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    with patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path):
+        flow_dir = tmp_path / "console_flows"
+        flow_dir.mkdir(parents=True, exist_ok=True)
+        (flow_dir / "daily.md").write_text("---\nname: daily\n---\n", encoding="utf-8")
+        (flow_dir / "nightly.md").write_text("---\nname: nightly\n---\n", encoding="utf-8")
+
+        response = client.get("/console/tasks/scheduled/files")
+
+        assert response.status_code == 200
+        body = response.json()
+        names = [item["file_name"] for item in body["files"]]
+        assert names == ["daily.md", "nightly.md"]
+
+
+def test_console_create_scheduled_task_from_existing_file(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._resolve_console_flow_file") as mock_resolve_file,
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch("cli_agent_orchestrator.control_panel.main._set_flow_team_link") as mock_set_link,
+    ):
+        mock_resolve_file.return_value = Path("/tmp/console_flows/existing-flow.md")
+        mock_request_cao.return_value = MagicMock()
+        mock_json.return_value = {
+            "name": "existing-flow",
+            "file_path": "/tmp/console_flows/existing-flow.md",
+            "schedule": "0 8 * * *",
+            "agent_profile": "developer",
+            "provider": "kiro_cli",
+            "enabled": True,
+        }
+
+        response = client.post(
+            "/console/tasks/scheduled",
+            json={
+                "file_name": "existing-flow.md",
+                "leader_id": "leader1",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["flow"]["name"] == "existing-flow"
+        mock_resolve_file.assert_called_once_with("existing-flow.md")
+        mock_set_link.assert_called_once_with("existing-flow", "leader1")
+
+
+def test_console_get_scheduled_task_file_content(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    with patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path):
+        flow_dir = tmp_path / "console_flows"
+        flow_dir.mkdir(parents=True, exist_ok=True)
+        flow_file = flow_dir / "editable.md"
+        flow_file.write_text("---\nname: editable\n---\n\nhello\n", encoding="utf-8")
+
+        response = client.get("/console/tasks/scheduled/files/editable.md")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["file_name"] == "editable.md"
+        assert body["flow_name"] == "editable"
+        assert "name: editable" in body["content"]
+
+
+def test_console_create_scheduled_task_overwrites_selected_file_content(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._resolve_console_flow_file") as mock_resolve_file,
+        patch("cli_agent_orchestrator.control_panel.main._overwrite_console_flow_file") as mock_overwrite_file,
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch("cli_agent_orchestrator.control_panel.main._set_flow_team_link") as mock_set_link,
+    ):
+        selected_path = Path("/tmp/console_flows/editable.md")
+        mock_resolve_file.return_value = selected_path
+        mock_overwrite_file.return_value = selected_path
+        mock_request_cao.return_value = MagicMock()
+        mock_json.return_value = {
+            "name": "editable",
+            "file_path": "/tmp/console_flows/editable.md",
+            "schedule": "0 8 * * *",
+            "agent_profile": "developer",
+            "provider": "kiro_cli",
+            "enabled": True,
+        }
+
+        response = client.post(
+            "/console/tasks/scheduled",
+            json={
+                "file_name": "editable.md",
+                "flow_content": "---\nname: editable\nschedule: '0 8 * * *'\nagent_profile: developer\n---\n\nupdated",
+                "leader_id": "leader1",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        mock_resolve_file.assert_called_once_with("editable.md")
+        mock_overwrite_file.assert_called_once()
+        mock_set_link.assert_called_once_with("editable", "leader1")
+
+
 def test_console_run_enable_disable_scheduled_task_success(client: TestClient) -> None:
     login(client)
 

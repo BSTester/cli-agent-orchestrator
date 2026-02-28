@@ -5,6 +5,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import ConsoleNav from "@/components/ConsoleNav";
 import {
   CardGrid,
+  CodeEditorInput,
   EmptyState,
   ErrorBanner,
   PageIntro,
@@ -14,7 +15,6 @@ import {
   SectionCard,
   StatCard,
   StatusPill,
-  TextAreaInput,
 } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
 import { caoRequest, ConsoleAgent, ConsoleOrganization } from "@/lib/cao";
@@ -27,6 +27,13 @@ interface ChatItem {
 }
 
 type OutputMode = "stream" | "full";
+
+function formatChatTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 function escapeHtml(input: string): string {
   return input
@@ -84,6 +91,7 @@ export default function AgentsPage() {
 
   const outputRef = useRef<HTMLDivElement | null>(null);
   const chatRef = useRef<HTMLDivElement | null>(null);
+  const messageFormRef = useRef<HTMLFormElement | null>(null);
 
   const loadOrganization = useCallback(async () => {
     const result = await caoRequest<ConsoleOrganization>("GET", "/console/organization");
@@ -450,15 +458,47 @@ export default function AgentsPage() {
                 height: "100%",
                 background: "var(--surface)",
                 borderLeft: "1px solid var(--border)",
-                padding: 14,
-                overflow: "auto",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <div>
-                  <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>Agent 对话窗口</div>
-                  <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                    {activeAgent.id} · 会话标题：{activeAgent.session_name || "-"} · {toStatusLabel(activeAgent.status)}
+              <div
+                style={{
+                  padding: 14,
+                  borderBottom: "1px solid var(--border)",
+                  background: "var(--surface2)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                  <div
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: "50%",
+                      border: "1px solid var(--border)",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 700,
+                      color: "var(--text-bright)",
+                      background: "var(--surface)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {(activeAgent.alias || activeAgent.id).slice(0, 1).toUpperCase()}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {activeAgent.alias || activeAgent.id}
+                    </div>
+                    <div style={{ color: "var(--text-dim)", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {activeAgent.session_name || "-"} · {toStatusLabel(activeAgent.status)}
+                    </div>
                   </div>
                 </div>
                 <SecondaryButton
@@ -470,94 +510,186 @@ export default function AgentsPage() {
                 </SecondaryButton>
               </div>
 
-              <section style={{ marginBottom: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)", padding: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>当前执行内容</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <SecondaryButton
-                      type="button"
-                      onClick={() => setOutputMode((prev) => (prev === "stream" ? "full" : "stream"))}
-                      style={{ padding: "4px 8px", fontSize: 12, background: "var(--surface)" }}
-                    >
-                      {outputMode === "stream" ? "切换全量日志" : "切换实时流"}
-                    </SecondaryButton>
-                    <SecondaryButton
-                      type="button"
-                      onClick={() => setAutoScroll((prev) => !prev)}
-                      style={{ padding: "4px 8px", fontSize: 12, background: "var(--surface)" }}
-                    >
-                      {autoScroll ? "暂停自动滚动" : "开启自动滚动"}
-                    </SecondaryButton>
-                  </div>
-                </div>
-                <div
-                  ref={outputRef}
-                  style={{
-                    maxHeight: 220,
-                    overflow: "auto",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    background: "#0d1117",
-                    color: "#c9d1d9",
-                    padding: 10,
-                    fontSize: 12,
-                    fontFamily: "var(--mono)",
-                    whiteSpace: "pre-wrap",
-                  }}
-                  dangerouslySetInnerHTML={{
-                    __html: ansiToHtml(currentOutput || "暂无输出"),
-                  }}
-                />
-                <div style={{ color: "var(--text-dim)", fontSize: 11, marginTop: 6 }}>
-                  模式：{outputMode === "stream" ? "实时流（SSE）" : "全量快照（3秒刷新）"}
-                </div>
-              </section>
-
-              <section
-                ref={chatRef}
+              <div
                 style={{
-                  border: "1px solid var(--border)",
-                  borderRadius: 10,
-                  background: "var(--surface2)",
-                  minHeight: 260,
-                  maxHeight: 360,
-                  overflow: "auto",
-                  padding: 10,
-                  marginBottom: 10,
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 0,
+                  background: "var(--surface)",
                 }}
               >
-                {chatItems.length === 0 ? (
-                  <div style={{ color: "var(--text-dim)" }}>发送消息后显示对话内容</div>
-                ) : (
-                  chatItems.map((item) => (
-                    <div key={`${item.role}-${item.at}`} style={{ marginBottom: 8, border: "1px solid var(--border)", borderRadius: 8, padding: 8, background: item.role === "user" ? "#1b3a6a" : "var(--surface)" }}>
-                      <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 4 }}>{item.role === "user" ? "董事长" : "Agent"}</div>
-                      <div
-                        style={{ whiteSpace: "pre-wrap", fontFamily: item.role === "assistant" ? "var(--mono)" : undefined }}
-                        dangerouslySetInnerHTML={{
-                          __html: item.role === "assistant" ? ansiToHtml(item.content) : escapeHtml(item.content),
-                        }}
-                      />
-                    </div>
-                  ))
-                )}
-              </section>
-
-              <form onSubmit={sendMessage}>
-                <TextAreaInput
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  required
-                  placeholder="输入指令并发送"
-                  style={{ width: "100%", minHeight: 90, marginBottom: 10 }}
-                />
-                <PrimaryButton
-                  type="submit"
-                  disabled={sending}
+                <section
+                  style={{
+                    margin: "10px 14px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    background: "var(--surface2)",
+                    padding: 10,
+                  }}
                 >
-                  {sending ? "发送中..." : "发送消息"}
-                </PrimaryButton>
-              </form>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>当前执行内容</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <SecondaryButton
+                        type="button"
+                        onClick={() => setOutputMode((prev) => (prev === "stream" ? "full" : "stream"))}
+                        style={{ padding: "4px 8px", fontSize: 12, background: "var(--surface)" }}
+                      >
+                        {outputMode === "stream" ? "切换全量日志" : "切换实时流"}
+                      </SecondaryButton>
+                      <SecondaryButton
+                        type="button"
+                        onClick={() => setAutoScroll((prev) => !prev)}
+                        style={{ padding: "4px 8px", fontSize: 12, background: "var(--surface)" }}
+                      >
+                        {autoScroll ? "暂停自动滚动" : "开启自动滚动"}
+                      </SecondaryButton>
+                    </div>
+                  </div>
+                  <div
+                    ref={outputRef}
+                    style={{
+                      maxHeight: 170,
+                      overflow: "auto",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      background: "var(--surface)",
+                      color: "var(--text)",
+                      padding: 10,
+                      fontSize: 12,
+                      fontFamily: "var(--mono)",
+                      whiteSpace: "pre-wrap",
+                    }}
+                    dangerouslySetInnerHTML={{
+                      __html: ansiToHtml(currentOutput || "暂无输出"),
+                    }}
+                  />
+                  <div style={{ color: "var(--text-dim)", fontSize: 11, marginTop: 6 }}>
+                    模式：{outputMode === "stream" ? "实时流（SSE）" : "全量快照（3秒刷新）"}
+                  </div>
+                </section>
+
+                <section
+                  ref={chatRef}
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    overflow: "auto",
+                    padding: "4px 14px 10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    background: "var(--surface)",
+                  }}
+                >
+                  {chatItems.length === 0 ? (
+                    <div
+                      style={{
+                        margin: "auto",
+                        color: "var(--text-dim)",
+                        border: "1px dashed var(--border)",
+                        borderRadius: 10,
+                        padding: "10px 12px",
+                        background: "var(--surface2)",
+                      }}
+                    >
+                      发送消息后开始会话
+                    </div>
+                  ) : (
+                    chatItems.map((item) => {
+                      const isUser = item.role === "user";
+                      return (
+                        <div
+                          key={`${item.role}-${item.at}`}
+                          style={{
+                            display: "flex",
+                            justifyContent: isUser ? "flex-end" : "flex-start",
+                          }}
+                        >
+                          <div
+                            style={{
+                              maxWidth: "84%",
+                              borderRadius: 12,
+                              border: "1px solid var(--border)",
+                              background: isUser ? "var(--accent)" : "var(--surface2)",
+                              color: isUser ? "#fff" : "var(--text)",
+                              padding: "8px 10px",
+                              boxShadow: "0 1px 0 rgba(0,0,0,0.05)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 11,
+                                marginBottom: 4,
+                                color: isUser ? "rgba(255,255,255,0.9)" : "var(--text-dim)",
+                              }}
+                            >
+                              {isUser ? "董事长" : "Agent"} · {formatChatTime(item.at)}
+                            </div>
+                            <div
+                              style={{
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-word",
+                                fontFamily: isUser ? undefined : "var(--mono)",
+                                fontSize: 13,
+                              }}
+                              dangerouslySetInnerHTML={{
+                                __html: isUser ? escapeHtml(item.content) : ansiToHtml(item.content),
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </section>
+
+                <form
+                  ref={messageFormRef}
+                  onSubmit={sendMessage}
+                  style={{
+                    borderTop: "1px solid var(--border)",
+                    background: "var(--surface2)",
+                    padding: 12,
+                    display: "grid",
+                    gap: 8,
+                  }}
+                >
+                  <CodeEditorInput
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        messageFormRef.current?.requestSubmit();
+                      }
+                    }}
+                    required
+                    placeholder="输入指令并发送（Enter 发送，Shift+Enter 换行）"
+                    style={{ width: "100%", minHeight: 84, maxHeight: 160, marginBottom: 0 }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                      Enter 发送 · Shift+Enter 换行
+                    </div>
+                    <SecondaryButton
+                      type="button"
+                      onClick={() => setMessage("")}
+                      style={{ padding: "6px 10px" }}
+                    >
+                      清空输入
+                    </SecondaryButton>
+                    <PrimaryButton
+                      type="submit"
+                      disabled={sending}
+                      style={{ minWidth: 108 }}
+                    >
+                      {sending ? "发送中..." : "发送消息"}
+                    </PrimaryButton>
+                  </div>
+                </form>
+              </div>
             </div>
           </div>
         )}

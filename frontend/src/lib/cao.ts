@@ -157,3 +157,13 @@ export interface ConsoleTasksResponse {
   teams: ConsoleTaskTeam[];
   unassigned_scheduled_tasks: ConsoleTaskScheduledItem[];
 }
+
+export interface ConsoleScheduledTaskFile {
+  file_name: string;
+  flow_name: string;
+  file_path: string;
+}
+
+export interface ConsoleScheduledTaskFilesResponse {
+  files: ConsoleScheduledTaskFile[];
+}

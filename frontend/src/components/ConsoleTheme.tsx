@@ -1,6 +1,6 @@
 "use client";
 
-import { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, KeyboardEvent, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 
 const panelStyle: CSSProperties = {
   background: "var(--surface)",
@@ -201,6 +201,43 @@ export function SelectInput(props: SelectHTMLAttributes<HTMLSelectElement>) {
 
 export function TextAreaInput(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...props} style={{ ...fieldBaseStyle, ...(props.style || {}) }} />;
+}
+
+export function CodeEditorInput(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const { onKeyDown, style, ...rest } = props;
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const target = event.currentTarget;
+      const start = target.selectionStart;
+      const end = target.selectionEnd;
+      target.setRangeText("\t", start, end, "end");
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    onKeyDown?.(event);
+  }
+
+  return (
+    <textarea
+      {...rest}
+      onKeyDown={handleKeyDown}
+      wrap={props.wrap || "off"}
+      spellCheck={false}
+      autoCorrect="off"
+      autoCapitalize="off"
+      style={{
+        ...fieldBaseStyle,
+        fontFamily: "var(--mono)",
+        fontSize: 12,
+        lineHeight: 1.5,
+        whiteSpace: "pre",
+        overflowX: "auto",
+        tabSize: 2,
+        ...style,
+      }}
+    />
+  );
 }
 
 export function PrimaryButton(props: ButtonHTMLAttributes<HTMLButtonElement>) {

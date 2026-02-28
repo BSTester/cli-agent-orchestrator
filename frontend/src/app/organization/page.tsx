@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import ConsoleNav from "@/components/ConsoleNav";
 import {
+  CodeEditorInput,
   DataTable,
   DataTd,
   DataTh,
@@ -18,7 +19,6 @@ import {
   SelectInput,
   StatusPill,
   SuccessButton,
-  TextAreaInput,
   TextInput,
 } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
@@ -385,7 +385,7 @@ export default function OrganizationPage() {
                 ))}
               </SelectInput>
             </div>
-            <TextAreaInput
+            <CodeEditorInput
               value={newAgentPrompt}
               onChange={(e) => setNewAgentPrompt(e.target.value)}
               required

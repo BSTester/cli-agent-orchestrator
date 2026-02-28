@@ -5,6 +5,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import ConsoleNav from "@/components/ConsoleNav";
 import {
   CardGrid,
+  CodeEditorInput,
   EmptyState,
   ErrorBanner,
   PageIntro,
@@ -16,17 +17,24 @@ import {
   SelectInput,
   StatCard,
   StatusPill,
-  TextAreaInput,
   TextInput,
 } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
-import { caoRequest, ConsoleTasksResponse } from "@/lib/cao";
+import {
+  caoRequest,
+  ConsoleScheduledTaskFile,
+  ConsoleScheduledTaskFilesResponse,
+  ConsoleTasksResponse,
+} from "@/lib/cao";
 import { isStatusActive, toStatusLabel } from "@/lib/status";
 
 export default function TasksPage() {
   const [data, setData] = useState<ConsoleTasksResponse | null>(null);
+  const [flowFiles, setFlowFiles] = useState<ConsoleScheduledTaskFilesResponse["files"]>([]);
   const [error, setError] = useState("");
+
   const [creating, setCreating] = useState(false);
+  const [loadingFileContent, setLoadingFileContent] = useState(false);
 
   const [flowName, setFlowName] = useState("");
   const [flowContent, setFlowContent] = useState(`---
@@ -40,6 +48,8 @@ Share one interesting world trivia for today.
 `);
   const [leaderId, setLeaderId] = useState("");
 
+  const [selectedFileName, setSelectedFileName] = useState("");
+
   const loadTasks = useCallback(async () => {
     const result = await caoRequest<ConsoleTasksResponse>("GET", "/console/tasks");
     if (!result.ok) {
@@ -50,29 +60,45 @@ Share one interesting world trivia for today.
     setError("");
   }, []);
 
+  const loadFlowFiles = useCallback(async () => {
+    const result = await caoRequest<ConsoleScheduledTaskFilesResponse>(
+      "GET",
+      "/console/tasks/scheduled/files"
+    );
+    if (!result.ok) {
+      return;
+    }
+    setFlowFiles(result.data.files || []);
+  }, []);
+
   useEffect(() => {
     const bootstrapTimer = setTimeout(() => {
       void loadTasks();
+      void loadFlowFiles();
     }, 0);
+
     const timer = setInterval(() => {
       void loadTasks();
     }, 10000);
+
     return () => {
       clearInterval(timer);
       clearTimeout(bootstrapTimer);
     };
-  }, [loadTasks]);
+  }, [loadFlowFiles, loadTasks]);
 
   async function createScheduledTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!flowContent.trim()) {
       return;
     }
+
     setCreating(true);
 
     const result = await caoRequest("POST", "/console/tasks/scheduled", {
       body: {
-        flow_name: flowName.trim() || undefined,
+        file_name: selectedFileName.trim() || undefined,
+        flow_name: selectedFileName.trim() ? undefined : flowName.trim() || undefined,
         flow_content: flowContent.trim(),
         leader_id: leaderId.trim() || undefined,
       },
@@ -86,7 +112,31 @@ Share one interesting world trivia for today.
 
     setFlowName("");
     setCreating(false);
+    await loadFlowFiles();
     await loadTasks();
+  }
+
+  async function onSelectFlowFile(fileName: string) {
+    setSelectedFileName(fileName);
+    if (!fileName) {
+      return;
+    }
+
+    setLoadingFileContent(true);
+    const result = await caoRequest<ConsoleScheduledTaskFile & { content: string }>(
+      "GET",
+      `/console/tasks/scheduled/files/${encodeURIComponent(fileName)}`
+    );
+
+    if (!result.ok) {
+      setError("读取任务文件失败");
+      setLoadingFileContent(false);
+      return;
+    }
+
+    setFlowName(result.data.flow_name || "");
+    setFlowContent(result.data.content || "");
+    setLoadingFileContent(false);
   }
 
   async function runScheduledTask(name: string) {
@@ -144,7 +194,46 @@ Share one interesting world trivia for today.
         </SectionCard>
 
         <SectionCard>
-          <SectionTitle title="新建定时任务" />
+          <SectionTitle title="新建/编辑定时任务" />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 10,
+              alignItems: "stretch",
+              marginBottom: 12,
+            }}
+          >
+            <SelectInput
+              value={selectedFileName}
+              onChange={(event) => void onSelectFlowFile(event.target.value)}
+            >
+              <option value="">选择已有文件并加载到编辑器（可选）</option>
+              {flowFiles.map((fileItem) => (
+                <option key={fileItem.file_name} value={fileItem.file_name}>
+                  {fileItem.file_name}
+                </option>
+              ))}
+            </SelectInput>
+            <SelectInput
+              value={leaderId}
+              onChange={(event) => setLeaderId(event.target.value)}
+            >
+              <option value="">不绑定团队</option>
+              {teams.map((team) => (
+                <option key={`leader-${team.leader.id}`} value={team.leader.id}>
+                  {team.leader.session_name || team.leader.id}
+                </option>
+              ))}
+            </SelectInput>
+            <PrimaryButton type="button" disabled={loadingFileContent} style={{ minHeight: 38 }}>
+              {loadingFileContent ? "加载中..." : "可在下方编辑后发起"}
+            </PrimaryButton>
+          </div>
+
+          <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
+            选择已有文件后会回填到编辑器；提交时将保存到原文件并发起任务。未选择文件时将按名称创建新文件。
+          </div>
           <form
             onSubmit={createScheduledTask}
             style={{
@@ -163,35 +252,22 @@ Share one interesting world trivia for today.
               <TextInput
                 value={flowName}
                 onChange={(event) => setFlowName(event.target.value)}
-                placeholder="Flow 名称（可选，未填则取内容中的 name）"
+                placeholder="Flow 名称（新建时可选，编辑已有文件时将自动带出）"
               />
-              <SelectInput
-                value={leaderId}
-                onChange={(event) => setLeaderId(event.target.value)}
-              >
-                <option value="">不绑定团队</option>
-                {teams.map((team) => (
-                  <option key={team.leader.id} value={team.leader.id}>
-                    {team.leader.session_name || team.leader.id}
-                  </option>
-                ))}
-              </SelectInput>
             </div>
-            <TextAreaInput
+            <CodeEditorInput
               value={flowContent}
               onChange={(event) => setFlowContent(event.target.value)}
               required
               placeholder="请输入完整 flow markdown（含 frontmatter）"
-              style={{ width: "100%", minHeight: 220, fontFamily: "var(--mono)", fontSize: 12 }}
+              style={{ width: "100%", minHeight: 220 }}
             />
-            <PrimaryButton
-              type="submit"
-              disabled={creating}
-              style={{
-                minHeight: 38,
-              }}
-            >
-              {creating ? "创建中..." : "创建任务"}
+            <PrimaryButton type="submit" disabled={creating} style={{ minHeight: 38 }}>
+              {creating
+                ? "提交中..."
+                : selectedFileName
+                  ? "保存并发起任务"
+                  : "创建并发起任务"}
             </PrimaryButton>
           </form>
         </SectionCard>
