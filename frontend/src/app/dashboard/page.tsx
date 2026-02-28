@@ -8,7 +8,7 @@ import RequireAuth from "@/components/RequireAuth";
 import { caoRequest, ConsoleAgent, ConsoleOverview } from "@/lib/cao";
 import { toStatusLabel } from "@/lib/status";
 
-function PieChartCard({
+function BarChartCard({
   title,
   rows,
 }: {
@@ -27,21 +27,7 @@ function PieChartCard({
     "#84cc16",
   ];
 
-  const normalizedRows = rows.filter((row) => row.value > 0);
-  let current = 0;
-  const gradientStops = normalizedRows
-    .map((row, index) => {
-      const start = current;
-      const degree = total > 0 ? (row.value / total) * 360 : 0;
-      const end = start + degree;
-      current = end;
-      return `${palette[index % palette.length]} ${start}deg ${end}deg`;
-    })
-    .join(", ");
-
-  const chartBackground = gradientStops
-    ? `conic-gradient(${gradientStops})`
-    : "var(--surface2)";
+  const normalizedRows = rows.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
 
   return (
     <div
@@ -56,41 +42,49 @@ function PieChartCard({
       {normalizedRows.length === 0 ? (
         <EmptyState text="暂无数据" />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 12, alignItems: "center" }}>
-          <div
-            style={{
-              width: 140,
-              height: 140,
-              borderRadius: "50%",
-              background: chartBackground,
-              border: "1px solid var(--border)",
-              margin: "0 auto",
-            }}
-          />
-          <div>
-            {normalizedRows.map((row, index) => {
-              const percent = total > 0 ? Math.round((row.value / total) * 100) : 0;
-              return (
-                <div key={row.label} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
-                  <span style={{ color: "var(--text)", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <span
-                      style={{
-                        display: "inline-block",
-                        width: 10,
-                        height: 10,
-                        borderRadius: 999,
-                        background: palette[index % palette.length],
-                      }}
-                    />
-                    {row.label}
-                  </span>
+        <div style={{ display: "grid", gap: 10 }}>
+          {normalizedRows.map((row, index) => {
+            const percent = total > 0 ? Math.round((row.value / total) * 100) : 0;
+            const barWidth = total > 0 ? Math.max(4, (row.value / total) * 100) : 0;
+            return (
+              <div key={row.label}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    marginBottom: 6,
+                    gap: 8,
+                    alignItems: "center",
+                  }}
+                >
+                  <span style={{ color: "var(--text)", fontSize: 13 }}>{row.label}</span>
                   <span style={{ color: "var(--text-dim)", fontSize: 12 }}>
                     {row.value} ({percent}%)
                   </span>
                 </div>
-              );
-            })}
-          </div>
+                <div
+                  style={{
+                    width: "100%",
+                    height: 10,
+                    borderRadius: 999,
+                    background: "var(--surface2)",
+                    border: "1px solid var(--border)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    title={`${row.label}: ${row.value} (${percent}%)`}
+                    style={{
+                      width: `${barWidth}%`,
+                      minWidth: 4,
+                      height: "100%",
+                      background: palette[index % palette.length],
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -134,7 +128,7 @@ export default function DashboardPage() {
 
   const providerRows = Object.entries(overview?.provider_counts || {});
   const statusRows = Object.entries(overview?.status_counts || {});
-  const mainAgents: ConsoleAgent[] = overview?.main_agents || [];
+  const mainAgents: ConsoleAgent[] = useMemo(() => overview?.main_agents || [], [overview?.main_agents]);
   const mainStatusRows = useMemo(() => {
     const counts = new Map<string, number>();
     mainAgents.forEach((agent) => {
@@ -172,12 +166,12 @@ export default function DashboardPage() {
         </SectionCard>
 
         <SectionTitle title="运行分布" />
-        <CardGrid minWidth={260} gap={12}>
-          <PieChartCard
+        <CardGrid minWidth={360} gap={12}>
+          <BarChartCard
             title="Provider类型分布图"
             rows={providerRows.map(([label, value]) => ({ label, value }))}
           />
-          <PieChartCard
+          <BarChartCard
             title="运行状态分布图"
             rows={statusRows.map(([label, value]) => ({ label: toStatusLabel(label), value }))}
           />
@@ -187,7 +181,7 @@ export default function DashboardPage() {
           <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队负责人看板</div>
           {mainStatusRows.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <PieChartCard title="负责人状态分布" rows={mainStatusRows} />
+              <BarChartCard title="负责人状态分布" rows={mainStatusRows} />
             </div>
           )}
           {mainAgents.length === 0 ? (
