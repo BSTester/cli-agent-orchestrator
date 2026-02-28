@@ -257,7 +257,7 @@ export default function DashboardPage() {
         <SectionCard>
           <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队看板</div>
           <BarChartCard title="团队任务数" rows={leaderTaskRows} />
-          <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队负责人列表</div>
+          <div style={{ color: "var(--text-bright)", fontWeight: 700, marginTop: 16, marginBottom: 8 }}>团队负责人列表</div>
           {mainAgents.length === 0 ? (
             <EmptyState text="当前没有在营团队" />
           ) : (
