@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import ConsoleNav from "@/components/ConsoleNav";
 import {
@@ -74,6 +76,10 @@ function ansiToHtml(input: string): string {
     return `<span style=\"color:${color}\">`;
   });
   return escaped;
+}
+
+function stripAnsi(input: string): string {
+  return input.replace(/\u001b\[[0-9;]*m/g, "");
 }
 
 export default function AgentsPage() {
@@ -549,6 +555,7 @@ export default function AgentsPage() {
                   </div>
                   <div
                     ref={outputRef}
+                    className="console-chat-scroll"
                     style={{
                       maxHeight: 170,
                       overflow: "auto",
@@ -572,6 +579,7 @@ export default function AgentsPage() {
 
                 <section
                   ref={chatRef}
+                  className="console-chat-scroll"
                   style={{
                     flex: 1,
                     minHeight: 0,
@@ -628,16 +636,67 @@ export default function AgentsPage() {
                               {isUser ? "董事长" : "Agent"} · {formatChatTime(item.at)}
                             </div>
                             <div
-                              style={{
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-word",
-                                fontFamily: isUser ? undefined : "var(--mono)",
-                                fontSize: 13,
-                              }}
-                              dangerouslySetInnerHTML={{
-                                __html: isUser ? escapeHtml(item.content) : ansiToHtml(item.content),
-                              }}
-                            />
+                              className={isUser ? "chat-markdown chat-markdown-user" : "chat-markdown"}
+                              style={{ fontSize: 13 }}
+                            >
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                  a: ({ ...props }) => (
+                                    <a
+                                      {...props}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      style={{
+                                        color: isUser ? "#fff" : "var(--accent)",
+                                        textDecoration: "underline",
+                                      }}
+                                    />
+                                  ),
+                                  code: ({ className, children, ...props }) => {
+                                    const isBlock = Boolean(className);
+                                    if (!isBlock) {
+                                      return (
+                                        <code
+                                          {...props}
+                                          style={{
+                                            background: isUser ? "rgba(255,255,255,0.2)" : "var(--surface)",
+                                            border: "1px solid var(--border)",
+                                            borderRadius: 6,
+                                            padding: "1px 4px",
+                                            fontFamily: "var(--mono)",
+                                            fontSize: 12,
+                                          }}
+                                        >
+                                          {children}
+                                        </code>
+                                      );
+                                    }
+                                    return (
+                                      <code
+                                        className="chat-code-block"
+                                        {...props}
+                                        style={{
+                                          display: "block",
+                                          whiteSpace: "pre",
+                                          overflowX: "auto",
+                                          padding: 10,
+                                          borderRadius: 8,
+                                          border: "1px solid var(--border)",
+                                          background: isUser ? "rgba(0,0,0,0.2)" : "var(--surface)",
+                                          fontFamily: "var(--mono)",
+                                          fontSize: 12,
+                                        }}
+                                      >
+                                        {children}
+                                      </code>
+                                    );
+                                  },
+                                }}
+                              >
+                                {isUser ? item.content : stripAnsi(item.content)}
+                              </ReactMarkdown>
+                            </div>
                           </div>
                         </div>
                       );
@@ -660,19 +719,13 @@ export default function AgentsPage() {
                     value={message}
                     onChange={setMessage}
                     language="markdown"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        messageFormRef.current?.requestSubmit();
-                      }
-                    }}
                     required
-                    placeholder="输入指令并发送（Enter 发送，Shift+Enter 换行）"
+                    placeholder="输入指令并发送"
                     style={{ width: "100%", minHeight: 84, maxHeight: 160, marginBottom: 0 }}
                   />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                     <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                      Enter 发送 · Shift+Enter 换行
+                      输入内容后点击“发送消息”
                     </div>
                     <SecondaryButton
                       type="button"
@@ -692,6 +745,67 @@ export default function AgentsPage() {
                 </form>
               </div>
             </div>
+            <style jsx global>{`
+              .console-chat-scroll {
+                scrollbar-color: var(--border) var(--surface2);
+                scrollbar-width: thin;
+              }
+              .console-chat-scroll::-webkit-scrollbar {
+                width: 10px;
+                height: 10px;
+              }
+              .console-chat-scroll::-webkit-scrollbar-track {
+                background: var(--surface2);
+                border-radius: 999px;
+              }
+              .console-chat-scroll::-webkit-scrollbar-thumb {
+                background: var(--border);
+                border-radius: 999px;
+                border: 2px solid var(--surface2);
+              }
+              .console-chat-scroll::-webkit-scrollbar-thumb:hover {
+                background: var(--text-dim);
+              }
+              .chat-markdown p,
+              .chat-markdown ul,
+              .chat-markdown ol,
+              .chat-markdown pre,
+              .chat-markdown table,
+              .chat-markdown blockquote {
+                margin: 0 0 8px;
+              }
+              .chat-markdown p:last-child,
+              .chat-markdown ul:last-child,
+              .chat-markdown ol:last-child,
+              .chat-markdown pre:last-child,
+              .chat-markdown table:last-child,
+              .chat-markdown blockquote:last-child {
+                margin-bottom: 0;
+              }
+              .chat-markdown ul,
+              .chat-markdown ol {
+                padding-left: 18px;
+              }
+              .chat-markdown table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 12px;
+              }
+              .chat-markdown th,
+              .chat-markdown td {
+                border: 1px solid var(--border);
+                padding: 4px 6px;
+              }
+              .chat-markdown-user th,
+              .chat-markdown-user td {
+                border-color: rgba(255, 255, 255, 0.3);
+              }
+              .chat-markdown blockquote {
+                border-left: 3px solid var(--border);
+                padding-left: 8px;
+                color: var(--text-dim);
+              }
+            `}</style>
           </div>
         )}
       </PageShell>

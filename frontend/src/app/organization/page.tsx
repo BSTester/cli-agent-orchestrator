@@ -69,7 +69,7 @@ export default function OrganizationPage() {
   const [newAgentProvider, setNewAgentProvider] = useState("");
   const [newAgentPrompt, setNewAgentPrompt] = useState("");
   const [creatingProfile, setCreatingProfile] = useState(false);
-  const [offboardTarget, setOffboardTarget] = useState<{ agentId: string; sessionName: string } | null>(null);
+  const [offboardTarget, setOffboardTarget] = useState<{ agentId: string; sessionName: string; terminalId: string } | null>(null);
 
   function extractErrorDetail(payload: unknown): string {
     if (!payload || typeof payload !== "object") {
@@ -134,40 +134,40 @@ export default function OrganizationPage() {
     }
   }, [mainProfile, workerProfile]);
 
-  async function shutdownSessionByTerminal(agentId: string, sessionName?: string) {
-    if (!sessionName) {
-      setError("离职失败：目标Agent没有会话信息");
+  async function shutdownSessionByTerminal(agentId: string, terminalId?: string, sessionName?: string) {
+    if (!terminalId) {
+      setError("退出团队失败：目标Agent没有终端信息");
       setNotice("");
       return;
     }
 
     setError("");
     setNotice("");
-    const result = await caoRequest("DELETE", `/sessions/${sessionName}`);
+    const result = await caoRequest("POST", `/terminals/${terminalId}/exit`);
     if (!result.ok) {
-      setError("离职失败：无法关闭对应会话");
+      setError("退出团队失败：无法关闭对应终端");
       setNotice("");
       return;
     }
 
-    setNotice(`已完成离职：${agentId}`);
+    setNotice(`已退出团队：${agentId}${sessionName ? `（${sessionName}）` : ""}`);
 
     await loadOrganization();
   }
 
-  function requestShutdown(agentId: string, sessionName?: string) {
-    if (!sessionName) {
-      setError("离职失败：目标Agent没有会话信息");
+  function requestShutdown(agentId: string, terminalId?: string, sessionName?: string) {
+    if (!terminalId) {
+      setError("退出团队失败：目标Agent没有终端信息");
       return;
     }
 
-    setOffboardTarget({ agentId, sessionName });
+    setOffboardTarget({ agentId, terminalId, sessionName: sessionName || "-" });
     setError("");
   }
 
   function cancelShutdown() {
     setOffboardTarget(null);
-    setNotice("已取消离职操作");
+    setNotice("已取消退出团队操作");
     setError("");
   }
 
@@ -178,7 +178,7 @@ export default function OrganizationPage() {
 
     const currentTarget = offboardTarget;
     setOffboardTarget(null);
-    await shutdownSessionByTerminal(currentTarget.agentId, currentTarget.sessionName);
+    await shutdownSessionByTerminal(currentTarget.agentId, currentTarget.terminalId, currentTarget.sessionName);
   }
 
   async function onboardNewEmployee(event: FormEvent<HTMLFormElement>) {
@@ -330,7 +330,7 @@ export default function OrganizationPage() {
       <PageShell>
         <PageIntro
           title="组织管理"
-          description="负责团队编制操作：新建团队、新入职员工、加入团队。"
+          description="负责团队编制操作：新建团队、保存岗位类型、加入团队。"
         />
 
         {error && <ErrorBanner text={error} />}
@@ -403,7 +403,7 @@ export default function OrganizationPage() {
               type="submit"
               disabled={creatingProfile}
             >
-              {creatingProfile ? "办理入职中..." : "保存岗位并完成安装"}
+              {creatingProfile ? "保存中..." : "保存岗位并完成安装"}
             </PrimaryButton>
             </form>
           </SectionCard>
@@ -492,7 +492,7 @@ export default function OrganizationPage() {
                 type="submit"
                 disabled={creatingWorker}
               >
-                {creatingWorker ? "办理中..." : "办理入职"}
+                {creatingWorker ? "加入中..." : "加入团队"}
               </SuccessButton>
             </form>
           </SectionCard>
@@ -553,11 +553,11 @@ export default function OrganizationPage() {
                             <DataTd>
                               <SecondaryButton
                                 type="button"
-                                onClick={() => requestShutdown(member.id, member.session_name)}
-                                disabled={!member.session_name}
+                                onClick={() => requestShutdown(member.id, member.id, member.session_name)}
+                                disabled={!member.id}
                                 style={{ padding: "4px 8px", fontSize: 12 }}
                               >
-                                办理离职
+                                退出团队
                               </SecondaryButton>
                             </DataTd>
                           </tr>
@@ -599,7 +599,7 @@ export default function OrganizationPage() {
               }}
             >
               <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
-                确认办理离职
+                确认退出团队
               </div>
               <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 4 }}>
                 Agent：{offboardTarget.agentId}
@@ -608,14 +608,14 @@ export default function OrganizationPage() {
                 会话：{offboardTarget.sessionName}
               </div>
               <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 14 }}>
-                确认后将关闭该成员会话并从当前组织架构中移除。
+                确认后将关闭该成员终端并从当前组织架构中移除，不会影响负责人。
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <SecondaryButton type="button" onClick={cancelShutdown}>
                   取消
                 </SecondaryButton>
                 <PrimaryButton type="button" onClick={() => void confirmShutdown()}>
-                  确认离职
+                  确认退出
                 </PrimaryButton>
               </div>
             </div>
