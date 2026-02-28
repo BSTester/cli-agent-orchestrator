@@ -324,7 +324,7 @@ export default function AgentsPage() {
                     负责人：{group.leader.alias || group.leader.id}
                   </div>
                   <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                    会话标题：{group.leader.session_name || "-"} · ID: {group.leader.id} · {group.leader.agent_profile} · {group.leader.provider} · {toStatusLabel(group.leader.status)}
+                    会话标题：{group.leader.session_name || "-"} · ID: {group.leader.id} · {group.leader.agent_profile} · {group.leader.provider}
                   </div>
                   <div style={{ display: "flex", marginTop: 6 }}>
                     <StatusPill
@@ -375,9 +375,6 @@ export default function AgentsPage() {
                               </div>
                               <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
                                 会话标题：{member.session_name || "-"} · ID: {member.id} · {member.provider}
-                              </div>
-                              <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                                状态：{toStatusLabel(member.status)}
                               </div>
                               <div style={{ display: "flex", marginTop: 6 }}>
                                 <StatusPill
@@ -637,6 +634,15 @@ export default function AgentsPage() {
                   <TextAreaInput
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.nativeEvent.isComposing) {
+                        return;
+                      }
+                      if (event.key === "Enter" && event.shiftKey) {
+                        event.preventDefault();
+                        messageFormRef.current?.requestSubmit();
+                      }
+                    }}
                     required
                     placeholder="输入指令并发送"
                     rows={4}
