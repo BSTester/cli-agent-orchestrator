@@ -70,6 +70,11 @@ export default function OrganizationPage() {
   const [newAgentPrompt, setNewAgentPrompt] = useState("");
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [offboardTarget, setOffboardTarget] = useState<{ agentId: string; sessionName: string; terminalId: string } | null>(null);
+  const [disbandTarget, setDisbandTarget] = useState<{
+    leaderId: string;
+    leaderName: string;
+    memberIds: string[];
+  } | null>(null);
 
   function extractErrorDetail(payload: unknown): string {
     if (!payload || typeof payload !== "object") {
@@ -143,9 +148,10 @@ export default function OrganizationPage() {
 
     setError("");
     setNotice("");
-    const result = await caoRequest("POST", `/terminals/${terminalId}/exit`);
+    const result = await caoRequest("DELETE", `/terminals/${terminalId}`);
     if (!result.ok) {
-      setError("退出团队失败：无法关闭对应终端");
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `退出团队失败：${detail}` : "退出团队失败：无法关闭对应终端");
       setNotice("");
       return;
     }
@@ -179,6 +185,51 @@ export default function OrganizationPage() {
     const currentTarget = offboardTarget;
     setOffboardTarget(null);
     await shutdownSessionByTerminal(currentTarget.agentId, currentTarget.terminalId, currentTarget.sessionName);
+  }
+
+  function requestDisbandTeam(leader: ConsoleAgent, members: ConsoleAgent[]) {
+    const memberIds = members.map((member) => member.id).filter(Boolean);
+    setDisbandTarget({
+      leaderId: leader.id,
+      leaderName: leader.alias || leader.id,
+      memberIds,
+    });
+    setError("");
+  }
+
+  function cancelDisbandTeam() {
+    setDisbandTarget(null);
+    setNotice("已取消解散团队操作");
+    setError("");
+  }
+
+  async function confirmDisbandTeam() {
+    if (!disbandTarget) {
+      return;
+    }
+
+    const currentTarget = disbandTarget;
+    setDisbandTarget(null);
+    setError("");
+    setNotice("");
+
+    const terminalIds = Array.from(new Set([...currentTarget.memberIds, currentTarget.leaderId]));
+    const failedIds: string[] = [];
+
+    for (const terminalId of terminalIds) {
+      const result = await caoRequest("DELETE", `/terminals/${terminalId}`);
+      if (!result.ok) {
+        failedIds.push(terminalId);
+      }
+    }
+
+    if (failedIds.length > 0) {
+      setError(`解散团队部分失败：${failedIds.join(", ")}`);
+    } else {
+      setNotice(`已解散团队：${currentTarget.leaderName}`);
+    }
+
+    await loadOrganization();
   }
 
   async function onboardNewEmployee(event: FormEvent<HTMLFormElement>) {
@@ -519,10 +570,10 @@ export default function OrganizationPage() {
                   </div>
                   <SecondaryButton
                     type="button"
-                    disabled
+                    onClick={() => requestDisbandTeam(group.leader, group.members)}
                     style={{ padding: "4px 8px", fontSize: 12 }}
                   >
-                    负责人不可离职
+                    解散团队
                   </SecondaryButton>
                 </div>
                 {group.members.length === 0 ? (
@@ -619,6 +670,57 @@ export default function OrganizationPage() {
                 </SecondaryButton>
                 <PrimaryButton type="button" onClick={() => void confirmShutdown()}>
                   确认退出
+                </PrimaryButton>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {disbandTarget && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 51,
+              background: "rgba(0,0,0,0.45)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+            }}
+            onClick={cancelDisbandTeam}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="解散团队确认"
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "min(560px, 100%)",
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                padding: 14,
+              }}
+            >
+              <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
+                确认解散团队
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 4 }}>
+                负责人：{disbandTarget.leaderName}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 12 }}>
+                团队成员数：{disbandTarget.memberIds.length}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 14 }}>
+                确认后将仅关闭当前团队中的负责人和成员，不会影响其他团队的 Agent。
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <SecondaryButton type="button" onClick={cancelDisbandTeam}>
+                  取消
+                </SecondaryButton>
+                <PrimaryButton type="button" onClick={() => void confirmDisbandTeam()}>
+                  确认解散
                 </PrimaryButton>
               </div>
             </div>
