@@ -183,6 +183,10 @@ export default function OrganizationPage() {
 
   async function onboardNewEmployee(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!newAgentPrompt.trim()) {
+      setError("系统提示词不能为空");
+      return;
+    }
     setCreatingProfile(true);
     setError("");
 
@@ -387,7 +391,10 @@ export default function OrganizationPage() {
             </div>
             <CodeEditorInput
               value={newAgentPrompt}
-              onChange={(e) => setNewAgentPrompt(e.target.value)}
+              onChange={setNewAgentPrompt}
+              language="markdown"
+              showToolbar
+              enableFormat
               required
               placeholder="系统提示词（markdown 内容）"
               style={{ width: "100%", minHeight: 120, marginBottom: 10 }}

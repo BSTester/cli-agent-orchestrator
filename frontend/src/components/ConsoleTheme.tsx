@@ -1,6 +1,12 @@
 "use client";
 
-import { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, KeyboardEvent, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import CodeMirror from "@uiw/react-codemirror";
+import { javascript } from "@codemirror/lang-javascript";
+import { markdown } from "@codemirror/lang-markdown";
+import { python } from "@codemirror/lang-python";
+import { EditorState, Extension } from "@codemirror/state";
+import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
+import { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes, useMemo, useState } from "react";
 
 const panelStyle: CSSProperties = {
   background: "var(--surface)",
@@ -203,40 +209,237 @@ export function TextAreaInput(props: TextareaHTMLAttributes<HTMLTextAreaElement>
   return <textarea {...props} style={{ ...fieldBaseStyle, ...(props.style || {}) }} />;
 }
 
-export function CodeEditorInput(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  const { onKeyDown, style, ...rest } = props;
+type CodeEditorLanguage = "text" | "markdown" | "javascript" | "python";
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Tab") {
-      event.preventDefault();
-      const target = event.currentTarget;
-      const start = target.selectionStart;
-      const end = target.selectionEnd;
-      target.setRangeText("\t", start, end, "end");
-      target.dispatchEvent(new Event("input", { bubbles: true }));
+function inferLanguageFromFileName(fileName?: string): CodeEditorLanguage {
+  if (!fileName) {
+    return "text";
+  }
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mdx")) {
+    return "markdown";
+  }
+  if (lower.endsWith(".js") || lower.endsWith(".jsx") || lower.endsWith(".ts") || lower.endsWith(".tsx")) {
+    return "javascript";
+  }
+  if (lower.endsWith(".py")) {
+    return "python";
+  }
+  return "text";
+}
+
+function formatContent(value: string, language: CodeEditorLanguage): string {
+  if (!value) {
+    return value;
+  }
+
+  const normalized = value.replace(/\r\n/g, "\n");
+  if (language === "markdown" || language === "text") {
+    const lines = normalized.split("\n").map((line) => line.replace(/[ \t]+$/g, ""));
+    const formatted = lines.join("\n").replace(/\n{3,}/g, "\n\n");
+    return formatted.endsWith("\n") ? formatted : `${formatted}\n`;
+  }
+
+  return normalized;
+}
+
+type CodeEditorInputProps = {
+  value: string;
+  onChange: (value: string) => void;
+  onKeyDown?: (event: globalThis.KeyboardEvent) => void;
+  language?: CodeEditorLanguage | "auto";
+  fileName?: string;
+  placeholder?: string;
+  required?: boolean;
+  showToolbar?: boolean;
+  enableFormat?: boolean;
+  defaultReadOnly?: boolean;
+  style?: CSSProperties;
+};
+
+export function CodeEditorInput({
+  value,
+  onChange,
+  onKeyDown,
+  language = "text",
+  fileName,
+  placeholder,
+  showToolbar = false,
+  enableFormat = false,
+  defaultReadOnly = false,
+  style,
+}: CodeEditorInputProps) {
+  const [isReadOnly, setIsReadOnly] = useState(defaultReadOnly);
+  const [lineWrap, setLineWrap] = useState(true);
+
+  const resolvedLanguage = useMemo<CodeEditorLanguage>(() => {
+    if (language === "auto") {
+      return inferLanguageFromFileName(fileName);
     }
-    onKeyDown?.(event);
+    return language;
+  }, [fileName, language]);
+
+  const extensions = useMemo(() => {
+    const languageExtensions: Record<CodeEditorLanguage, Extension[]> = {
+      text: [],
+      markdown: [markdown()],
+      javascript: [javascript({ typescript: true })],
+      python: [python()],
+    };
+
+    const baseExtensions: Extension[] = [
+      ...languageExtensions[resolvedLanguage],
+      EditorState.readOnly.of(isReadOnly),
+      EditorView.editable.of(!isReadOnly),
+    ];
+
+    if (lineWrap) {
+      baseExtensions.push(EditorView.lineWrapping);
+    }
+    if (placeholder) {
+      baseExtensions.push(cmPlaceholder(placeholder));
+    }
+    if (onKeyDown) {
+      baseExtensions.push(
+        keymap.of([
+          {
+            key: "Mod-Enter",
+            run: () => false,
+          },
+        ])
+      );
+    }
+
+    return baseExtensions;
+  }, [isReadOnly, lineWrap, onKeyDown, placeholder, resolvedLanguage]);
+
+  function handleFormat() {
+    onChange(formatContent(value, resolvedLanguage));
   }
 
   return (
-    <textarea
-      {...rest}
-      onKeyDown={handleKeyDown}
-      wrap={props.wrap || "off"}
-      spellCheck={false}
-      autoCorrect="off"
-      autoCapitalize="off"
+    <div
       style={{
         ...fieldBaseStyle,
-        fontFamily: "var(--mono)",
-        fontSize: 12,
-        lineHeight: 1.5,
-        whiteSpace: "pre",
-        overflowX: "auto",
-        tabSize: 2,
+        padding: 0,
+        overflow: "hidden",
+        borderRadius: 8,
+        border: "1px solid var(--border)",
+        background: "var(--surface)",
         ...style,
       }}
-    />
+    >
+      {showToolbar && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 8px",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--surface2)",
+            fontSize: 12,
+            color: "var(--text-dim)",
+          }}
+        >
+          <div>语言：{resolvedLanguage}</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {enableFormat && (
+              <button
+                type="button"
+                onClick={handleFormat}
+                style={{
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                格式化
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setLineWrap((prev) => !prev)}
+              style={{
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                color: "var(--text)",
+                borderRadius: 6,
+                fontSize: 12,
+                padding: "3px 8px",
+                cursor: "pointer",
+              }}
+            >
+              {lineWrap ? "关闭换行" : "自动换行"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsReadOnly((prev) => !prev)}
+              style={{
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                color: "var(--text)",
+                borderRadius: 6,
+                fontSize: 12,
+                padding: "3px 8px",
+                cursor: "pointer",
+              }}
+            >
+              {isReadOnly ? "切换可编辑" : "切换只读"}
+            </button>
+          </div>
+        </div>
+      )}
+      <CodeMirror
+        value={value}
+        onChange={onChange}
+        basicSetup={{
+          lineNumbers: true,
+          highlightActiveLineGutter: true,
+          foldGutter: true,
+          autocompletion: true,
+          bracketMatching: true,
+        }}
+        extensions={extensions}
+        onKeyDown={onKeyDown}
+        theme="dark"
+        style={{
+          minHeight: 120,
+        }}
+        editable={!isReadOnly}
+        spellCheck={false}
+      />
+      <style jsx global>{`
+        .cm-editor {
+          background: var(--surface) !important;
+          color: var(--text) !important;
+          font-family: var(--mono);
+          font-size: 12px;
+        }
+        .cm-editor.cm-focused {
+          outline: none !important;
+        }
+        .cm-content,
+        .cm-line {
+          font-family: var(--mono);
+          line-height: 1.5;
+        }
+        .cm-gutters {
+          background: var(--surface2) !important;
+          border-right: 1px solid var(--border);
+          color: var(--text-dim);
+        }
+        .cm-activeLine,
+        .cm-activeLineGutter {
+          background: rgba(127, 127, 127, 0.12) !important;
+        }
+      `}</style>
+    </div>
   );
 }
 

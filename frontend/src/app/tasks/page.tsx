@@ -198,7 +198,7 @@ Share one interesting world trivia for today.
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
               gap: 10,
               alignItems: "stretch",
               marginBottom: 12,
@@ -207,6 +207,7 @@ Share one interesting world trivia for today.
             <SelectInput
               value={selectedFileName}
               onChange={(event) => void onSelectFlowFile(event.target.value)}
+              disabled={loadingFileContent}
             >
               <option value="">选择已有文件并加载到编辑器（可选）</option>
               {flowFiles.map((fileItem) => (
@@ -226,13 +227,12 @@ Share one interesting world trivia for today.
                 </option>
               ))}
             </SelectInput>
-            <PrimaryButton type="button" disabled={loadingFileContent} style={{ minHeight: 38 }}>
-              {loadingFileContent ? "加载中..." : "可在下方编辑后发起"}
-            </PrimaryButton>
           </div>
 
           <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
-            选择已有文件后会回填到编辑器；提交时将保存到原文件并发起任务。未选择文件时将按名称创建新文件。
+            {loadingFileContent
+              ? "任务文件加载中..."
+              : "选择已有文件后会回填到编辑器；提交时将保存到原文件并发起任务。未选择文件时将按名称创建新文件。"}
           </div>
           <form
             onSubmit={createScheduledTask}
@@ -257,7 +257,11 @@ Share one interesting world trivia for today.
             </div>
             <CodeEditorInput
               value={flowContent}
-              onChange={(event) => setFlowContent(event.target.value)}
+              onChange={setFlowContent}
+              language="auto"
+              fileName={selectedFileName || flowName}
+              showToolbar
+              enableFormat
               required
               placeholder="请输入完整 flow markdown（含 frontmatter）"
               style={{ width: "100%", minHeight: 220 }}
