@@ -251,6 +251,172 @@ def test_console_organization_two_layers(client: TestClient) -> None:
         assert body["leader_groups"][0]["members"][0]["id"] == "worker1"
 
 
+def test_console_organization_infers_worker_link_from_inbox(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_worker_links", return_value={}),
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value=set()),
+        patch("cli_agent_orchestrator.control_panel.main._list_team_aliases", return_value={}),
+        patch("cli_agent_orchestrator.control_panel.main._list_agent_aliases", return_value={}),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._infer_worker_leader_links_from_inbox",
+            return_value={"worker2": "leader1"},
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._register_team"),
+        patch("cli_agent_orchestrator.control_panel.main._set_worker_link") as mock_set_worker_link,
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+    ):
+        sessions = MagicMock()
+        sessions.raise_for_status.return_value = None
+        sessions.json.return_value = [{"name": "cao-leader"}, {"name": "cao-worker"}]
+
+        leader_session_terminals = MagicMock()
+        leader_session_terminals.raise_for_status.return_value = None
+        leader_session_terminals.json.return_value = [
+            {
+                "id": "leader1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+                "session_name": "cao-leader",
+            }
+        ]
+
+        worker_session_terminals = MagicMock()
+        worker_session_terminals.raise_for_status.return_value = None
+        worker_session_terminals.json.return_value = [
+            {
+                "id": "worker2",
+                "provider": "codex",
+                "agent_profile": "developer",
+                "session_name": "cao-worker",
+            }
+        ]
+
+        leader_detail = MagicMock()
+        leader_detail.raise_for_status.return_value = None
+        leader_detail.json.return_value = {
+            "id": "leader1",
+            "status": "IDLE",
+            "provider": "kiro_cli",
+            "agent_profile": "code_supervisor",
+            "session_name": "cao-leader",
+        }
+
+        worker_detail = MagicMock()
+        worker_detail.raise_for_status.return_value = None
+        worker_detail.json.return_value = {
+            "id": "worker2",
+            "status": "PROCESSING",
+            "provider": "codex",
+            "agent_profile": "developer",
+            "session_name": "cao-worker",
+        }
+
+        mock_request.side_effect = [
+            sessions,
+            leader_session_terminals,
+            worker_session_terminals,
+            leader_detail,
+            worker_detail,
+        ]
+
+        response = client.get("/console/organization")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["leader_groups"]) == 1
+        assert body["leader_groups"][0]["leader"]["id"] == "leader1"
+        assert body["leader_groups"][0]["members"][0]["id"] == "worker2"
+        mock_set_worker_link.assert_called_once_with("worker2", "leader1")
+
+
+def test_console_organization_single_leader_fallback_assigns_unlinked_workers(
+    client: TestClient,
+) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_worker_links", return_value={}),
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value=set()),
+        patch("cli_agent_orchestrator.control_panel.main._list_team_aliases", return_value={}),
+        patch("cli_agent_orchestrator.control_panel.main._list_agent_aliases", return_value={}),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._infer_worker_leader_links_from_inbox",
+            return_value={},
+        ),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._infer_worker_leader_links_from_session_name",
+            return_value={},
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._register_team"),
+        patch("cli_agent_orchestrator.control_panel.main._set_worker_link") as mock_set_worker_link,
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+    ):
+        sessions = MagicMock()
+        sessions.raise_for_status.return_value = None
+        sessions.json.return_value = [{"name": "cao-main"}, {"name": "cao-remote-worker"}]
+
+        leader_session_terminals = MagicMock()
+        leader_session_terminals.raise_for_status.return_value = None
+        leader_session_terminals.json.return_value = [
+            {
+                "id": "leader1",
+                "provider": "claude_code",
+                "agent_profile": "code_supervisor",
+                "session_name": "cao-main",
+            }
+        ]
+
+        worker_session_terminals = MagicMock()
+        worker_session_terminals.raise_for_status.return_value = None
+        worker_session_terminals.json.return_value = [
+            {
+                "id": "worker3",
+                "provider": "claude_code",
+                "agent_profile": "developer",
+                "session_name": "cao-remote-worker",
+            }
+        ]
+
+        leader_detail = MagicMock()
+        leader_detail.raise_for_status.return_value = None
+        leader_detail.json.return_value = {
+            "id": "leader1",
+            "status": "IDLE",
+            "provider": "claude_code",
+            "agent_profile": "code_supervisor",
+            "session_name": "cao-main",
+        }
+
+        worker_detail = MagicMock()
+        worker_detail.raise_for_status.return_value = None
+        worker_detail.json.return_value = {
+            "id": "worker3",
+            "status": "IDLE",
+            "provider": "claude_code",
+            "agent_profile": "developer",
+            "session_name": "cao-remote-worker",
+        }
+
+        mock_request.side_effect = [
+            sessions,
+            leader_session_terminals,
+            worker_session_terminals,
+            leader_detail,
+            worker_detail,
+        ]
+
+        response = client.get("/console/organization")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["leader_groups"]) == 1
+        assert body["leader_groups"][0]["leader"]["id"] == "leader1"
+        assert body["leader_groups"][0]["members"][0]["id"] == "worker3"
+        mock_set_worker_link.assert_called_once_with("worker3", "leader1")
+
+
 def test_console_create_org_worker_linked_to_leader(client: TestClient) -> None:
     login(client)
 

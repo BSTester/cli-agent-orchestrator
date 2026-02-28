@@ -69,6 +69,7 @@ export default function OrganizationPage() {
   const [newAgentProvider, setNewAgentProvider] = useState("");
   const [newAgentPrompt, setNewAgentPrompt] = useState("");
   const [creatingProfile, setCreatingProfile] = useState(false);
+  const [offboardTarget, setOffboardTarget] = useState<{ agentId: string; sessionName: string } | null>(null);
 
   function extractErrorDetail(payload: unknown): string {
     if (!payload || typeof payload !== "object") {
@@ -154,23 +155,30 @@ export default function OrganizationPage() {
     await loadOrganization();
   }
 
-  async function confirmAndShutdown(agentId: string, sessionName?: string) {
+  function requestShutdown(agentId: string, sessionName?: string) {
     if (!sessionName) {
       setError("离职失败：目标Agent没有会话信息");
       return;
     }
 
-    const confirmed = window.confirm(
-      `确认办理离职吗？\n\nAgent：${agentId}\n会话：${sessionName}\n\n确认后将关闭该会话。`
-    );
+    setOffboardTarget({ agentId, sessionName });
+    setError("");
+  }
 
-    if (!confirmed) {
-      setNotice("已取消离职操作");
-      setError("");
+  function cancelShutdown() {
+    setOffboardTarget(null);
+    setNotice("已取消离职操作");
+    setError("");
+  }
+
+  async function confirmShutdown() {
+    if (!offboardTarget) {
       return;
     }
 
-    await shutdownSessionByTerminal(agentId, sessionName);
+    const currentTarget = offboardTarget;
+    setOffboardTarget(null);
+    await shutdownSessionByTerminal(currentTarget.agentId, currentTarget.sessionName);
   }
 
   async function onboardNewEmployee(event: FormEvent<HTMLFormElement>) {
@@ -500,11 +508,10 @@ export default function OrganizationPage() {
                   </div>
                   <SecondaryButton
                     type="button"
-                    onClick={() => void confirmAndShutdown(group.leader.id, group.leader.session_name)}
-                    disabled={!group.leader.session_name}
+                    disabled
                     style={{ padding: "4px 8px", fontSize: 12 }}
                   >
-                    办理离职
+                    负责人不可离职
                   </SecondaryButton>
                 </div>
                 {group.members.length === 0 ? (
@@ -538,7 +545,7 @@ export default function OrganizationPage() {
                             <DataTd>
                               <SecondaryButton
                                 type="button"
-                                onClick={() => void confirmAndShutdown(member.id, member.session_name)}
+                                onClick={() => requestShutdown(member.id, member.session_name)}
                                 disabled={!member.session_name}
                                 style={{ padding: "4px 8px", fontSize: 12 }}
                               >
@@ -555,6 +562,57 @@ export default function OrganizationPage() {
             ))
           )}
         </SectionCard>
+
+        {offboardTarget && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 50,
+              background: "rgba(0,0,0,0.45)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+            }}
+            onClick={cancelShutdown}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="离职确认"
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "min(520px, 100%)",
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                padding: 14,
+              }}
+            >
+              <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
+                确认办理离职
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 4 }}>
+                Agent：{offboardTarget.agentId}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 12 }}>
+                会话：{offboardTarget.sessionName}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 14 }}>
+                确认后将关闭该成员会话并从当前组织架构中移除。
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <SecondaryButton type="button" onClick={cancelShutdown}>
+                  取消
+                </SecondaryButton>
+                <PrimaryButton type="button" onClick={() => void confirmShutdown()}>
+                  确认离职
+                </PrimaryButton>
+              </div>
+            </div>
+          </div>
+        )}
       </PageShell>
     </RequireAuth>
   );

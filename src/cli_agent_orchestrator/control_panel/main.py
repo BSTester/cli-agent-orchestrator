@@ -236,6 +236,104 @@ def _list_agent_aliases() -> Dict[str, str]:
     return {str(agent_id): str(alias) for agent_id, alias in rows if agent_id and alias}
 
 
+def _infer_worker_leader_links_from_inbox(
+    leader_ids: set[str],
+    worker_ids: set[str],
+) -> Dict[str, str]:
+    if not leader_ids or not worker_ids:
+        return {}
+
+    inferred: Dict[str, str] = {}
+    try:
+        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+            rows = conn.execute(
+                """
+                SELECT sender_id, receiver_id
+                FROM inbox
+                ORDER BY created_at DESC, id DESC
+                """
+            ).fetchall()
+    except sqlite3.Error:
+        return {}
+
+    for sender_id, receiver_id in rows:
+        sender = str(sender_id or "")
+        receiver = str(receiver_id or "")
+
+        if sender in leader_ids and receiver in worker_ids and receiver not in inferred:
+            inferred[receiver] = sender
+            continue
+
+        if receiver in leader_ids and sender in worker_ids and sender not in inferred:
+            inferred[sender] = receiver
+
+    return inferred
+
+
+def _session_similarity_score(leader_session: str, worker_session: str) -> int:
+    if not leader_session or not worker_session:
+        return 0
+
+    if leader_session == worker_session:
+        return 1000
+
+    if worker_session.startswith(leader_session) or leader_session.startswith(worker_session):
+        return 500
+
+    prefix_len = 0
+    for leader_char, worker_char in zip(leader_session, worker_session):
+        if leader_char != worker_char:
+            break
+        prefix_len += 1
+
+    return prefix_len
+
+
+def _infer_worker_leader_links_from_session_name(
+    leaders: List[Dict[str, Any]],
+    workers: List[Dict[str, Any]],
+    already_inferred: Dict[str, str],
+) -> Dict[str, str]:
+    inferred: Dict[str, str] = {}
+    if not leaders or not workers:
+        return inferred
+
+    leader_candidates = [
+        (str(leader.get("id", "")), str(leader.get("session_name", "")))
+        for leader in leaders
+        if leader.get("id") and leader.get("session_name")
+    ]
+    if not leader_candidates:
+        return inferred
+
+    for worker in workers:
+        worker_id = str(worker.get("id", ""))
+        if not worker_id or worker_id in already_inferred:
+            continue
+
+        worker_session = str(worker.get("session_name", ""))
+        if not worker_session:
+            continue
+
+        scored: List[tuple[int, str]] = []
+        for leader_id, leader_session in leader_candidates:
+            score = _session_similarity_score(leader_session, worker_session)
+            if score > 3:
+                scored.append((score, leader_id))
+
+        if not scored:
+            continue
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        top_score, top_leader_id = scored[0]
+        second_score = scored[1][0] if len(scored) > 1 else -1
+
+        if top_score > second_score:
+            inferred[worker_id] = top_leader_id
+
+    return inferred
+
+
 def _list_available_agent_profiles() -> List[str]:
     names: set[str] = set(BUILTIN_AGENT_PROFILES)
 
@@ -532,6 +630,9 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
         for terminal in terminals
         if str(terminal.get("id", "")) not in leader_ids and not terminal.get("is_main")
     ]
+    worker_ids = {
+        str(worker.get("id", "")) for worker in workers if isinstance(worker.get("id"), str)
+    }
     links_from_db = _list_worker_links()
     team_aliases = _list_team_aliases()
     agent_aliases = _list_agent_aliases()
@@ -571,6 +672,38 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
             leader_id = session_leaders[0]
             inferred_worker_to_leader[worker_id] = leader_id
             _set_worker_link(worker_id, leader_id)
+
+    inbox_inferred = _infer_worker_leader_links_from_inbox(leader_ids, worker_ids)
+    for worker_id, leader_id in inbox_inferred.items():
+        if worker_id in inferred_worker_to_leader:
+            continue
+        if leader_id not in terminals_by_id:
+            continue
+        inferred_worker_to_leader[worker_id] = leader_id
+        _set_worker_link(worker_id, leader_id)
+
+    session_name_inferred = _infer_worker_leader_links_from_session_name(
+        leaders,
+        workers,
+        inferred_worker_to_leader,
+    )
+    for worker_id, leader_id in session_name_inferred.items():
+        if worker_id in inferred_worker_to_leader:
+            continue
+        if leader_id not in terminals_by_id:
+            continue
+        inferred_worker_to_leader[worker_id] = leader_id
+        _set_worker_link(worker_id, leader_id)
+
+    if len(leaders) == 1:
+        single_leader_id = str(leaders[0].get("id", ""))
+        if single_leader_id:
+            for worker in workers:
+                worker_id = str(worker.get("id", ""))
+                if not worker_id or worker_id in inferred_worker_to_leader:
+                    continue
+                inferred_worker_to_leader[worker_id] = single_leader_id
+                _set_worker_link(worker_id, single_leader_id)
 
     members_by_leader: Dict[str, List[Dict[str, Any]]] = {}
     for worker in workers:

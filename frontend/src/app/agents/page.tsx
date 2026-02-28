@@ -78,6 +78,7 @@ export default function AgentsPage() {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [currentOutput, setCurrentOutput] = useState("");
+  const [streamTargetOutput, setStreamTargetOutput] = useState("");
   const [outputMode, setOutputMode] = useState<OutputMode>("stream");
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -128,14 +129,7 @@ export default function AgentsPage() {
         if (!outputText) {
           return;
         }
-        setCurrentOutput(outputText);
-        setChatItems((prev) => {
-          const hasSameLatest = prev.length > 0 && prev[prev.length - 1].content === outputText;
-          if (hasSameLatest) {
-            return prev;
-          }
-          return [...prev, { role: "assistant", content: outputText, at: Date.now() }];
-        });
+        setStreamTargetOutput(outputText);
       } catch {
         // ignore malformed events
       }
@@ -149,6 +143,82 @@ export default function AgentsPage() {
       eventSource.close();
     };
   }, [activeAgent?.id, outputMode]);
+
+  useEffect(() => {
+    if (outputMode !== "stream") {
+      return;
+    }
+
+    if (!streamTargetOutput) {
+      return;
+    }
+
+    if (streamTargetOutput === currentOutput) {
+      return;
+    }
+
+    if (!streamTargetOutput.startsWith(currentOutput)) {
+      setCurrentOutput(streamTargetOutput);
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setCurrentOutput((previous) => {
+        if (previous === streamTargetOutput) {
+          window.clearInterval(intervalId);
+          return previous;
+        }
+
+        if (!streamTargetOutput.startsWith(previous)) {
+          window.clearInterval(intervalId);
+          return streamTargetOutput;
+        }
+
+        const remaining = streamTargetOutput.length - previous.length;
+        const step = Math.max(1, Math.min(6, Math.ceil(remaining / 24)));
+        const nextOutput = streamTargetOutput.slice(0, previous.length + step);
+
+        if (nextOutput === streamTargetOutput) {
+          window.clearInterval(intervalId);
+        }
+
+        return nextOutput;
+      });
+    }, 24);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [currentOutput, outputMode, streamTargetOutput]);
+
+  useEffect(() => {
+    if (outputMode !== "stream") {
+      return;
+    }
+
+    if (!currentOutput) {
+      return;
+    }
+
+    setChatItems((prev) => {
+      if (prev.length === 0 || prev[prev.length - 1].role !== "assistant") {
+        return [...prev, { role: "assistant", content: currentOutput, at: Date.now() }];
+      }
+
+      const lastItem = prev[prev.length - 1];
+      if (lastItem.content === currentOutput) {
+        return prev;
+      }
+
+      return [
+        ...prev.slice(0, -1),
+        {
+          ...lastItem,
+          content: currentOutput,
+        },
+      ];
+    });
+  }, [currentOutput, outputMode]);
 
   useEffect(() => {
     if (!activeAgent?.id || outputMode !== "full") {
@@ -226,6 +296,7 @@ export default function AgentsPage() {
     setActiveAgent(agent);
     setChatItems([]);
     setCurrentOutput("");
+    setStreamTargetOutput("");
     setMessage("");
     setOutputMode("stream");
     setAutoScroll(true);
