@@ -448,49 +448,52 @@ export default function OrganizationPage() {
 
             <div style={{ height: 1, background: "var(--border)", margin: "14px 0" }} />
 
-            <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增队员</div>
-            <form onSubmit={createWorkerAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 10 }}>
-              <SelectInput
-                value={workerProfile}
-                onChange={(e) => setWorkerProfile(e.target.value)}
-                required
-              >
-                <option value="">请选择 Agent 类型</option>
-                {workerProfileOptions.map((profileName) => (
-                  <option key={`worker-${profileName}`} value={profileName}>
-                    {profileName}
-                  </option>
-                ))}
-              </SelectInput>
-              <SelectInput
-                value={workerProvider}
-                onChange={(e) => setWorkerProvider(e.target.value)}
-              >
-                {providers.map((item) => (
-                  <option key={item || "default-worker"} value={item}>
-                    {item || "自动选择 provider"}
-                  </option>
-                ))}
-              </SelectInput>
-              <SelectInput
-                value={workerLeaderId}
-                onChange={(e) => setWorkerLeaderId(e.target.value)}
-              >
-                <option value="">不分配团队（独立团队编制）</option>
-                {leaders.map((leader: ConsoleAgent) => (
-                  <option key={leader.id} value={leader.id}>
-                    {leader.id} · {leader.agent_profile}
-                  </option>
-                ))}
-              </SelectInput>
-              <TextInput
-                value={workerAlias}
-                onChange={(e) => setWorkerAlias(e.target.value)}
-                placeholder="员工别名（可选）"
-              />
+            <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增员工</div>
+            <form onSubmit={createWorkerAgent} style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <SelectInput
+                  value={workerProfile}
+                  onChange={(e) => setWorkerProfile(e.target.value)}
+                  required
+                >
+                  <option value="">岗位类型</option>
+                  {workerProfileOptions.map((profileName) => (
+                    <option key={`worker-${profileName}`} value={profileName}>
+                      {profileName}
+                    </option>
+                  ))}
+                </SelectInput>
+                <SelectInput
+                  value={workerProvider}
+                  onChange={(e) => setWorkerProvider(e.target.value)}
+                >
+                  {providers.map((item) => (
+                    <option key={item || "default-worker"} value={item}>
+                      {item || "自动选择 provider"}
+                    </option>
+                  ))}
+                </SelectInput>
+                <SelectInput
+                  value={workerLeaderId}
+                  onChange={(e) => setWorkerLeaderId(e.target.value)}
+                >
+                  <option value="">不分配团队（独立团队编制）</option>
+                  {leaders.map((leader: ConsoleAgent) => (
+                    <option key={leader.id} value={leader.id}>
+                      {leader.id} · {leader.agent_profile}
+                    </option>
+                  ))}
+                </SelectInput>
+                <TextInput
+                  value={workerAlias}
+                  onChange={(e) => setWorkerAlias(e.target.value)}
+                  placeholder="员工别名（可选）"
+                />
+              </div>
               <SuccessButton
                 type="submit"
                 disabled={creatingWorker}
+                style={{ width: "fit-content" }}
               >
                 {creatingWorker ? "加入中..." : "加入团队"}
               </SuccessButton>
