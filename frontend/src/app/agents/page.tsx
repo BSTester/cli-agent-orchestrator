@@ -7,7 +7,6 @@ import remarkGfm from "remark-gfm";
 import ConsoleNav from "@/components/ConsoleNav";
 import {
   CardGrid,
-  CodeEditorInput,
   EmptyState,
   ErrorBanner,
   PageIntro,
@@ -17,10 +16,12 @@ import {
   SectionCard,
   StatCard,
   StatusPill,
+  TextAreaInput,
 } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
 import { caoRequest, ConsoleAgent, ConsoleOrganization } from "@/lib/cao";
 import { isStatusActive, toStatusLabel } from "@/lib/status";
+import { summarizeTaskTitle } from "@/lib/taskTitle";
 
 interface ChatItem {
   role: "user" | "assistant";
@@ -28,54 +29,11 @@ interface ChatItem {
   at: number;
 }
 
-type OutputMode = "stream" | "full";
-
 function formatChatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function ansiToHtml(input: string): string {
-  const colorMap: Record<string, string> = {
-    "30": "#8b949e",
-    "31": "#ff7b72",
-    "32": "#3fb950",
-    "33": "#d29922",
-    "34": "#79c0ff",
-    "35": "#bc8cff",
-    "36": "#39c5cf",
-    "37": "#c9d1d9",
-    "90": "#6e7681",
-    "91": "#ffa198",
-    "92": "#56d364",
-    "93": "#e3b341",
-    "94": "#a5d6ff",
-    "95": "#d2a8ff",
-    "96": "#56d4dd",
-    "97": "#f0f6fc",
-  };
-
-  let escaped = escapeHtml(input);
-  escaped = escaped.replace(/\u001b\[0m/g, "</span>");
-  escaped = escaped.replace(/\u001b\[([0-9]{2})m/g, (match, code: string) => {
-    const color = colorMap[code];
-    if (!color) {
-      return "";
-    }
-    return `<span style=\"color:${color}\">`;
-  });
-  return escaped;
 }
 
 function stripAnsi(input: string): string {
@@ -88,16 +46,17 @@ export default function AgentsPage() {
 
   const [activeAgent, setActiveAgent] = useState<ConsoleAgent | null>(null);
   const [chatItems, setChatItems] = useState<ChatItem[]>([]);
+  const [chatItemsByAgent, setChatItemsByAgent] = useState<Record<string, ChatItem[]>>({});
+  const [taskTitleByAgent, setTaskTitleByAgent] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [currentOutput, setCurrentOutput] = useState("");
   const [streamTargetOutput, setStreamTargetOutput] = useState("");
-  const [outputMode, setOutputMode] = useState<OutputMode>("stream");
   const [autoScroll, setAutoScroll] = useState(true);
 
-  const outputRef = useRef<HTMLDivElement | null>(null);
   const chatRef = useRef<HTMLDivElement | null>(null);
   const messageFormRef = useRef<HTMLFormElement | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const loadOrganization = useCallback(async () => {
     const result = await caoRequest<ConsoleOrganization>("GET", "/console/organization");
@@ -123,11 +82,12 @@ export default function AgentsPage() {
   }, [loadOrganization]);
 
   useEffect(() => {
-    if (!activeAgent?.id) {
-      return;
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
     }
 
-    if (outputMode !== "stream") {
+    if (!activeAgent?.id) {
       return;
     }
 
@@ -135,6 +95,7 @@ export default function AgentsPage() {
       `/api/cao/console/agents/${activeAgent.id}/stream`,
       { withCredentials: true }
     );
+    eventSourceRef.current = eventSource;
 
     eventSource.onmessage = (event) => {
       try {
@@ -151,18 +112,20 @@ export default function AgentsPage() {
 
     eventSource.onerror = () => {
       eventSource.close();
+      if (eventSourceRef.current === eventSource) {
+        eventSourceRef.current = null;
+      }
     };
 
     return () => {
       eventSource.close();
+      if (eventSourceRef.current === eventSource) {
+        eventSourceRef.current = null;
+      }
     };
-  }, [activeAgent?.id, outputMode]);
+  }, [activeAgent?.id]);
 
   useEffect(() => {
-    if (outputMode !== "stream") {
-      return;
-    }
-
     if (!streamTargetOutput) {
       return;
     }
@@ -172,6 +135,7 @@ export default function AgentsPage() {
     }
 
     if (!streamTargetOutput.startsWith(currentOutput)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCurrentOutput(streamTargetOutput);
       return;
     }
@@ -203,17 +167,14 @@ export default function AgentsPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [currentOutput, outputMode, streamTargetOutput]);
+  }, [currentOutput, streamTargetOutput]);
 
   useEffect(() => {
-    if (outputMode !== "stream") {
-      return;
-    }
-
     if (!currentOutput) {
       return;
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setChatItems((prev) => {
       if (prev.length === 0 || prev[prev.length - 1].role !== "assistant") {
         return [...prev, { role: "assistant", content: currentOutput, at: Date.now() }];
@@ -232,40 +193,7 @@ export default function AgentsPage() {
         },
       ];
     });
-  }, [currentOutput, outputMode]);
-
-  useEffect(() => {
-    if (!activeAgent?.id || outputMode !== "full") {
-      return;
-    }
-
-    async function loadFullOutput() {
-      const result = await caoRequest<{ output: string }>(
-        "GET",
-        `/terminals/${activeAgent.id}/output`,
-        { query: { mode: "full" } }
-      );
-      if (!result.ok) {
-        return;
-      }
-      const outputText = String(result.data.output || "");
-      setCurrentOutput(outputText);
-    }
-
-    void loadFullOutput();
-    const timer = setInterval(() => {
-      void loadFullOutput();
-    }, 3000);
-
-    return () => clearInterval(timer);
-  }, [activeAgent?.id, outputMode]);
-
-  useEffect(() => {
-    if (!autoScroll || !outputRef.current) {
-      return;
-    }
-    outputRef.current.scrollTop = outputRef.current.scrollHeight;
-  }, [currentOutput, autoScroll]);
+  }, [currentOutput]);
 
   useEffect(() => {
     if (!autoScroll || !chatRef.current) {
@@ -273,6 +201,17 @@ export default function AgentsPage() {
     }
     chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [chatItems, autoScroll]);
+
+  useEffect(() => {
+    if (!activeAgent?.id) {
+      return;
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setChatItemsByAgent((prev) => ({
+      ...prev,
+      [activeAgent.id]: chatItems,
+    }));
+  }, [activeAgent?.id, chatItems]);
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -293,6 +232,10 @@ export default function AgentsPage() {
     }
 
     setChatItems((prev) => [...prev, { role: "user", content: text, at: Date.now() }]);
+    setTaskTitleByAgent((prev) => ({
+      ...prev,
+      [activeAgent.id]: summarizeTaskTitle(text),
+    }));
     setMessage("");
     setSending(false);
   }
@@ -306,13 +249,22 @@ export default function AgentsPage() {
     return organization.leaders_total + organization.workers_total;
   }, [organization]);
 
+  function closeAgentChat() {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    setActiveAgent(null);
+  }
+
   function openAgentChat(agent: ConsoleAgent) {
+    const cachedItems = chatItemsByAgent[agent.id] || [];
+    const latestAssistant = [...cachedItems].reverse().find((item) => item.role === "assistant");
     setActiveAgent(agent);
-    setChatItems([]);
-    setCurrentOutput("");
-    setStreamTargetOutput("");
+    setChatItems(cachedItems);
+    setCurrentOutput(latestAssistant?.content || "");
+    setStreamTargetOutput(latestAssistant?.content || "");
     setMessage("");
-    setOutputMode("stream");
     setAutoScroll(true);
   }
 
@@ -455,7 +407,7 @@ export default function AgentsPage() {
               justifyContent: "flex-end",
               zIndex: 40,
             }}
-            onClick={() => setActiveAgent(null)}
+            onClick={closeAgentChat}
           >
             <div
               onClick={(e) => e.stopPropagation()}
@@ -509,7 +461,7 @@ export default function AgentsPage() {
                 </div>
                 <SecondaryButton
                   type="button"
-                  onClick={() => setActiveAgent(null)}
+                  onClick={closeAgentChat}
                   style={{ padding: "6px 10px" }}
                 >
                   关闭
@@ -525,57 +477,24 @@ export default function AgentsPage() {
                   background: "var(--surface)",
                 }}
               >
-                <section
-                  style={{
-                    margin: "10px 14px",
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    background: "var(--surface2)",
-                    padding: 10,
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>当前执行内容</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <SecondaryButton
-                        type="button"
-                        onClick={() => setOutputMode((prev) => (prev === "stream" ? "full" : "stream"))}
-                        style={{ padding: "4px 8px", fontSize: 12, background: "var(--surface)" }}
-                      >
-                        {outputMode === "stream" ? "切换全量日志" : "切换实时流"}
-                      </SecondaryButton>
-                      <SecondaryButton
-                        type="button"
-                        onClick={() => setAutoScroll((prev) => !prev)}
-                        style={{ padding: "4px 8px", fontSize: 12, background: "var(--surface)" }}
-                      >
-                        {autoScroll ? "暂停自动滚动" : "开启自动滚动"}
-                      </SecondaryButton>
-                    </div>
-                  </div>
-                  <div
-                    ref={outputRef}
-                    className="console-chat-scroll"
+                {taskTitleByAgent[activeAgent.id] && (
+                  <section
                     style={{
-                      maxHeight: 170,
-                      overflow: "auto",
+                      margin: "10px 14px",
                       border: "1px solid var(--border)",
-                      borderRadius: 8,
-                      background: "var(--surface)",
-                      color: "var(--text)",
+                      borderRadius: 10,
+                      background: "var(--surface2)",
                       padding: 10,
-                      fontSize: 12,
-                      fontFamily: "var(--mono)",
-                      whiteSpace: "pre-wrap",
                     }}
-                    dangerouslySetInnerHTML={{
-                      __html: ansiToHtml(currentOutput || "暂无输出"),
-                    }}
-                  />
-                  <div style={{ color: "var(--text-dim)", fontSize: 11, marginTop: 6 }}>
-                    模式：{outputMode === "stream" ? "实时流（SSE）" : "全量快照（3秒刷新）"}
-                  </div>
-                </section>
+                  >
+                    <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 4 }}>
+                      当前任务
+                    </div>
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700, lineHeight: 1.45 }}>
+                      {taskTitleByAgent[activeAgent.id]}
+                    </div>
+                  </section>
+                )}
 
                 <section
                   ref={chatRef}
@@ -584,7 +503,7 @@ export default function AgentsPage() {
                     flex: 1,
                     minHeight: 0,
                     overflow: "auto",
-                    padding: "4px 14px 10px",
+                    padding: taskTitleByAgent[activeAgent.id] ? "4px 14px 10px" : "10px 14px 10px",
                     display: "flex",
                     flexDirection: "column",
                     gap: 8,
@@ -715,13 +634,21 @@ export default function AgentsPage() {
                     gap: 8,
                   }}
                 >
-                  <CodeEditorInput
+                  <TextAreaInput
                     value={message}
-                    onChange={setMessage}
-                    language="markdown"
+                    onChange={(event) => setMessage(event.target.value)}
                     required
                     placeholder="输入指令并发送"
-                    style={{ width: "100%", minHeight: 84, maxHeight: 160, marginBottom: 0 }}
+                    rows={4}
+                    style={{
+                      width: "100%",
+                      minHeight: 96,
+                      maxHeight: 180,
+                      marginBottom: 0,
+                      resize: "vertical",
+                      lineHeight: 1.6,
+                      fontSize: 14,
+                    }}
                   />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                     <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
@@ -769,32 +696,67 @@ export default function AgentsPage() {
               .chat-markdown p,
               .chat-markdown ul,
               .chat-markdown ol,
+              .chat-markdown h1,
+              .chat-markdown h2,
+              .chat-markdown h3,
+              .chat-markdown h4,
               .chat-markdown pre,
               .chat-markdown table,
               .chat-markdown blockquote {
-                margin: 0 0 8px;
+                margin: 0 0 12px;
               }
               .chat-markdown p:last-child,
               .chat-markdown ul:last-child,
               .chat-markdown ol:last-child,
+              .chat-markdown h1:last-child,
+              .chat-markdown h2:last-child,
+              .chat-markdown h3:last-child,
+              .chat-markdown h4:last-child,
               .chat-markdown pre:last-child,
               .chat-markdown table:last-child,
               .chat-markdown blockquote:last-child {
                 margin-bottom: 0;
               }
+              .chat-markdown {
+                line-height: 1.75;
+                letter-spacing: 0.01em;
+                font-size: 14px;
+                word-break: break-word;
+              }
+              .chat-markdown h1,
+              .chat-markdown h2,
+              .chat-markdown h3,
+              .chat-markdown h4 {
+                line-height: 1.45;
+                color: var(--text-bright);
+                font-weight: 700;
+              }
+              .chat-markdown h1 {
+                font-size: 1.2em;
+              }
+              .chat-markdown h2 {
+                font-size: 1.12em;
+              }
+              .chat-markdown h3,
+              .chat-markdown h4 {
+                font-size: 1.04em;
+              }
               .chat-markdown ul,
               .chat-markdown ol {
-                padding-left: 18px;
+                padding-left: 20px;
+              }
+              .chat-markdown li + li {
+                margin-top: 4px;
               }
               .chat-markdown table {
                 width: 100%;
                 border-collapse: collapse;
-                font-size: 12px;
+                font-size: 13px;
               }
               .chat-markdown th,
               .chat-markdown td {
                 border: 1px solid var(--border);
-                padding: 4px 6px;
+                padding: 6px 8px;
               }
               .chat-markdown-user th,
               .chat-markdown-user td {
@@ -802,7 +764,7 @@ export default function AgentsPage() {
               }
               .chat-markdown blockquote {
                 border-left: 3px solid var(--border);
-                padding-left: 8px;
+                padding-left: 10px;
                 color: var(--text-dim);
               }
             `}</style>

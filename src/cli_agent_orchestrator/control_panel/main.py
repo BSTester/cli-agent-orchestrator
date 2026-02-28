@@ -48,6 +48,8 @@ CONTROL_PANEL_CORS_ORIGINS = [
 ]
 
 BUILTIN_AGENT_PROFILES = ("code_supervisor", "developer", "reviewer")
+TASK_TITLE_MAX_LEN = 48
+TASK_TITLE_FALLBACK_LEN = 20
 
 app = FastAPI(
     title="CAO Control Panel API",
@@ -268,6 +270,66 @@ def _infer_worker_leader_links_from_inbox(
             inferred[sender] = receiver
 
     return inferred
+
+
+def _summarize_task_title(message: str) -> str:
+    normalized = (message or "").replace("\r\n", "\n").strip()
+    if not normalized:
+        return ""
+
+    first_line = ""
+    for line in normalized.split("\n"):
+        if line.strip():
+            first_line = line.strip()
+            break
+
+    compact = re.sub(r"\s+", " ", first_line).strip()
+    if not compact:
+        return normalized[:TASK_TITLE_FALLBACK_LEN]
+
+    if len(compact) <= TASK_TITLE_MAX_LEN:
+        return compact
+    return f"{compact[:TASK_TITLE_MAX_LEN]}..."
+
+
+def _list_latest_task_titles(receiver_ids: List[str]) -> Dict[str, str]:
+    targets = [receiver_id for receiver_id in receiver_ids if receiver_id]
+    if not targets:
+        return {}
+
+    placeholders = ",".join("?" for _ in targets)
+
+    try:
+        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT receiver_id, message
+                FROM (
+                    SELECT
+                        receiver_id,
+                        message,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY receiver_id
+                            ORDER BY created_at DESC, id DESC
+                        ) AS rn
+                    FROM inbox
+                    WHERE receiver_id IN ({placeholders})
+                ) ranked
+                WHERE rn = 1
+                """,
+                targets,
+            ).fetchall()
+    except sqlite3.Error:
+        return {}
+
+    result: Dict[str, str] = {}
+    for receiver_id, message in rows:
+        terminal_id = str(receiver_id or "")
+        task_title = _summarize_task_title(str(message or ""))
+        if terminal_id and task_title:
+            result[terminal_id] = task_title
+
+    return result
 
 
 def _session_similarity_score(leader_session: str, worker_session: str) -> int:
@@ -947,6 +1009,8 @@ async def console_tasks() -> Dict[str, Any]:
     try:
         terminals = _get_terminals_from_sessions()
         organization = _build_organization(terminals)
+        terminal_ids = [str(item.get("id", "")) for item in terminals if isinstance(item, dict)]
+        latest_task_titles = _list_latest_task_titles(terminal_ids)
 
         flows_response = _request_cao("GET", "/flows")
         flow_items = _response_json_or_text(flows_response)
@@ -985,6 +1049,7 @@ async def console_tasks() -> Dict[str, Any]:
                         "terminal_id": str(agent.get("id", "")),
                         "session_name": agent.get("session_name"),
                         "agent_profile": agent.get("agent_profile"),
+                        "task_title": latest_task_titles.get(str(agent.get("id", "")), ""),
                         "status": agent.get("status"),
                         "last_active": agent.get("last_active"),
                     }

@@ -130,6 +130,7 @@ export interface ConsoleTaskInstantItem {
   terminal_id: string;
   session_name?: string;
   agent_profile?: string;
+  task_title?: string;
   status?: string;
   last_active?: string;
 }

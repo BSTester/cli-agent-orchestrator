@@ -312,9 +312,11 @@ Share one interesting world trivia for today.
                           background: "var(--surface)",
                         }}
                       >
-                        <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{task.terminal_id}</div>
+                        {task.task_title ? (
+                          <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{task.task_title}</div>
+                        ) : null}
                         <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 4 }}>
-                          {task.agent_profile || "unknown"}
+                          {task.agent_profile || "unknown"} · {task.terminal_id}
                         </div>
                         <div style={{ display: "flex" }}>
                           <StatusPill
