@@ -3,25 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import ConsoleNav from "@/components/ConsoleNav";
+import { CardGrid, EmptyState, ErrorBanner, PageIntro, PageShell, SectionCard, SectionTitle, StatCard } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
 import { caoRequest, ConsoleAgent, ConsoleOverview } from "@/lib/cao";
 import { toStatusLabel } from "@/lib/status";
-
-function Card({ title, value }: { title: string; value: string | number }) {
-  return (
-    <div
-      style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: 14,
-      }}
-    >
-      <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 6 }}>{title}</div>
-      <div style={{ color: "var(--text-bright)", fontSize: 20, fontWeight: 700 }}>{value}</div>
-    </div>
-  );
-}
 
 function BarChartCard({
   title,
@@ -42,7 +27,7 @@ function BarChartCard({
     >
       <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>{title}</div>
       {rows.length === 0 ? (
-        <div style={{ color: "var(--text-dim)" }}>暂无数据</div>
+        <EmptyState text="暂无数据" />
       ) : (
         rows.map((row) => {
           const percent = Math.round((row.value / total) * 100);
@@ -124,32 +109,29 @@ export default function DashboardPage() {
   return (
     <RequireAuth>
       <ConsoleNav />
-      <main style={{ padding: 18 }}>
-        <h1 style={{ fontSize: 22, color: "var(--text-bright)", marginBottom: 14 }}>集团总览</h1>
-        {error && <div style={{ color: "var(--danger)", marginBottom: 12 }}>{error}</div>}
+      <PageShell>
+        <PageIntro
+          title="集团总览"
+          description="首页仅展示集团统计与健康态势，组织与任务操作请前往对应页面。"
+        />
+        {error && <ErrorBanner text={error} />}
 
-        <section
+        <SectionTitle title="核心指标" />
+        <SectionCard
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            gap: 12,
-            marginBottom: 18,
+            padding: 10,
           }}
         >
-          <Card title="集团在岗员工" value={overview?.agents_total ?? "-"} />
-          <Card title="在营团队数" value={overview?.main_agents_total ?? "-"} />
-          <Card title="团队成员数" value={overview?.worker_agents_total ?? "-"} />
-          <Card title="集团系统运行时长" value={overview ? formatUptime(overview.uptime_seconds) : "-"} />
-        </section>
+          <CardGrid minWidth={180} gap={12}>
+            <StatCard label="集团在岗员工" value={overview?.agents_total ?? "-"} />
+            <StatCard label="在营团队数" value={overview?.main_agents_total ?? "-"} />
+            <StatCard label="团队成员数" value={overview?.worker_agents_total ?? "-"} />
+            <StatCard label="集团系统运行时长" value={overview ? formatUptime(overview.uptime_seconds) : "-"} />
+          </CardGrid>
+        </SectionCard>
 
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-            gap: 12,
-            marginBottom: 18,
-          }}
-        >
+        <SectionTitle title="运行分布" />
+        <CardGrid minWidth={260} gap={12}>
           <BarChartCard
             title="技术栈分布图"
             rows={providerRows.map(([label, value]) => ({ label, value }))}
@@ -158,9 +140,9 @@ export default function DashboardPage() {
             title="运行状态分布图"
             rows={statusRows.map(([label, value]) => ({ label: toStatusLabel(label), value }))}
           />
-        </section>
+        </CardGrid>
 
-        <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 12 }}>
+        <SectionCard>
           <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队负责人看板</div>
           {mainStatusRows.length > 0 && (
             <div style={{ marginBottom: 12 }}>
@@ -168,7 +150,7 @@ export default function DashboardPage() {
             </div>
           )}
           {mainAgents.length === 0 ? (
-            <div style={{ color: "var(--text-dim)" }}>当前没有在营团队</div>
+            <EmptyState text="当前没有在营团队" />
           ) : (
             mainAgents.map((agent) => (
               <div
@@ -188,8 +170,8 @@ export default function DashboardPage() {
               </div>
             ))
           )}
-        </section>
-      </main>
+        </SectionCard>
+      </PageShell>
     </RequireAuth>
   );
 }

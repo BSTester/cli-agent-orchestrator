@@ -3,9 +3,22 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ConsoleNav from "@/components/ConsoleNav";
+import {
+  CardGrid,
+  EmptyState,
+  ErrorBanner,
+  PageIntro,
+  PageShell,
+  PrimaryButton,
+  SecondaryButton,
+  SectionCard,
+  StatCard,
+  StatusPill,
+  TextAreaInput,
+} from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
 import { caoRequest, ConsoleAgent, ConsoleOrganization } from "@/lib/cao";
-import { toStatusLabel } from "@/lib/status";
+import { isStatusActive, toStatusLabel } from "@/lib/status";
 
 interface ChatItem {
   role: "user" | "assistant";
@@ -221,94 +234,126 @@ export default function AgentsPage() {
   return (
     <RequireAuth>
       <ConsoleNav />
-      <main style={{ padding: 18 }}>
-        <h1 style={{ fontSize: 22, color: "var(--text-bright)", marginBottom: 10 }}>Agent 管理</h1>
-        <div style={{ color: "var(--text-dim)", marginBottom: 12 }}>
-          按团队组织查看全部员工，点击卡片可打开沟通窗口与执行内容视图。
-        </div>
+      <PageShell>
+        <PageIntro
+          title="团队管理"
+          description="以团队为单位查看在线情况，点击任意成员卡片可进入会话与执行内容视图。"
+        />
 
-        {error && <div style={{ color: "var(--danger)", marginBottom: 12 }}>{error}</div>}
+        {error && <ErrorBanner text={error} />}
 
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            gap: 10,
-            marginBottom: 14,
-          }}
-        >
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
-            <div style={{ color: "var(--text-dim)", fontSize: 12 }}>团队总数</div>
-            <div style={{ color: "var(--text-bright)", fontSize: 22, fontWeight: 700 }}>{organization?.leaders_total ?? 0}</div>
-          </div>
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
-            <div style={{ color: "var(--text-dim)", fontSize: 12 }}>在岗员工总数</div>
-            <div style={{ color: "var(--text-bright)", fontSize: 22, fontWeight: 700 }}>{agentsCount}</div>
-          </div>
-        </section>
+        <SectionCard style={{ padding: 10 }}>
+          <CardGrid minWidth={180} gap={10}>
+            <StatCard label="团队总数" value={organization?.leaders_total ?? 0} />
+            <StatCard label="在岗员工总数" value={agentsCount} />
+          </CardGrid>
+        </SectionCard>
 
         {leaderGroups.length === 0 ? (
-          <div style={{ color: "var(--text-dim)" }}>暂无团队数据</div>
+          <EmptyState text="暂无团队数据" />
         ) : (
-          leaderGroups.map((group) => (
-            <section
-              key={group.leader.id}
-              style={{
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                borderRadius: 12,
-                padding: 14,
-                marginBottom: 12,
-              }}
-            >
-              <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>
-                团队：{group.leader.session_name || group.leader.id}
-              </div>
+          leaderGroups.map((group) => {
+            const membersByProfile = group.members.reduce<Record<string, ConsoleAgent[]>>((acc, member) => {
+              const profile = member.agent_profile || "unknown";
+              if (!acc[profile]) {
+                acc[profile] = [];
+              }
+              acc[profile].push(member);
+              return acc;
+            }, {});
 
-              <div
-                onClick={() => openAgentChat(group.leader)}
-                style={{
-                  border: "1px solid var(--border)",
-                  borderRadius: 10,
-                  padding: 10,
-                  marginBottom: 10,
-                  cursor: "pointer",
-                  background: "var(--surface2)",
-                }}
-              >
-                <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>负责人：{group.leader.id}</div>
-                <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                  会话标题：{group.leader.session_name || "-"} · {group.leader.agent_profile} · {group.leader.provider} · {toStatusLabel(group.leader.status)}
+            const memberProfileGroups = Object.entries(membersByProfile).sort(([a], [b]) =>
+              a.localeCompare(b)
+            );
+
+            return (
+              <SectionCard key={group.leader.id}>
+                <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>
+                  团队：{group.leader.session_name || group.leader.id}
                 </div>
-              </div>
 
-              {group.members.length === 0 ? (
-                <div style={{ color: "var(--text-dim)", fontSize: 13 }}>暂无团队成员</div>
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-                  {group.members.map((member) => (
-                    <div
-                      key={member.id}
-                      onClick={() => openAgentChat(member)}
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        cursor: "pointer",
-                        background: "var(--surface2)",
-                      }}
-                    >
-                      <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{member.id}</div>
-                      <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                        会话标题：{member.session_name || "-"} · {member.agent_profile} · {member.provider}
+                <div
+                  onClick={() => openAgentChat(group.leader)}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: 10,
+                    marginBottom: 12,
+                    cursor: "pointer",
+                    background: "var(--surface2)",
+                  }}
+                >
+                  <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>负责人：{group.leader.id}</div>
+                  <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                    会话标题：{group.leader.session_name || "-"} · {group.leader.agent_profile} · {group.leader.provider} · {toStatusLabel(group.leader.status)}
+                  </div>
+                  <div style={{ display: "flex", marginTop: 6 }}>
+                    <StatusPill
+                      text={toStatusLabel(group.leader.status)}
+                      active={isStatusActive(group.leader.status)}
+                    />
+                  </div>
+                </div>
+
+                {memberProfileGroups.length === 0 ? (
+                  <EmptyState text="暂无团队成员" />
+                ) : (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {memberProfileGroups.map(([profileName, members]) => (
+                      <div
+                        key={`${group.leader.id}-${profileName}`}
+                        style={{
+                          border: "1px solid var(--border)",
+                          borderRadius: 10,
+                          padding: 10,
+                          background: "var(--surface2)",
+                        }}
+                      >
+                        <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
+                          {profileName}（{members.length}）
+                        </div>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                            gap: 10,
+                          }}
+                        >
+                          {members.map((member) => (
+                            <div
+                              key={member.id}
+                              onClick={() => openAgentChat(member)}
+                              style={{
+                                border: "1px solid var(--border)",
+                                borderRadius: 10,
+                                padding: 10,
+                                cursor: "pointer",
+                                background: "var(--surface)",
+                              }}
+                            >
+                              <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{member.id}</div>
+                              <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                                会话标题：{member.session_name || "-"} · {member.provider}
+                              </div>
+                              <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                                状态：{toStatusLabel(member.status)}
+                              </div>
+                              <div style={{ display: "flex", marginTop: 6 }}>
+                                <StatusPill
+                                  text={toStatusLabel(member.status)}
+                                  active={isStatusActive(member.status)}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                      <div style={{ color: "var(--text-dim)", fontSize: 12 }}>状态：{toStatusLabel(member.status)}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          ))
+                    ))}
+                  </div>
+                )}
+              </SectionCard>
+            );
+          })
         )}
 
         {activeAgent && (
@@ -341,33 +386,33 @@ export default function AgentsPage() {
                     {activeAgent.id} · 会话标题：{activeAgent.session_name || "-"} · {toStatusLabel(activeAgent.status)}
                   </div>
                 </div>
-                <button
+                <SecondaryButton
                   type="button"
                   onClick={() => setActiveAgent(null)}
-                  style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "6px 10px", cursor: "pointer" }}
+                  style={{ padding: "6px 10px" }}
                 >
                   关闭
-                </button>
+                </SecondaryButton>
               </div>
 
               <section style={{ marginBottom: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)", padding: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>当前执行内容</div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button
+                    <SecondaryButton
                       type="button"
                       onClick={() => setOutputMode((prev) => (prev === "stream" ? "full" : "stream"))}
-                      style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface)", color: "var(--text)", padding: "4px 8px", cursor: "pointer", fontSize: 12 }}
+                      style={{ padding: "4px 8px", fontSize: 12, background: "var(--surface)" }}
                     >
                       {outputMode === "stream" ? "切换全量日志" : "切换实时流"}
-                    </button>
-                    <button
+                    </SecondaryButton>
+                    <SecondaryButton
                       type="button"
                       onClick={() => setAutoScroll((prev) => !prev)}
-                      style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface)", color: "var(--text)", padding: "4px 8px", cursor: "pointer", fontSize: 12 }}
+                      style={{ padding: "4px 8px", fontSize: 12, background: "var(--surface)" }}
                     >
                       {autoScroll ? "暂停自动滚动" : "开启自动滚动"}
-                    </button>
+                    </SecondaryButton>
                   </div>
                 </div>
                 <div
@@ -424,25 +469,24 @@ export default function AgentsPage() {
               </section>
 
               <form onSubmit={sendMessage}>
-                <textarea
+                <TextAreaInput
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   required
                   placeholder="输入指令并发送"
-                  style={{ width: "100%", minHeight: 90, border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px", marginBottom: 10 }}
+                  style={{ width: "100%", minHeight: 90, marginBottom: 10 }}
                 />
-                <button
+                <PrimaryButton
                   type="submit"
                   disabled={sending}
-                  style={{ border: "none", borderRadius: 6, background: "var(--accent)", color: "#fff", padding: "8px 14px", cursor: "pointer", fontWeight: 700 }}
                 >
                   {sending ? "发送中..." : "发送消息"}
-                </button>
+                </PrimaryButton>
               </form>
             </div>
           </div>
         )}
-      </main>
+      </PageShell>
     </RequireAuth>
   );
 }

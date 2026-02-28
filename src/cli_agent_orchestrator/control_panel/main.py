@@ -85,6 +85,15 @@ def _init_organization_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS flow_team_links (
+                flow_name TEXT PRIMARY KEY,
+                leader_id TEXT,
+                linked_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
 
@@ -132,6 +141,33 @@ def _list_teams() -> set[str]:
     with sqlite3.connect(str(DATABASE_FILE)) as conn:
         rows = conn.execute("SELECT leader_id FROM org_teams").fetchall()
     return {str(leader_id) for (leader_id,) in rows}
+
+
+def _set_flow_team_link(flow_name: str, leader_id: Optional[str]) -> None:
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute(
+            """
+            INSERT INTO flow_team_links (flow_name, leader_id, linked_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(flow_name) DO UPDATE SET
+                leader_id=excluded.leader_id,
+                linked_at=excluded.linked_at
+            """,
+            (flow_name, leader_id, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def _remove_flow_team_link(flow_name: str) -> None:
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute("DELETE FROM flow_team_links WHERE flow_name = ?", (flow_name,))
+        conn.commit()
+
+
+def _list_flow_team_links() -> Dict[str, Optional[str]]:
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        rows = conn.execute("SELECT flow_name, leader_id FROM flow_team_links").fetchall()
+    return {str(flow_name): (str(leader_id) if leader_id else None) for flow_name, leader_id in rows}
 
 
 def _list_available_agent_profiles() -> List[str]:
@@ -244,6 +280,32 @@ class AgentProfileCreateRequest(BaseModel):
 
 class AgentProfileUpdateRequest(BaseModel):
     content: str = Field(min_length=1)
+
+
+class ConsoleCreateScheduledTaskRequest(BaseModel):
+    file_path: str = Field(min_length=1)
+    leader_id: Optional[str] = None
+
+
+def _is_instant_task_status(status_value: Optional[str]) -> bool:
+    normalized = (status_value or "").strip().lower()
+    if not normalized:
+        return False
+    return normalized not in {"idle", "completed", "unknown", "stopped", "exited", "failed"}
+
+
+def _normalize_flow_item(flow_item: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "name": str(flow_item.get("name", "")),
+        "file_path": str(flow_item.get("file_path", "")),
+        "schedule": str(flow_item.get("schedule", "")),
+        "agent_profile": str(flow_item.get("agent_profile", "")),
+        "provider": str(flow_item.get("provider", "")),
+        "script": str(flow_item.get("script", "")),
+        "enabled": bool(flow_item.get("enabled", False)),
+        "last_run": flow_item.get("last_run"),
+        "next_run": flow_item.get("next_run"),
+    }
 
 
 def _cleanup_expired_sessions() -> None:
@@ -588,6 +650,142 @@ async def console_organization() -> Dict[str, Any]:
         }
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch organization: {exc}")
+
+
+@app.get("/console/tasks")
+async def console_tasks() -> Dict[str, Any]:
+    try:
+        terminals = _get_terminals_from_sessions()
+        organization = _build_organization(terminals)
+
+        flows_response = _request_cao("GET", "/flows")
+        flow_items = _response_json_or_text(flows_response)
+        if not isinstance(flow_items, list):
+            flow_items = []
+
+        flow_team_links = _list_flow_team_links()
+        flows_by_leader: Dict[str, List[Dict[str, Any]]] = {}
+        unassigned_flows: List[Dict[str, Any]] = []
+
+        for raw_flow in flow_items:
+            if not isinstance(raw_flow, dict):
+                continue
+            flow = _normalize_flow_item(raw_flow)
+            flow_name = flow["name"]
+            leader_id = flow_team_links.get(flow_name)
+            if leader_id:
+                flows_by_leader.setdefault(leader_id, []).append(flow)
+            else:
+                unassigned_flows.append(flow)
+
+        teams: List[Dict[str, Any]] = []
+        for group in organization.get("leader_groups", []):
+            leader = group.get("leader", {})
+            members = group.get("members", [])
+            team_agents = [leader, *members]
+
+            instant_tasks: List[Dict[str, Any]] = []
+            for agent in team_agents:
+                if not isinstance(agent, dict):
+                    continue
+                if not _is_instant_task_status(str(agent.get("status", ""))):
+                    continue
+                instant_tasks.append(
+                    {
+                        "terminal_id": str(agent.get("id", "")),
+                        "session_name": agent.get("session_name"),
+                        "agent_profile": agent.get("agent_profile"),
+                        "status": agent.get("status"),
+                        "last_active": agent.get("last_active"),
+                    }
+                )
+
+            leader_id = str(leader.get("id", ""))
+            team_scheduled_tasks = sorted(
+                flows_by_leader.get(leader_id, []),
+                key=lambda item: str(item.get("next_run") or ""),
+            )
+
+            teams.append(
+                {
+                    "leader": leader,
+                    "members": members,
+                    "instant_tasks": instant_tasks,
+                    "scheduled_tasks": team_scheduled_tasks,
+                }
+            )
+
+        return {
+            "teams": teams,
+            "unassigned_scheduled_tasks": sorted(
+                unassigned_flows,
+                key=lambda item: str(item.get("next_run") or ""),
+            ),
+        }
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch tasks: {exc}")
+
+
+@app.post("/console/tasks/scheduled")
+async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskRequest) -> Dict[str, Any]:
+    body = {"file_path": payload.file_path.strip()}
+
+    try:
+        response = _request_cao("POST", "/flows", json_body=body)
+        created_flow = _response_json_or_text(response)
+        if not isinstance(created_flow, dict):
+            raise HTTPException(status_code=500, detail="Invalid flow creation response")
+
+        flow_name = str(created_flow.get("name", ""))
+        if not flow_name:
+            raise HTTPException(status_code=500, detail="Flow name missing in response")
+
+        leader_id = payload.leader_id.strip() if payload.leader_id else None
+        _set_flow_team_link(flow_name, leader_id)
+        return {"ok": True, "flow": created_flow, "leader_id": leader_id}
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to create scheduled task: {exc}")
+
+
+@app.post("/console/tasks/scheduled/{flow_name}/run")
+async def console_run_scheduled_task(flow_name: str) -> Dict[str, Any]:
+    try:
+        response = _request_cao("POST", f"/flows/{flow_name}/run")
+        result = _response_json_or_text(response)
+        return {"ok": True, "result": result}
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to run scheduled task: {exc}")
+
+
+@app.post("/console/tasks/scheduled/{flow_name}/enable")
+async def console_enable_scheduled_task(flow_name: str) -> Dict[str, Any]:
+    try:
+        response = _request_cao("POST", f"/flows/{flow_name}/enable")
+        result = _response_json_or_text(response)
+        return {"ok": True, "result": result}
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to enable scheduled task: {exc}")
+
+
+@app.post("/console/tasks/scheduled/{flow_name}/disable")
+async def console_disable_scheduled_task(flow_name: str) -> Dict[str, Any]:
+    try:
+        response = _request_cao("POST", f"/flows/{flow_name}/disable")
+        result = _response_json_or_text(response)
+        return {"ok": True, "result": result}
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to disable scheduled task: {exc}")
+
+
+@app.delete("/console/tasks/scheduled/{flow_name}")
+async def console_delete_scheduled_task(flow_name: str) -> Dict[str, Any]:
+    try:
+        response = _request_cao("DELETE", f"/flows/{flow_name}")
+        result = _response_json_or_text(response)
+        _remove_flow_team_link(flow_name)
+        return {"ok": True, "result": result}
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to delete scheduled task: {exc}")
 
 
 @app.get("/console/agent-profiles")

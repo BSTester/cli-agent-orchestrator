@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { ErrorBanner, InfoHint, PageShell, PrimaryButton, SectionCard, TextInput } from "@/components/ConsoleTheme";
 import { caoRequest } from "@/lib/cao";
 
 export default function LoginPage() {
@@ -49,66 +50,45 @@ export default function LoginPage() {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-    >
+    <PageShell>
       <div
         style={{
-          width: 360,
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: 10,
-          padding: 22,
+          minHeight: "calc(100vh - 36px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}
       >
+      <SectionCard style={{ width: 360, padding: 22 }}>
         <h1 style={{ marginBottom: 10, color: "var(--text-bright)", fontSize: 20 }}>CAO 控制台登录</h1>
-        <p style={{ marginBottom: 16, color: "var(--text-dim)", fontSize: 13 }}>
-          输入控制台密码后进入管理页面
-        </p>
+        <div style={{ marginBottom: 16 }}>
+          <InfoHint text="输入控制台密码后进入管理页面" />
+        </div>
 
         <form onSubmit={onSubmit}>
-          <input
+          <TextInput
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="控制台密码"
             required
-            style={{
-              width: "100%",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              background: "var(--surface2)",
-              color: "var(--text)",
-              padding: "9px 12px",
-              marginBottom: 10,
-            }}
+            style={{ width: "100%", padding: "9px 12px", marginBottom: 10 }}
           />
-          {error && <div style={{ color: "var(--danger)", marginBottom: 8, fontSize: 13 }}>{error}</div>}
-          <button
+          {error && <ErrorBanner text={error} />}
+          <PrimaryButton
             type="submit"
             disabled={submitting}
             style={{
               width: "100%",
-              border: "none",
-              borderRadius: 8,
-              background: "var(--accent)",
-              color: "white",
               padding: "9px 12px",
-              fontWeight: 700,
-              cursor: "pointer",
               opacity: submitting ? 0.75 : 1,
             }}
           >
             {submitting ? "登录中..." : "登录"}
-          </button>
+          </PrimaryButton>
         </form>
+      </SectionCard>
       </div>
-    </main>
+    </PageShell>
   );
 }

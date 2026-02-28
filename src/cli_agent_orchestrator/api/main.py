@@ -78,6 +78,10 @@ class WorkingDirectoryResponse(BaseModel):
     )
 
 
+class FlowCreateRequest(BaseModel):
+    file_path: str = Field(min_length=1, description="Path to flow markdown file")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
@@ -138,6 +142,87 @@ app.mount("/ui", StaticFiles(directory=str(_STATIC_DIR), html=True), name="ui")
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "cli-agent-orchestrator"}
+
+
+@app.get("/flows")
+async def list_flows() -> List[Dict]:
+    try:
+        return [flow.model_dump() for flow in flow_service.list_flows()]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list flows: {str(e)}",
+        )
+
+
+@app.post("/flows", status_code=status.HTTP_201_CREATED)
+async def create_flow(payload: FlowCreateRequest) -> Dict:
+    try:
+        flow = flow_service.add_flow(payload.file_path)
+        return flow.model_dump()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create flow: {str(e)}",
+        )
+
+
+@app.post("/flows/{name}/run")
+async def run_flow(name: str) -> Dict:
+    try:
+        executed = flow_service.execute_flow(name)
+        return {"success": True, "name": name, "executed": executed}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to run flow: {str(e)}",
+        )
+
+
+@app.post("/flows/{name}/enable")
+async def enable_flow(name: str) -> Dict:
+    try:
+        flow_service.enable_flow(name)
+        return {"success": True, "name": name, "enabled": True}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enable flow: {str(e)}",
+        )
+
+
+@app.post("/flows/{name}/disable")
+async def disable_flow(name: str) -> Dict:
+    try:
+        flow_service.disable_flow(name)
+        return {"success": True, "name": name, "enabled": False}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to disable flow: {str(e)}",
+        )
+
+
+@app.delete("/flows/{name}")
+async def delete_flow(name: str) -> Dict:
+    try:
+        flow_service.remove_flow(name)
+        return {"success": True, "name": name}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete flow: {str(e)}",
+        )
 
 
 @app.post("/sessions", response_model=Terminal, status_code=status.HTTP_201_CREATED)

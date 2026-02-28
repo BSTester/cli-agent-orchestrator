@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
+import { SecondaryButton } from "@/components/ConsoleTheme";
 import { caoRequest } from "@/lib/cao";
 
 const navItems = [
   { href: "/dashboard", label: "集团总览" },
   { href: "/organization", label: "组织管理" },
-  { href: "/agents", label: "Agent 管理" },
+  { href: "/agents", label: "团队管理" },
+  { href: "/tasks", label: "任务管理" },
 ];
 
 export default function ConsoleNav() {
@@ -43,6 +45,10 @@ export default function ConsoleNav() {
                 textDecoration: "none",
                 color: active ? "var(--text-bright)" : "var(--text-dim)",
                 fontWeight: active ? 700 : 500,
+                border: "1px solid var(--border)",
+                borderRadius: 999,
+                padding: "4px 10px",
+                background: active ? "var(--surface2)" : "transparent",
               }}
             >
               {item.label}
@@ -50,19 +56,9 @@ export default function ConsoleNav() {
           );
         })}
       </nav>
-      <button
-        onClick={handleLogout}
-        style={{
-          border: "1px solid var(--border)",
-          background: "var(--surface2)",
-          color: "var(--text)",
-          borderRadius: 6,
-          padding: "6px 10px",
-          cursor: "pointer",
-        }}
-      >
+      <SecondaryButton onClick={handleLogout} style={{ padding: "6px 10px" }}>
         退出登录
-      </button>
+      </SecondaryButton>
     </header>
   );
 }

@@ -123,3 +123,35 @@ export interface InstallAgentProfileResponse {
   stdout: string;
   stderr: string;
 }
+
+export interface ConsoleTaskInstantItem {
+  terminal_id: string;
+  session_name?: string;
+  agent_profile?: string;
+  status?: string;
+  last_active?: string;
+}
+
+export interface ConsoleTaskScheduledItem {
+  name: string;
+  file_path: string;
+  schedule: string;
+  agent_profile: string;
+  provider: string;
+  script?: string;
+  enabled: boolean;
+  last_run?: string | null;
+  next_run?: string | null;
+}
+
+export interface ConsoleTaskTeam {
+  leader: ConsoleAgent;
+  members: ConsoleAgent[];
+  instant_tasks: ConsoleTaskInstantItem[];
+  scheduled_tasks: ConsoleTaskScheduledItem[];
+}
+
+export interface ConsoleTasksResponse {
+  teams: ConsoleTaskTeam[];
+  unassigned_scheduled_tasks: ConsoleTaskScheduledItem[];
+}

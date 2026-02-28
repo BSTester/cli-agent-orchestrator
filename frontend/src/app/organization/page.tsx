@@ -3,6 +3,23 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import ConsoleNav from "@/components/ConsoleNav";
+import {
+  DataTable,
+  DataTd,
+  DataTh,
+  EmptyState,
+  ErrorBanner,
+  PageIntro,
+  PageShell,
+  PrimaryButton,
+  SectionCard,
+  SectionTitle,
+  SelectInput,
+  StatusPill,
+  SuccessButton,
+  TextAreaInput,
+  TextInput,
+} from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
 import {
   caoRequest,
@@ -13,7 +30,7 @@ import {
   ConsoleOrganization,
   InstallAgentProfileResponse,
 } from "@/lib/cao";
-import { toStatusLabel } from "@/lib/status";
+import { isStatusActive, toStatusLabel } from "@/lib/status";
 
 const builtInProfiles = ["code_supervisor", "developer", "reviewer"];
 
@@ -216,84 +233,75 @@ export default function OrganizationPage() {
   return (
     <RequireAuth>
       <ConsoleNav />
-      <main style={{ padding: 18 }}>
-        <h1 style={{ fontSize: 22, color: "var(--text-bright)", marginBottom: 12 }}>组织管理</h1>
+      <PageShell>
+        <PageIntro
+          title="组织管理"
+          description="负责团队编制操作：新建团队、新入职员工、加入团队。"
+        />
 
-        {error && <div style={{ color: "var(--danger)", marginBottom: 12 }}>{error}</div>}
+        {error && <ErrorBanner text={error} />}
 
         <section
           style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            padding: 14,
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
+            gap: 12,
             marginBottom: 14,
           }}
         >
-          <div style={{ fontWeight: 700, color: "var(--text-bright)", marginBottom: 10 }}>入职新员工（新增岗位类型）</div>
-          <form onSubmit={onboardNewEmployee}>
+          <SectionCard>
+            <SectionTitle title="入职新员工（新增岗位类型）" />
+            <form onSubmit={onboardNewEmployee}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-              <input
+              <TextInput
                 value={newAgentName}
                 onChange={(e) => setNewAgentName(e.target.value)}
                 required
                 placeholder="name，例如 data_analyst"
-                style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px" }}
               />
-              <input
+              <TextInput
                 value={newAgentDescription}
                 onChange={(e) => setNewAgentDescription(e.target.value)}
                 required
                 placeholder="description"
-                style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px" }}
               />
             </div>
             <div style={{ marginBottom: 10 }}>
-              <select
+              <SelectInput
                 value={newAgentProvider}
                 onChange={(e) => setNewAgentProvider(e.target.value)}
-                style={{ width: "100%", border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px" }}
+                style={{ width: "100%" }}
               >
                 {providers.map((item) => (
                   <option key={item || "default-new-profile"} value={item}>
                     {item || "不指定 provider（按系统默认）"}
                   </option>
                 ))}
-              </select>
+              </SelectInput>
             </div>
-            <textarea
+            <TextAreaInput
               value={newAgentPrompt}
               onChange={(e) => setNewAgentPrompt(e.target.value)}
               required
               placeholder="系统提示词（markdown 内容）"
-              style={{ width: "100%", minHeight: 120, border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px", marginBottom: 10 }}
+              style={{ width: "100%", minHeight: 120, marginBottom: 10 }}
             />
-            <button
+            <PrimaryButton
               type="submit"
               disabled={creatingProfile}
-              style={{ border: "none", borderRadius: 6, background: "var(--accent)", color: "#fff", padding: "8px 14px", cursor: "pointer", fontWeight: 700 }}
             >
               {creatingProfile ? "办理入职中..." : "保存岗位并完成安装"}
-            </button>
-          </form>
-        </section>
+            </PrimaryButton>
+            </form>
+          </SectionCard>
 
-        <section
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            padding: 14,
-            marginBottom: 14,
-          }}
-        >
-          <div style={{ fontWeight: 700, color: "var(--text-bright)", marginBottom: 10 }}>组建新团队（启动团队负责人）</div>
-          <form onSubmit={createMainAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10 }}>
-            <select
+          <SectionCard>
+            <SectionTitle title="组建新团队（启动团队负责人）" />
+            <form onSubmit={createMainAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10 }}>
+            <SelectInput
               value={mainProfile}
               onChange={(e) => setMainProfile(e.target.value)}
               required
-              style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px" }}
             >
               <option value="">请选择 Agent 类型</option>
               {profileOptions.map((profileName) => (
@@ -301,44 +309,34 @@ export default function OrganizationPage() {
                   {profileName}
                 </option>
               ))}
-            </select>
-            <select
+            </SelectInput>
+            <SelectInput
               value={mainProvider}
               onChange={(e) => setMainProvider(e.target.value)}
-              style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px" }}
             >
               {providers.map((item) => (
                 <option key={item || "default-main"} value={item}>
                   {item || "自动选择 provider"}
                 </option>
               ))}
-            </select>
-            <button
+            </SelectInput>
+            <PrimaryButton
               type="submit"
               disabled={creatingMain}
-              style={{ border: "none", borderRadius: 6, background: "var(--accent)", color: "#fff", padding: "8px 14px", cursor: "pointer", fontWeight: 700 }}
             >
               {creatingMain ? "组建中..." : "启动团队"}
-            </button>
-          </form>
+            </PrimaryButton>
+            </form>
+          </SectionCard>
         </section>
 
-        <section
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            padding: 14,
-            marginBottom: 14,
-          }}
-        >
-          <div style={{ fontWeight: 700, color: "var(--text-bright)", marginBottom: 10 }}>团队增员（入职执行员工）</div>
+        <SectionCard>
+          <SectionTitle title="团队增员（入职执行员工）" />
           <form onSubmit={createWorkerAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10 }}>
-            <select
+            <SelectInput
               value={workerProfile}
               onChange={(e) => setWorkerProfile(e.target.value)}
               required
-              style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px" }}
             >
               <option value="">请选择 Agent 类型</option>
               {profileOptions.map((profileName) => (
@@ -346,22 +344,20 @@ export default function OrganizationPage() {
                   {profileName}
                 </option>
               ))}
-            </select>
-            <select
+            </SelectInput>
+            <SelectInput
               value={workerProvider}
               onChange={(e) => setWorkerProvider(e.target.value)}
-              style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px" }}
             >
               {providers.map((item) => (
                 <option key={item || "default-worker"} value={item}>
                   {item || "自动选择 provider"}
                 </option>
               ))}
-            </select>
-            <select
+            </SelectInput>
+            <SelectInput
               value={workerLeaderId}
               onChange={(e) => setWorkerLeaderId(e.target.value)}
-              style={{ border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface2)", color: "var(--text)", padding: "8px 10px" }}
             >
               <option value="">不分配团队（独立团队编制）</option>
               {leaders.map((leader: ConsoleAgent) => (
@@ -369,21 +365,20 @@ export default function OrganizationPage() {
                   {leader.id} · {leader.agent_profile}
                 </option>
               ))}
-            </select>
-            <button
+            </SelectInput>
+            <SuccessButton
               type="submit"
               disabled={creatingWorker}
-              style={{ border: "none", borderRadius: 6, background: "var(--success)", color: "#fff", padding: "8px 14px", cursor: "pointer", fontWeight: 700 }}
             >
               {creatingWorker ? "办理中..." : "办理入职"}
-            </button>
+            </SuccessButton>
           </form>
-        </section>
+        </SectionCard>
 
-        <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 14 }}>
-          <div style={{ fontWeight: 700, color: "var(--text-bright)", marginBottom: 10 }}>集团团队架构（负责人 → 员工）</div>
+        <SectionCard>
+          <SectionTitle title="集团团队架构（负责人 → 员工）" />
           {groups.length === 0 ? (
-            <div style={{ color: "var(--text-dim)" }}>暂无团队</div>
+            <EmptyState text="暂无团队" />
           ) : (
             groups.map((group) => (
               <div key={group.leader.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, marginBottom: 10 }}>
@@ -394,36 +389,41 @@ export default function OrganizationPage() {
                   </span>
                 </div>
                 {group.members.length === 0 ? (
-                  <div style={{ color: "var(--text-dim)" }}>暂无直属 Worker</div>
+                  <EmptyState text="暂无直属 Worker" />
                 ) : (
                   <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <DataTable>
                       <thead>
-                        <tr style={{ color: "var(--text-dim)", textAlign: "left" }}>
-                          <th style={{ padding: "6px 8px" }}>Worker ID</th>
-                          <th style={{ padding: "6px 8px" }}>Profile</th>
-                          <th style={{ padding: "6px 8px" }}>Provider</th>
-                          <th style={{ padding: "6px 8px" }}>状态</th>
+                        <tr>
+                          <DataTh>Worker ID</DataTh>
+                          <DataTh>Profile</DataTh>
+                          <DataTh>Provider</DataTh>
+                          <DataTh>状态</DataTh>
                         </tr>
                       </thead>
                       <tbody>
                         {group.members.map((member) => (
                           <tr key={member.id} style={{ borderTop: "1px solid var(--border)" }}>
-                            <td style={{ padding: "7px 8px", fontFamily: "var(--mono)", fontSize: 12 }}>{member.id}</td>
-                            <td style={{ padding: "7px 8px" }}>{member.agent_profile}</td>
-                            <td style={{ padding: "7px 8px" }}>{member.provider}</td>
-                            <td style={{ padding: "7px 8px" }}>{toStatusLabel(member.status)}</td>
+                            <DataTd mono>{member.id}</DataTd>
+                            <DataTd>{member.agent_profile}</DataTd>
+                            <DataTd>{member.provider}</DataTd>
+                            <DataTd>
+                              <StatusPill
+                                text={toStatusLabel(member.status)}
+                                active={isStatusActive(member.status)}
+                              />
+                            </DataTd>
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </DataTable>
                   </div>
                 )}
               </div>
             ))
           )}
-        </section>
-      </main>
+        </SectionCard>
+      </PageShell>
     </RequireAuth>
   );
 }
