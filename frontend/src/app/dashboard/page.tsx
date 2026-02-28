@@ -15,7 +15,8 @@ function BarChartCard({
   title: string;
   rows: Array<{ label: string; value: number }>;
 }) {
-  const total = rows.reduce((sum, row) => sum + row.value, 0);
+  const sortedRows = [...rows].sort((a, b) => b.value - a.value);
+  const total = sortedRows.reduce((sum, row) => sum + row.value, 0);
   const palette = [
     "#60a5fa",
     "#34d399",
@@ -27,8 +28,7 @@ function BarChartCard({
     "#84cc16",
   ];
 
-  const normalizedRows = rows.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
-  const maxValue = normalizedRows.reduce((max, row) => Math.max(max, row.value), 0);
+  const maxValue = sortedRows.reduce((max, row) => Math.max(max, row.value), 0);
 
   return (
     <div
@@ -40,7 +40,7 @@ function BarChartCard({
       }}
     >
       <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>{title}</div>
-      {normalizedRows.length === 0 ? (
+      {sortedRows.length === 0 ? (
         <EmptyState text="暂无数据" />
       ) : (
         <div
@@ -58,12 +58,12 @@ function BarChartCard({
               alignItems: "flex-end",
               gap: 10,
               minHeight: 210,
-              minWidth: Math.max(280, normalizedRows.length * 70),
+              minWidth: Math.max(280, sortedRows.length * 70),
             }}
           >
-          {normalizedRows.map((row, index) => {
+          {sortedRows.map((row, index) => {
             const percent = total > 0 ? Math.round((row.value / total) * 100) : 0;
-            const barHeight = maxValue > 0 ? Math.max(8, (row.value / maxValue) * 150) : 0;
+            const barHeight = maxValue > 0 ? Math.max(8, (row.value / maxValue) * 150) : 8;
             return (
               <div
                 key={row.label}
@@ -100,6 +100,7 @@ function BarChartCard({
                     style={{
                       width: "100%",
                       height: barHeight,
+                      opacity: row.value === 0 ? 0.4 : 1,
                       background: palette[index % palette.length],
                     }}
                   />
@@ -176,31 +177,20 @@ export default function DashboardPage() {
   const providerRows = Object.entries(overview?.provider_counts || {});
   const statusRows = Object.entries(overview?.status_counts || {});
   const mainAgents: ConsoleAgent[] = useMemo(() => overview?.main_agents || [], [overview?.main_agents]);
-  const mainStatusRows = useMemo(() => {
-    const counts = new Map<string, number>();
-    mainAgents.forEach((agent) => {
-      const key = agent.status || "unknown";
-      counts.set(key, (counts.get(key) || 0) + 1);
-    });
-    return Array.from(counts.entries()).map(([label, value]) => ({
-      label: toStatusLabel(label),
-      value,
-    }));
-  }, [mainAgents]);
 
   const leaderTaskRows = useMemo(() => {
     const teams = tasksOverview?.teams || [];
-    return teams
-      .map((team) => {
-        const taskCount = team.instant_tasks.length + team.scheduled_tasks.length;
-        return {
-          label: team.leader.alias || team.leader.session_name || team.leader.id,
-          value: taskCount,
-        };
-      })
-      .filter((row) => row.value > 0)
-      .sort((a, b) => b.value - a.value);
-  }, [tasksOverview?.teams]);
+    const taskMap = new Map<string, number>();
+    teams.forEach((team) => {
+      const taskCount = team.instant_tasks.length + team.scheduled_tasks.length;
+      taskMap.set(team.leader.id, taskCount);
+    });
+
+    return mainAgents.map((leader) => ({
+      label: leader.alias || leader.session_name || leader.id,
+      value: taskMap.get(leader.id) || 0,
+    }));
+  }, [mainAgents, tasksOverview?.teams]);
 
   return (
     <RequireAuth>
@@ -240,12 +230,7 @@ export default function DashboardPage() {
 
         <SectionCard>
           <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队负责人看板</div>
-          <CardGrid minWidth={320} gap={12}>
-            {mainStatusRows.length > 0 && (
-              <BarChartCard title="负责人状态分布" rows={mainStatusRows} />
-            )}
-            <BarChartCard title="负责人团队任务数" rows={leaderTaskRows} />
-          </CardGrid>
+          <BarChartCard title="负责人团队任务数" rows={leaderTaskRows} />
           {mainAgents.length === 0 ? (
             <EmptyState text="当前没有在营团队" />
           ) : (
