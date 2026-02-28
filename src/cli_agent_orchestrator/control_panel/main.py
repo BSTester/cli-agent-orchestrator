@@ -951,6 +951,22 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
             "agent": created_agent,
         }
 
+    except requests.exceptions.HTTPError as exc:
+        upstream = exc.response
+        if upstream is not None:
+            try:
+                upstream_body = upstream.json()
+            except ValueError:
+                upstream_body = upstream.text
+
+            if isinstance(upstream_body, dict):
+                detail = upstream_body.get("detail") or upstream_body
+            else:
+                detail = upstream_body or str(exc)
+
+            raise HTTPException(status_code=upstream.status_code, detail=detail)
+
+        raise HTTPException(status_code=502, detail=f"Failed to create organization agent: {exc}")
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to create organization agent: {exc}")
 

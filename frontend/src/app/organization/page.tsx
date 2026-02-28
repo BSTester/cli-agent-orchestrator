@@ -68,6 +68,31 @@ export default function OrganizationPage() {
   const [newAgentPrompt, setNewAgentPrompt] = useState("");
   const [creatingProfile, setCreatingProfile] = useState(false);
 
+  function extractErrorDetail(payload: unknown): string {
+    if (!payload || typeof payload !== "object") {
+      return "";
+    }
+
+    const detail = (payload as { detail?: unknown }).detail;
+    if (typeof detail === "string") {
+      return detail;
+    }
+    if (detail && typeof detail === "object") {
+      const nestedMessage = (detail as { message?: unknown }).message;
+      if (typeof nestedMessage === "string") {
+        return nestedMessage;
+      }
+      return JSON.stringify(detail);
+    }
+
+    const error = (payload as { error?: unknown }).error;
+    if (typeof error === "string") {
+      return error;
+    }
+
+    return "";
+  }
+
   const loadOrganization = useCallback(async () => {
     const result = await caoRequest<ConsoleOrganization>("GET", "/console/organization");
     if (!result.ok) {
@@ -226,7 +251,8 @@ export default function OrganizationPage() {
 
     const result = await caoRequest("POST", "/console/organization/create", { body });
     if (!result.ok) {
-      setError("创建主控 Agent 失败");
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `创建主控 Agent 失败：${detail}` : "创建主控 Agent 失败");
       setCreatingMain(false);
       return;
     }
@@ -259,7 +285,8 @@ export default function OrganizationPage() {
 
     const result = await caoRequest("POST", "/console/organization/create", { body });
     if (!result.ok) {
-      setError("创建 Worker Agent 失败");
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `创建 Worker Agent 失败：${detail}` : "创建 Worker Agent 失败");
       setCreatingWorker(false);
       return;
     }

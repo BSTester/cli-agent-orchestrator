@@ -325,6 +325,32 @@ def test_console_create_org_worker_without_leader_becomes_team(client: TestClien
         mock_register_team.assert_called_once_with("worker-team-1")
 
 
+def test_console_create_org_agent_propagates_upstream_http_error(client: TestClient) -> None:
+    login(client)
+
+    with patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request:
+        upstream_response = requests.Response()
+        upstream_response.status_code = 400
+        upstream_response._content = b'{"detail":"Provider not available"}'
+
+        http_error = requests.exceptions.HTTPError("400 Client Error")
+        http_error.response = upstream_response
+        mock_request.side_effect = http_error
+
+        response = client.post(
+            "/console/organization/create",
+            json={
+                "role_type": "main",
+                "agent_profile": "code_supervisor",
+                "provider": "claude_code",
+            },
+        )
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["detail"] == "Provider not available"
+
+
 def test_console_agent_profiles(client: TestClient) -> None:
     login(client)
 

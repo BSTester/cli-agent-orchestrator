@@ -73,6 +73,9 @@ class TmuxClient:
             ValueError: If directory does not exist, is a blocked system path,
                 or is outside the user's home directory
         """
+        home_dir = os.path.realpath(os.path.expanduser("~"))
+        explicit_directory = working_directory is not None
+
         if working_directory is None:
             working_directory = os.getcwd()
 
@@ -84,12 +87,25 @@ class TmuxClient:
         # /home/user -> /local/home/user on AWS).
         safe_working_directory = os.path.realpath(os.path.abspath(working_directory))
 
-        home_dir = os.path.realpath(os.path.expanduser("~"))
-
         # Step 2: Path containment — startswith is recognized by CodeQL as a
         # SafeAccessCheck that clears the NormalizedUnchecked taint state.
         # This MUST be an unconditional startswith guard (no compound `and`)
         # so CodeQL recognizes it on all code paths to filesystem operations.
+        if not safe_working_directory.startswith(home_dir):
+            if not explicit_directory:
+                logger.warning(
+                    "Current working directory %s is outside home %s; falling back to home directory",
+                    safe_working_directory,
+                    home_dir,
+                )
+                safe_working_directory = home_dir
+            else:
+                raise ValueError(
+                    f"Working directory not allowed: {working_directory} "
+                    f"(resolves to {safe_working_directory}, which is outside "
+                    f"home directory {home_dir})"
+                )
+
         if not safe_working_directory.startswith(home_dir):
             raise ValueError(
                 f"Working directory not allowed: {working_directory} "
