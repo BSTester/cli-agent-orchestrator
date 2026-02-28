@@ -227,6 +227,11 @@ Share one interesting world trivia for today.
                 </option>
               ))}
             </SelectInput>
+            <TextInput
+              value={flowName}
+              onChange={(event) => setFlowName(event.target.value)}
+              placeholder="Flow 名称（新建时可选，编辑已有文件时将自动带出）"
+            />
           </div>
 
           <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
@@ -242,19 +247,6 @@ Share one interesting world trivia for today.
               alignItems: "stretch",
             }}
           >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: 10,
-              }}
-            >
-              <TextInput
-                value={flowName}
-                onChange={(event) => setFlowName(event.target.value)}
-                placeholder="Flow 名称（新建时可选，编辑已有文件时将自动带出）"
-              />
-            </div>
             <CodeEditorInput
               value={flowContent}
               onChange={setFlowContent}
@@ -264,7 +256,7 @@ Share one interesting world trivia for today.
               enableFormat
               required
               placeholder="请输入完整 flow markdown（含 frontmatter）"
-              style={{ width: "100%", minHeight: 220 }}
+              style={{ width: "100%", minHeight: 320 }}
             />
             <PrimaryButton
               type="submit"

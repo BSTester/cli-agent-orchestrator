@@ -397,7 +397,7 @@ export default function OrganizationPage() {
               enableFormat
               required
               placeholder="系统提示词（markdown 内容）"
-              style={{ width: "100%", minHeight: 120, marginBottom: 10 }}
+              style={{ width: "100%", minHeight: 240, marginBottom: 10 }}
             />
             <PrimaryButton
               type="submit"
@@ -409,93 +409,94 @@ export default function OrganizationPage() {
           </SectionCard>
 
           <SectionCard>
-            <SectionTitle title="组建新团队（启动团队负责人）" />
+            <SectionTitle title="团队编制管理" />
+            <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增负责人</div>
             <form onSubmit={createMainAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10 }}>
-            <SelectInput
-              value={mainProfile}
-              onChange={(e) => setMainProfile(e.target.value)}
-              required
-            >
-              {mainProfileOptions.map((profileName) => (
-                <option key={`main-${profileName}`} value={profileName}>
-                  {profileName}
-                </option>
-              ))}
-            </SelectInput>
-            <SelectInput
-              value={mainProvider}
-              onChange={(e) => setMainProvider(e.target.value)}
-            >
-              {providers.map((item) => (
-                <option key={item || "default-main"} value={item}>
-                  {item || "自动选择 provider"}
-                </option>
-              ))}
-            </SelectInput>
-            <TextInput
-              value={mainTeamAlias}
-              onChange={(e) => setMainTeamAlias(e.target.value)}
-              placeholder="团队别名（可选）"
-            />
-            <PrimaryButton
-              type="submit"
-              disabled={creatingMain}
-            >
-              {creatingMain ? "组建中..." : "启动团队"}
-            </PrimaryButton>
+              <SelectInput
+                value={mainProfile}
+                onChange={(e) => setMainProfile(e.target.value)}
+                required
+              >
+                {mainProfileOptions.map((profileName) => (
+                  <option key={`main-${profileName}`} value={profileName}>
+                    {profileName}
+                  </option>
+                ))}
+              </SelectInput>
+              <SelectInput
+                value={mainProvider}
+                onChange={(e) => setMainProvider(e.target.value)}
+              >
+                {providers.map((item) => (
+                  <option key={item || "default-main"} value={item}>
+                    {item || "自动选择 provider"}
+                  </option>
+                ))}
+              </SelectInput>
+              <TextInput
+                value={mainTeamAlias}
+                onChange={(e) => setMainTeamAlias(e.target.value)}
+                placeholder="团队别名（可选）"
+              />
+              <PrimaryButton
+                type="submit"
+                disabled={creatingMain}
+              >
+                {creatingMain ? "组建中..." : "启动团队"}
+              </PrimaryButton>
+            </form>
+
+            <div style={{ height: 1, background: "var(--border)", margin: "14px 0" }} />
+
+            <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增队员</div>
+            <form onSubmit={createWorkerAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 10 }}>
+              <SelectInput
+                value={workerProfile}
+                onChange={(e) => setWorkerProfile(e.target.value)}
+                required
+              >
+                <option value="">请选择 Agent 类型</option>
+                {workerProfileOptions.map((profileName) => (
+                  <option key={`worker-${profileName}`} value={profileName}>
+                    {profileName}
+                  </option>
+                ))}
+              </SelectInput>
+              <SelectInput
+                value={workerProvider}
+                onChange={(e) => setWorkerProvider(e.target.value)}
+              >
+                {providers.map((item) => (
+                  <option key={item || "default-worker"} value={item}>
+                    {item || "自动选择 provider"}
+                  </option>
+                ))}
+              </SelectInput>
+              <SelectInput
+                value={workerLeaderId}
+                onChange={(e) => setWorkerLeaderId(e.target.value)}
+              >
+                <option value="">不分配团队（独立团队编制）</option>
+                {leaders.map((leader: ConsoleAgent) => (
+                  <option key={leader.id} value={leader.id}>
+                    {leader.id} · {leader.agent_profile}
+                  </option>
+                ))}
+              </SelectInput>
+              <TextInput
+                value={workerAlias}
+                onChange={(e) => setWorkerAlias(e.target.value)}
+                placeholder="员工别名（可选）"
+              />
+              <SuccessButton
+                type="submit"
+                disabled={creatingWorker}
+              >
+                {creatingWorker ? "办理中..." : "办理入职"}
+              </SuccessButton>
             </form>
           </SectionCard>
         </section>
-
-        <SectionCard>
-          <SectionTitle title="团队增员（入职执行员工）" />
-          <form onSubmit={createWorkerAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 10 }}>
-            <SelectInput
-              value={workerProfile}
-              onChange={(e) => setWorkerProfile(e.target.value)}
-              required
-            >
-              <option value="">请选择 Agent 类型</option>
-              {workerProfileOptions.map((profileName) => (
-                <option key={`worker-${profileName}`} value={profileName}>
-                  {profileName}
-                </option>
-              ))}
-            </SelectInput>
-            <SelectInput
-              value={workerProvider}
-              onChange={(e) => setWorkerProvider(e.target.value)}
-            >
-              {providers.map((item) => (
-                <option key={item || "default-worker"} value={item}>
-                  {item || "自动选择 provider"}
-                </option>
-              ))}
-            </SelectInput>
-            <SelectInput
-              value={workerLeaderId}
-              onChange={(e) => setWorkerLeaderId(e.target.value)}
-            >
-              <option value="">不分配团队（独立团队编制）</option>
-              {leaders.map((leader: ConsoleAgent) => (
-                <option key={leader.id} value={leader.id}>
-                  {leader.id} · {leader.agent_profile}
-                </option>
-              ))}
-            </SelectInput>
-            <TextInput
-              value={workerAlias}
-              onChange={(e) => setWorkerAlias(e.target.value)}
-              placeholder="员工别名（可选）"
-            />
-            <SuccessButton
-              type="submit"
-              disabled={creatingWorker}
-            >
-              {creatingWorker ? "办理中..." : "办理入职"}
-            </SuccessButton>
-          </form>
-        </SectionCard>
 
         <SectionCard>
           <SectionTitle title="集团团队架构（负责人 → 员工）" />
