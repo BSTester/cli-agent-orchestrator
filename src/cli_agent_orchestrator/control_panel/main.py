@@ -449,8 +449,39 @@ class AgentProfileUpdateRequest(BaseModel):
 
 
 class ConsoleCreateScheduledTaskRequest(BaseModel):
-    file_path: str = Field(min_length=1)
+    flow_content: str = Field(min_length=1)
+    flow_name: Optional[str] = None
     leader_id: Optional[str] = None
+
+
+def _extract_flow_name_from_content(flow_content: str) -> Optional[str]:
+    match = re.search(r"^name\s*:\s*([A-Za-z0-9_-]+)\s*$", flow_content, flags=re.MULTILINE)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _save_flow_content_to_file(flow_content: str, flow_name: Optional[str]) -> Path:
+    content = flow_content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Flow content cannot be empty")
+
+    extracted_name = _extract_flow_name_from_content(content)
+    normalized_name = (flow_name or extracted_name or "").strip()
+    if not normalized_name:
+        normalized_name = f"flow-{uuid.uuid4().hex[:8]}"
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid flow name. Use letters, numbers, underscore, or hyphen.",
+        )
+
+    flow_dir = DB_DIR / "console_flows"
+    flow_dir.mkdir(parents=True, exist_ok=True)
+    flow_path = flow_dir / f"{normalized_name}.md"
+    flow_path.write_text(content + "\n", encoding="utf-8")
+    return flow_path
 
 
 def _is_instant_task_status(status_value: Optional[str]) -> bool:
@@ -937,7 +968,8 @@ async def console_tasks() -> Dict[str, Any]:
 
 @app.post("/console/tasks/scheduled")
 async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskRequest) -> Dict[str, Any]:
-    body = {"file_path": payload.file_path.strip()}
+    flow_path = _save_flow_content_to_file(payload.flow_content, payload.flow_name)
+    body = {"file_path": str(flow_path)}
 
     try:
         response = _request_cao("POST", "/flows", json_body=body)
@@ -951,7 +983,12 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
 
         leader_id = payload.leader_id.strip() if payload.leader_id else None
         _set_flow_team_link(flow_name, leader_id)
-        return {"ok": True, "flow": created_flow, "leader_id": leader_id}
+        return {
+            "ok": True,
+            "flow": created_flow,
+            "leader_id": leader_id,
+            "saved_file_path": str(flow_path),
+        }
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to create scheduled task: {exc}")
 

@@ -16,6 +16,7 @@ import {
   SelectInput,
   StatCard,
   StatusPill,
+  TextAreaInput,
   TextInput,
 } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
@@ -27,7 +28,16 @@ export default function TasksPage() {
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
 
-  const [filePath, setFilePath] = useState("");
+  const [flowName, setFlowName] = useState("");
+  const [flowContent, setFlowContent] = useState(`---
+name: morning-trivia
+schedule: "30 7 * * *"
+agent_profile: developer
+provider: kiro_cli
+---
+
+Share one interesting world trivia for today.
+`);
   const [leaderId, setLeaderId] = useState("");
 
   const loadTasks = useCallback(async () => {
@@ -55,14 +65,15 @@ export default function TasksPage() {
 
   async function createScheduledTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!filePath.trim()) {
+    if (!flowContent.trim()) {
       return;
     }
     setCreating(true);
 
     const result = await caoRequest("POST", "/console/tasks/scheduled", {
       body: {
-        file_path: filePath.trim(),
+        flow_name: flowName.trim() || undefined,
+        flow_content: flowContent.trim(),
         leader_id: leaderId.trim() || undefined,
       },
     });
@@ -73,7 +84,7 @@ export default function TasksPage() {
       return;
     }
 
-    setFilePath("");
+    setFlowName("");
     setCreating(false);
     await loadTasks();
   }
@@ -138,28 +149,41 @@ export default function TasksPage() {
             onSubmit={createScheduledTask}
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
               gap: 10,
               alignItems: "stretch",
             }}
           >
-            <TextInput
-              value={filePath}
-              onChange={(event) => setFilePath(event.target.value)}
-              required
-              placeholder="Flow 文件路径，例如 examples/flow/morning-trivia.md"
-            />
-            <SelectInput
-              value={leaderId}
-              onChange={(event) => setLeaderId(event.target.value)}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 10,
+              }}
             >
-              <option value="">不绑定团队</option>
-              {teams.map((team) => (
-                <option key={team.leader.id} value={team.leader.id}>
-                  {team.leader.session_name || team.leader.id}
-                </option>
-              ))}
-            </SelectInput>
+              <TextInput
+                value={flowName}
+                onChange={(event) => setFlowName(event.target.value)}
+                placeholder="Flow 名称（可选，未填则取内容中的 name）"
+              />
+              <SelectInput
+                value={leaderId}
+                onChange={(event) => setLeaderId(event.target.value)}
+              >
+                <option value="">不绑定团队</option>
+                {teams.map((team) => (
+                  <option key={team.leader.id} value={team.leader.id}>
+                    {team.leader.session_name || team.leader.id}
+                  </option>
+                ))}
+              </SelectInput>
+            </div>
+            <TextAreaInput
+              value={flowContent}
+              onChange={(event) => setFlowContent(event.target.value)}
+              required
+              placeholder="请输入完整 flow markdown（含 frontmatter）"
+              style={{ width: "100%", minHeight: 220, fontFamily: "var(--mono)", fontSize: 12 }}
+            />
             <PrimaryButton
               type="submit"
               disabled={creating}

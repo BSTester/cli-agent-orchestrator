@@ -1,5 +1,6 @@
 """Tests for the control panel FastAPI interface layer."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -771,11 +772,13 @@ def test_console_create_scheduled_task_success(client: TestClient) -> None:
         patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
         patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
         patch("cli_agent_orchestrator.control_panel.main._set_flow_team_link") as mock_set_link,
+        patch("cli_agent_orchestrator.control_panel.main._save_flow_content_to_file") as mock_save_file,
     ):
+        mock_save_file.return_value = Path("/tmp/console_flows/flowA.md")
         mock_request_cao.return_value = MagicMock()
         mock_json.return_value = {
             "name": "flowA",
-            "file_path": "examples/flow/morning-trivia.md",
+            "file_path": "/tmp/console_flows/flowA.md",
             "schedule": "*/5 * * * *",
             "agent_profile": "developer",
             "provider": "kiro_cli",
@@ -784,13 +787,18 @@ def test_console_create_scheduled_task_success(client: TestClient) -> None:
 
         response = client.post(
             "/console/tasks/scheduled",
-            json={"file_path": "examples/flow/morning-trivia.md", "leader_id": "leader1"},
+            json={
+                "flow_name": "flowA",
+                "flow_content": "---\nname: flowA\nschedule: '*/5 * * * *'\nagent_profile: developer\n---\nhello",
+                "leader_id": "leader1",
+            },
         )
 
         assert response.status_code == 200
         body = response.json()
         assert body["ok"] is True
         assert body["flow"]["name"] == "flowA"
+        assert body["saved_file_path"] == "/tmp/console_flows/flowA.md"
         mock_set_link.assert_called_once_with("flowA", "leader1")
 
 

@@ -8,14 +8,41 @@ import RequireAuth from "@/components/RequireAuth";
 import { caoRequest, ConsoleAgent, ConsoleOverview } from "@/lib/cao";
 import { toStatusLabel } from "@/lib/status";
 
-function BarChartCard({
+function PieChartCard({
   title,
   rows,
 }: {
   title: string;
   rows: Array<{ label: string; value: number }>;
 }) {
-  const total = rows.reduce((sum, row) => sum + row.value, 0) || 1;
+  const total = rows.reduce((sum, row) => sum + row.value, 0);
+  const palette = [
+    "#60a5fa",
+    "#34d399",
+    "#f59e0b",
+    "#f472b6",
+    "#a78bfa",
+    "#22d3ee",
+    "#f87171",
+    "#84cc16",
+  ];
+
+  const normalizedRows = rows.filter((row) => row.value > 0);
+  let current = 0;
+  const gradientStops = normalizedRows
+    .map((row, index) => {
+      const start = current;
+      const degree = total > 0 ? (row.value / total) * 360 : 0;
+      const end = start + degree;
+      current = end;
+      return `${palette[index % palette.length]} ${start}deg ${end}deg`;
+    })
+    .join(", ");
+
+  const chartBackground = gradientStops
+    ? `conic-gradient(${gradientStops})`
+    : "var(--surface2)";
+
   return (
     <div
       style={{
@@ -26,31 +53,45 @@ function BarChartCard({
       }}
     >
       <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>{title}</div>
-      {rows.length === 0 ? (
+      {normalizedRows.length === 0 ? (
         <EmptyState text="暂无数据" />
       ) : (
-        rows.map((row) => {
-          const percent = Math.round((row.value / total) * 100);
-          return (
-            <div key={row.label} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ color: "var(--text)", fontSize: 13 }}>{row.label}</span>
-                <span style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                  {row.value} ({percent}%)
-                </span>
-              </div>
-              <div style={{ height: 8, borderRadius: 999, background: "var(--surface2)", overflow: "hidden" }}>
-                <div
-                  style={{
-                    width: `${percent}%`,
-                    height: "100%",
-                    background: "var(--accent)",
-                  }}
-                />
-              </div>
-            </div>
-          );
-        })
+        <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 12, alignItems: "center" }}>
+          <div
+            style={{
+              width: 140,
+              height: 140,
+              borderRadius: "50%",
+              background: chartBackground,
+              border: "1px solid var(--border)",
+              margin: "0 auto",
+            }}
+          />
+          <div>
+            {normalizedRows.map((row, index) => {
+              const percent = total > 0 ? Math.round((row.value / total) * 100) : 0;
+              return (
+                <div key={row.label} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
+                  <span style={{ color: "var(--text)", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: 10,
+                        height: 10,
+                        borderRadius: 999,
+                        background: palette[index % palette.length],
+                      }}
+                    />
+                    {row.label}
+                  </span>
+                  <span style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                    {row.value} ({percent}%)
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -132,11 +173,11 @@ export default function DashboardPage() {
 
         <SectionTitle title="运行分布" />
         <CardGrid minWidth={260} gap={12}>
-          <BarChartCard
+          <PieChartCard
             title="Provider类型分布图"
             rows={providerRows.map(([label, value]) => ({ label, value }))}
           />
-          <BarChartCard
+          <PieChartCard
             title="运行状态分布图"
             rows={statusRows.map(([label, value]) => ({ label: toStatusLabel(label), value }))}
           />
@@ -146,7 +187,7 @@ export default function DashboardPage() {
           <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>团队负责人看板</div>
           {mainStatusRows.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <BarChartCard title="负责人状态分布" rows={mainStatusRows} />
+              <PieChartCard title="负责人状态分布" rows={mainStatusRows} />
             </div>
           )}
           {mainAgents.length === 0 ? (
