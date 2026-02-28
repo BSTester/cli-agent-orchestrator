@@ -72,6 +72,7 @@ export default function OrganizationPage() {
   const [disbandTarget, setDisbandTarget] = useState<{
     leaderId: string;
     leaderName: string;
+    sessionName: string;
     memberIds: string[];
   } | null>(null);
 
@@ -191,6 +192,7 @@ export default function OrganizationPage() {
     setDisbandTarget({
       leaderId: leader.id,
       leaderName: leader.alias || leader.id,
+      sessionName: leader.session_name || "",
       memberIds,
     });
     setError("");
@@ -212,21 +214,21 @@ export default function OrganizationPage() {
     setError("");
     setNotice("");
 
-    const terminalIds = Array.from(new Set([...currentTarget.memberIds, currentTarget.leaderId]));
-    const failedIds: string[] = [];
-
-    for (const terminalId of terminalIds) {
-      const result = await caoRequest("DELETE", `/terminals/${terminalId}`);
-      if (!result.ok) {
-        failedIds.push(terminalId);
-      }
+    if (!currentTarget.sessionName) {
+      setError("解散团队失败：负责人缺少会话信息，无法按会话关闭");
+      await loadOrganization();
+      return;
     }
 
-    if (failedIds.length > 0) {
-      setError(`解散团队部分失败：${failedIds.join(", ")}`);
-    } else {
-      setNotice(`已解散团队：${currentTarget.leaderName}`);
+    const result = await caoRequest("DELETE", `/sessions/${encodeURIComponent(currentTarget.sessionName)}`);
+    if (!result.ok) {
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `解散团队失败：${detail}` : "解散团队失败：无法关闭团队会话");
+      await loadOrganization();
+      return;
     }
+
+    setNotice(`已解散团队：${currentTarget.leaderName}（${currentTarget.sessionName}）`);
 
     await loadOrganization();
   }
@@ -717,11 +719,14 @@ export default function OrganizationPage() {
               <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 4 }}>
                 负责人：{disbandTarget.leaderName}
               </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 4 }}>
+                会话：{disbandTarget.sessionName || "-"}
+              </div>
               <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 12 }}>
                 团队成员数：{disbandTarget.memberIds.length}
               </div>
               <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 14 }}>
-                确认后将仅关闭当前团队中的负责人和成员，不会影响其他团队的 Agent。
+                确认后将按会话一次性关闭当前团队全部终端（等价于 shutdown --session），不会影响其他团队。
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <SecondaryButton type="button" onClick={cancelDisbandTeam}>

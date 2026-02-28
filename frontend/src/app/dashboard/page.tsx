@@ -134,16 +134,18 @@ function BarChartCard({
 }
 
 function formatUptime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  return `${h}h ${m}m ${s}s`;
+  return `${d}d ${h}h ${m}m ${s}s`;
 }
 
 export default function DashboardPage() {
   const [overview, setOverview] = useState<ConsoleOverview | null>(null);
   const [tasksOverview, setTasksOverview] = useState<ConsoleTasksResponse | null>(null);
   const [error, setError] = useState("");
+  const [liveUptimeSeconds, setLiveUptimeSeconds] = useState<number | null>(null);
 
   useEffect(() => {
     let canceled = false;
@@ -164,6 +166,7 @@ export default function DashboardPage() {
       }
 
       setOverview(overviewResult.data);
+      setLiveUptimeSeconds(overviewResult.data.uptime_seconds);
       if (tasksResult.ok) {
         setTasksOverview(tasksResult.data);
       } else {
@@ -178,6 +181,14 @@ export default function DashboardPage() {
       canceled = true;
       clearInterval(timer);
     };
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveUptimeSeconds((prev) => (prev === null ? prev : prev + 1));
+    }, 1000);
+
+    return () => clearInterval(timer);
   }, []);
 
   const providerRows = Object.entries(overview?.provider_counts || {});
@@ -238,7 +249,16 @@ export default function DashboardPage() {
             <StatCard label="集团在岗员工" value={overview?.agents_total ?? "-"} />
             <StatCard label="在营团队数" value={overview?.main_agents_total ?? "-"} />
             <StatCard label="团队成员数" value={overview?.worker_agents_total ?? "-"} />
-            <StatCard label="集团系统运行时长" value={overview ? formatUptime(overview.uptime_seconds) : "-"} />
+            <StatCard
+              label="集团系统运行时长"
+              value={
+                liveUptimeSeconds !== null
+                  ? formatUptime(liveUptimeSeconds)
+                  : overview
+                    ? formatUptime(overview.uptime_seconds)
+                    : "-"
+              }
+            />
           </CardGrid>
         </SectionCard>
 
