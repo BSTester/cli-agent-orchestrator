@@ -266,7 +266,11 @@ Share one interesting world trivia for today.
               placeholder="请输入完整 flow markdown（含 frontmatter）"
               style={{ width: "100%", minHeight: 220 }}
             />
-            <PrimaryButton type="submit" disabled={creating} style={{ minHeight: 38 }}>
+            <PrimaryButton
+              type="submit"
+              disabled={creating}
+              style={{ minHeight: 38, width: "fit-content", justifySelf: "start", padding: "8px 16px" }}
+            >
               {creating
                 ? "提交中..."
                 : selectedFileName
