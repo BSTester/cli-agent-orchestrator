@@ -213,7 +213,7 @@ type CodeEditorLanguage = "text" | "markdown" | "javascript" | "python";
 
 function inferLanguageFromFileName(fileName?: string): CodeEditorLanguage {
   if (!fileName) {
-    return "text";
+    return "markdown";
   }
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mdx")) {
@@ -225,7 +225,7 @@ function inferLanguageFromFileName(fileName?: string): CodeEditorLanguage {
   if (lower.endsWith(".py")) {
     return "python";
   }
-  return "text";
+  return "markdown";
 }
 
 function formatContent(value: string, language: CodeEditorLanguage): string {
@@ -261,7 +261,7 @@ export function CodeEditorInput({
   value,
   onChange,
   onKeyDown,
-  language = "text",
+  language = "markdown",
   fileName,
   placeholder,
   showToolbar = false,

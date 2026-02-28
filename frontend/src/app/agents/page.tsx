@@ -659,7 +659,7 @@ export default function AgentsPage() {
                   <CodeEditorInput
                     value={message}
                     onChange={setMessage}
-                    language="text"
+                    language="markdown"
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
