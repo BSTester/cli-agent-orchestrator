@@ -33,7 +33,7 @@ export default function ConsoleNav() {
         background: "var(--surface)",
       }}
     >
-      <div style={{ fontWeight: 700, color: "var(--text-bright)" }}>CAO Console</div>
+      <div style={{ fontWeight: 700, color: "var(--text-bright)" }}>一人集团公司</div>
       <nav style={{ display: "flex", gap: 16 }}>
         {navItems.map((item) => {
           const active = pathname === item.href;

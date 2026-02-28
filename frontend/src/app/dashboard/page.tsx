@@ -133,7 +133,7 @@ export default function DashboardPage() {
         <SectionTitle title="运行分布" />
         <CardGrid minWidth={260} gap={12}>
           <BarChartCard
-            title="技术栈分布图"
+            title="Provider类型分布图"
             rows={providerRows.map(([label, value]) => ({ label, value }))}
           />
           <BarChartCard

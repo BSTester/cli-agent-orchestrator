@@ -12,6 +12,7 @@ import {
   PageIntro,
   PageShell,
   PrimaryButton,
+  SecondaryButton,
   SectionCard,
   SectionTitle,
   SelectInput,
@@ -49,6 +50,7 @@ const providers = [
 export default function OrganizationPage() {
   const [data, setData] = useState<ConsoleOrganization | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [profileOptions, setProfileOptions] = useState<string[]>([]);
 
   const [mainProfile, setMainProfile] = useState("");
@@ -91,19 +93,58 @@ export default function OrganizationPage() {
     ).sort();
     setProfileOptions(profiles);
 
-    if (!mainProfile) {
-      const preferredMain = profiles.includes("code_supervisor")
-        ? "code_supervisor"
-        : profiles[0] || "";
-      setMainProfile(preferredMain);
+    const workerProfiles = profiles.filter((profileName) => profileName !== "code_supervisor");
+
+    if (!mainProfile || mainProfile !== "code_supervisor") {
+      setMainProfile("code_supervisor");
     }
-    if (!workerProfile) {
-      const preferredWorker = profiles.includes("developer")
+    if (!workerProfile || workerProfile === "code_supervisor") {
+      const preferredWorker = workerProfiles.includes("developer")
         ? "developer"
-        : profiles[0] || "";
+        : workerProfiles[0] || "";
       setWorkerProfile(preferredWorker);
     }
   }, [mainProfile, workerProfile]);
+
+  async function shutdownSessionByTerminal(agentId: string, sessionName?: string) {
+    if (!sessionName) {
+      setError("离职失败：目标Agent没有会话信息");
+      setNotice("");
+      return;
+    }
+
+    setError("");
+    setNotice("");
+    const result = await caoRequest("DELETE", `/sessions/${sessionName}`);
+    if (!result.ok) {
+      setError("离职失败：无法关闭对应会话");
+      setNotice("");
+      return;
+    }
+
+    setNotice(`已完成离职：${agentId}`);
+
+    await loadOrganization();
+  }
+
+  async function confirmAndShutdown(agentId: string, sessionName?: string) {
+    if (!sessionName) {
+      setError("离职失败：目标Agent没有会话信息");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `确认办理离职吗？\n\nAgent：${agentId}\n会话：${sessionName}\n\n确认后将关闭该会话。`
+    );
+
+    if (!confirmed) {
+      setNotice("已取消离职操作");
+      setError("");
+      return;
+    }
+
+    await shutdownSessionByTerminal(agentId, sessionName);
+  }
 
   async function onboardNewEmployee(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -176,7 +217,7 @@ export default function OrganizationPage() {
       provider?: string;
     } = {
       role_type: "main",
-      agent_profile: mainProfile.trim(),
+      agent_profile: "code_supervisor",
     };
 
     if (mainProvider) {
@@ -229,6 +270,8 @@ export default function OrganizationPage() {
 
   const groups = data?.leader_groups ?? [];
   const leaders = data?.leaders ?? [];
+  const mainProfileOptions = ["code_supervisor"];
+  const workerProfileOptions = profileOptions.filter((profileName) => profileName !== "code_supervisor");
 
   return (
     <RequireAuth>
@@ -240,6 +283,22 @@ export default function OrganizationPage() {
         />
 
         {error && <ErrorBanner text={error} />}
+        {notice && (
+          <div
+            style={{
+              color: "var(--success)",
+              border: "1px solid var(--success)",
+              background: "var(--surface)",
+              borderRadius: 10,
+              padding: "8px 10px",
+              marginBottom: 12,
+              fontSize: 13,
+            }}
+            role="status"
+          >
+            {notice}
+          </div>
+        )}
 
         <section
           style={{
@@ -250,7 +309,7 @@ export default function OrganizationPage() {
           }}
         >
           <SectionCard>
-            <SectionTitle title="入职新员工（新增岗位类型）" />
+            <SectionTitle title="新增岗位类型" />
             <form onSubmit={onboardNewEmployee}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
               <TextInput
@@ -303,8 +362,7 @@ export default function OrganizationPage() {
               onChange={(e) => setMainProfile(e.target.value)}
               required
             >
-              <option value="">请选择 Agent 类型</option>
-              {profileOptions.map((profileName) => (
+              {mainProfileOptions.map((profileName) => (
                 <option key={`main-${profileName}`} value={profileName}>
                   {profileName}
                 </option>
@@ -339,7 +397,7 @@ export default function OrganizationPage() {
               required
             >
               <option value="">请选择 Agent 类型</option>
-              {profileOptions.map((profileName) => (
+              {workerProfileOptions.map((profileName) => (
                 <option key={`worker-${profileName}`} value={profileName}>
                   {profileName}
                 </option>
@@ -382,11 +440,21 @@ export default function OrganizationPage() {
           ) : (
             groups.map((group) => (
               <div key={group.leader.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, marginBottom: 10 }}>
-                <div style={{ marginBottom: 8 }}>
-                  <span style={{ color: "var(--text-bright)", fontWeight: 700 }}>{group.leader.id}</span>
-                  <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
-                    {group.leader.agent_profile} · {toStatusLabel(group.leader.status)}
-                  </span>
+                <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                  <div>
+                    <span style={{ color: "var(--text-bright)", fontWeight: 700 }}>{group.leader.id}</span>
+                    <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
+                      {group.leader.agent_profile} · {toStatusLabel(group.leader.status)}
+                    </span>
+                  </div>
+                  <SecondaryButton
+                    type="button"
+                    onClick={() => void confirmAndShutdown(group.leader.id, group.leader.session_name)}
+                    disabled={!group.leader.session_name}
+                    style={{ padding: "4px 8px", fontSize: 12 }}
+                  >
+                    办理离职
+                  </SecondaryButton>
                 </div>
                 {group.members.length === 0 ? (
                   <EmptyState text="暂无直属 Worker" />
@@ -399,6 +467,7 @@ export default function OrganizationPage() {
                           <DataTh>Profile</DataTh>
                           <DataTh>Provider</DataTh>
                           <DataTh>状态</DataTh>
+                          <DataTh>操作</DataTh>
                         </tr>
                       </thead>
                       <tbody>
@@ -412,6 +481,16 @@ export default function OrganizationPage() {
                                 text={toStatusLabel(member.status)}
                                 active={isStatusActive(member.status)}
                               />
+                            </DataTd>
+                            <DataTd>
+                              <SecondaryButton
+                                type="button"
+                                onClick={() => void confirmAndShutdown(member.id, member.session_name)}
+                                disabled={!member.session_name}
+                                style={{ padding: "4px 8px", fontSize: 12 }}
+                              >
+                                办理离职
+                              </SecondaryButton>
                             </DataTd>
                           </tr>
                         ))}
