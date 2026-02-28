@@ -52,6 +52,7 @@ export async function caoRequest<T = unknown>(
 
 export interface ConsoleAgent {
   id: string;
+  alias?: string;
   name?: string;
   provider?: string;
   session_name?: string;
@@ -74,6 +75,7 @@ export interface ConsoleOverview {
 
 export interface ConsoleLeaderGroup {
   leader: ConsoleAgent;
+  team_alias?: string;
   members: ConsoleAgent[];
 }
 

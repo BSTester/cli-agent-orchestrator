@@ -94,6 +94,24 @@ def _init_organization_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS org_team_aliases (
+                leader_id TEXT PRIMARY KEY,
+                alias TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS org_agent_aliases (
+                agent_id TEXT PRIMARY KEY,
+                alias TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
 
@@ -168,6 +186,54 @@ def _list_flow_team_links() -> Dict[str, Optional[str]]:
     with sqlite3.connect(str(DATABASE_FILE)) as conn:
         rows = conn.execute("SELECT flow_name, leader_id FROM flow_team_links").fetchall()
     return {str(flow_name): (str(leader_id) if leader_id else None) for flow_name, leader_id in rows}
+
+
+def _set_team_alias(leader_id: str, alias: str) -> None:
+    normalized_alias = alias.strip()
+    if not normalized_alias:
+        return
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute(
+            """
+            INSERT INTO org_team_aliases (leader_id, alias, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(leader_id) DO UPDATE SET
+                alias=excluded.alias,
+                updated_at=excluded.updated_at
+            """,
+            (leader_id, normalized_alias, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def _list_team_aliases() -> Dict[str, str]:
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        rows = conn.execute("SELECT leader_id, alias FROM org_team_aliases").fetchall()
+    return {str(leader_id): str(alias) for leader_id, alias in rows if leader_id and alias}
+
+
+def _set_agent_alias(agent_id: str, alias: str) -> None:
+    normalized_alias = alias.strip()
+    if not normalized_alias:
+        return
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute(
+            """
+            INSERT INTO org_agent_aliases (agent_id, alias, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET
+                alias=excluded.alias,
+                updated_at=excluded.updated_at
+            """,
+            (agent_id, normalized_alias, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def _list_agent_aliases() -> Dict[str, str]:
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        rows = conn.execute("SELECT agent_id, alias FROM org_agent_aliases").fetchall()
+    return {str(agent_id): str(alias) for agent_id, alias in rows if agent_id and alias}
 
 
 def _list_available_agent_profiles() -> List[str]:
@@ -269,6 +335,8 @@ class OrgCreateRequest(BaseModel):
     provider: Optional[str] = None
     leader_id: Optional[str] = None
     working_directory: Optional[str] = None
+    team_alias: Optional[str] = None
+    agent_alias: Optional[str] = None
 
 
 class AgentProfileCreateRequest(BaseModel):
@@ -465,6 +533,13 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
         if str(terminal.get("id", "")) not in leader_ids and not terminal.get("is_main")
     ]
     links_from_db = _list_worker_links()
+    team_aliases = _list_team_aliases()
+    agent_aliases = _list_agent_aliases()
+
+    for terminal in terminals:
+        terminal_id = str(terminal.get("id", ""))
+        if terminal_id and terminal_id in agent_aliases:
+            terminal["alias"] = agent_aliases[terminal_id]
 
     for leader in leaders:
         leader_id = str(leader.get("id", ""))
@@ -511,6 +586,7 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
         leader_groups.append(
             {
                 "leader": leader,
+                "team_alias": team_aliases.get(leader_id),
                 "members": sorted(
                     members_by_leader.get(leader_id, []),
                     key=lambda item: str(item.get("last_active", "")),
@@ -906,7 +982,12 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
             created_response = _request_cao("POST", "/sessions", params=params)
             created_agent = _response_json_or_text(created_response)
             if isinstance(created_agent, dict) and isinstance(created_agent.get("id"), str):
-                _register_team(created_agent["id"])
+                leader_id = created_agent["id"]
+                _register_team(leader_id)
+                if payload.team_alias:
+                    _set_team_alias(leader_id, payload.team_alias)
+                if payload.agent_alias:
+                    _set_agent_alias(leader_id, payload.agent_alias)
             return {
                 "ok": True,
                 "role_type": payload.role_type,
@@ -931,7 +1012,10 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
             created_agent = _response_json_or_text(created_response)
             if isinstance(created_agent, dict) and isinstance(created_agent.get("id"), str):
                 _register_team(payload.leader_id)
-                _set_worker_link(created_agent["id"], payload.leader_id)
+                worker_id = created_agent["id"]
+                _set_worker_link(worker_id, payload.leader_id)
+                if payload.agent_alias:
+                    _set_agent_alias(worker_id, payload.agent_alias)
             return {
                 "ok": True,
                 "role_type": payload.role_type,
@@ -944,6 +1028,10 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
         created_agent_id = created_agent.get("id") if isinstance(created_agent, dict) else None
         if isinstance(created_agent_id, str):
             _register_team(created_agent_id)
+            if payload.team_alias:
+                _set_team_alias(created_agent_id, payload.team_alias)
+            if payload.agent_alias:
+                _set_agent_alias(created_agent_id, payload.agent_alias)
         return {
             "ok": True,
             "role_type": payload.role_type,

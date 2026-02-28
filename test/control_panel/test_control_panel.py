@@ -325,6 +325,84 @@ def test_console_create_org_worker_without_leader_becomes_team(client: TestClien
         mock_register_team.assert_called_once_with("worker-team-1")
 
 
+def test_console_create_main_team_with_alias(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._register_team") as mock_register_team,
+        patch("cli_agent_orchestrator.control_panel.main._set_team_alias") as mock_set_team_alias,
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+    ):
+        created = MagicMock()
+        created.raise_for_status.return_value = None
+        created.json.return_value = {
+            "id": "leader-main-1",
+            "agent_profile": "code_supervisor",
+            "session_name": "cao-main-1",
+        }
+        mock_request.return_value = created
+
+        response = client.post(
+            "/console/organization/create",
+            json={
+                "role_type": "main",
+                "agent_profile": "code_supervisor",
+                "team_alias": "产品技术团队",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        mock_register_team.assert_called_once_with("leader-main-1")
+        mock_set_team_alias.assert_called_once_with("leader-main-1", "产品技术团队")
+
+
+def test_console_create_org_worker_with_agent_alias(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._register_team") as mock_register_team,
+        patch("cli_agent_orchestrator.control_panel.main._set_worker_link") as mock_set_worker_link,
+        patch("cli_agent_orchestrator.control_panel.main._set_agent_alias") as mock_set_agent_alias,
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+    ):
+        leader = MagicMock()
+        leader.raise_for_status.return_value = None
+        leader.json.return_value = {
+            "id": "leader1",
+            "agent_profile": "code_supervisor",
+            "session_name": "cao-team1",
+        }
+
+        created = MagicMock()
+        created.raise_for_status.return_value = None
+        created.json.return_value = {
+            "id": "worker1",
+            "agent_profile": "developer",
+            "session_name": "cao-team1",
+        }
+
+        mock_request.side_effect = [leader, created]
+
+        response = client.post(
+            "/console/organization/create",
+            json={
+                "role_type": "worker",
+                "agent_profile": "developer",
+                "leader_id": "leader1",
+                "agent_alias": "后端工程师-A",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        mock_register_team.assert_called_once_with("leader1")
+        mock_set_worker_link.assert_called_once_with("worker1", "leader1")
+        mock_set_agent_alias.assert_called_once_with("worker1", "后端工程师-A")
+
+
 def test_console_create_org_agent_propagates_upstream_http_error(client: TestClient) -> None:
     login(client)
 

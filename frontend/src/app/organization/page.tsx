@@ -55,11 +55,13 @@ export default function OrganizationPage() {
 
   const [mainProfile, setMainProfile] = useState("");
   const [mainProvider, setMainProvider] = useState("");
+  const [mainTeamAlias, setMainTeamAlias] = useState("");
   const [creatingMain, setCreatingMain] = useState(false);
 
   const [workerProfile, setWorkerProfile] = useState("");
   const [workerProvider, setWorkerProvider] = useState("");
   const [workerLeaderId, setWorkerLeaderId] = useState("");
+  const [workerAlias, setWorkerAlias] = useState("");
   const [creatingWorker, setCreatingWorker] = useState(false);
 
   const [newAgentName, setNewAgentName] = useState("");
@@ -240,6 +242,7 @@ export default function OrganizationPage() {
       role_type: "main";
       agent_profile: string;
       provider?: string;
+      team_alias?: string;
     } = {
       role_type: "main",
       agent_profile: "code_supervisor",
@@ -247,6 +250,9 @@ export default function OrganizationPage() {
 
     if (mainProvider) {
       body.provider = mainProvider;
+    }
+    if (mainTeamAlias.trim()) {
+      body.team_alias = mainTeamAlias.trim();
     }
 
     const result = await caoRequest("POST", "/console/organization/create", { body });
@@ -258,6 +264,7 @@ export default function OrganizationPage() {
     }
 
     setCreatingMain(false);
+    setMainTeamAlias("");
     await loadOrganization();
   }
 
@@ -271,6 +278,7 @@ export default function OrganizationPage() {
       agent_profile: string;
       provider?: string;
       leader_id?: string;
+      agent_alias?: string;
     } = {
       role_type: "worker",
       agent_profile: workerProfile.trim(),
@@ -282,6 +290,9 @@ export default function OrganizationPage() {
     if (workerLeaderId) {
       body.leader_id = workerLeaderId;
     }
+    if (workerAlias.trim()) {
+      body.agent_alias = workerAlias.trim();
+    }
 
     const result = await caoRequest("POST", "/console/organization/create", { body });
     if (!result.ok) {
@@ -292,6 +303,7 @@ export default function OrganizationPage() {
     }
 
     setCreatingWorker(false);
+    setWorkerAlias("");
     await loadOrganization();
   }
 
@@ -383,7 +395,7 @@ export default function OrganizationPage() {
 
           <SectionCard>
             <SectionTitle title="组建新团队（启动团队负责人）" />
-            <form onSubmit={createMainAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10 }}>
+            <form onSubmit={createMainAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10 }}>
             <SelectInput
               value={mainProfile}
               onChange={(e) => setMainProfile(e.target.value)}
@@ -405,6 +417,11 @@ export default function OrganizationPage() {
                 </option>
               ))}
             </SelectInput>
+            <TextInput
+              value={mainTeamAlias}
+              onChange={(e) => setMainTeamAlias(e.target.value)}
+              placeholder="团队别名（可选）"
+            />
             <PrimaryButton
               type="submit"
               disabled={creatingMain}
@@ -417,7 +434,7 @@ export default function OrganizationPage() {
 
         <SectionCard>
           <SectionTitle title="团队增员（入职执行员工）" />
-          <form onSubmit={createWorkerAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10 }}>
+          <form onSubmit={createWorkerAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 10 }}>
             <SelectInput
               value={workerProfile}
               onChange={(e) => setWorkerProfile(e.target.value)}
@@ -451,6 +468,11 @@ export default function OrganizationPage() {
                 </option>
               ))}
             </SelectInput>
+            <TextInput
+              value={workerAlias}
+              onChange={(e) => setWorkerAlias(e.target.value)}
+              placeholder="员工别名（可选）"
+            />
             <SuccessButton
               type="submit"
               disabled={creatingWorker}
@@ -469,9 +491,11 @@ export default function OrganizationPage() {
               <div key={group.leader.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, marginBottom: 10 }}>
                 <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                   <div>
-                    <span style={{ color: "var(--text-bright)", fontWeight: 700 }}>{group.leader.id}</span>
+                    <span style={{ color: "var(--text-bright)", fontWeight: 700 }}>
+                      {group.team_alias || group.leader.id}
+                    </span>
                     <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
-                      {group.leader.agent_profile} · {toStatusLabel(group.leader.status)}
+                      负责人：{group.leader.alias || group.leader.id} · {group.leader.agent_profile} · {toStatusLabel(group.leader.status)}
                     </span>
                   </div>
                   <SecondaryButton
@@ -491,6 +515,7 @@ export default function OrganizationPage() {
                       <thead>
                         <tr>
                           <DataTh>Worker ID</DataTh>
+                          <DataTh>别名</DataTh>
                           <DataTh>Profile</DataTh>
                           <DataTh>Provider</DataTh>
                           <DataTh>状态</DataTh>
@@ -501,6 +526,7 @@ export default function OrganizationPage() {
                         {group.members.map((member) => (
                           <tr key={member.id} style={{ borderTop: "1px solid var(--border)" }}>
                             <DataTd mono>{member.id}</DataTd>
+                            <DataTd>{member.alias || "-"}</DataTd>
                             <DataTd>{member.agent_profile}</DataTd>
                             <DataTd>{member.provider}</DataTd>
                             <DataTd>

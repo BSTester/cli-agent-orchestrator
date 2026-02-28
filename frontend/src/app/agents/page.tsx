@@ -269,7 +269,7 @@ export default function AgentsPage() {
             return (
               <SectionCard key={group.leader.id}>
                 <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>
-                  团队：{group.leader.session_name || group.leader.id}
+                  团队：{group.team_alias || group.leader.session_name || group.leader.id}
                 </div>
 
                 <div
@@ -283,9 +283,11 @@ export default function AgentsPage() {
                     background: "var(--surface2)",
                   }}
                 >
-                  <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>负责人：{group.leader.id}</div>
+                  <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>
+                    负责人：{group.leader.alias || group.leader.id}
+                  </div>
                   <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                    会话标题：{group.leader.session_name || "-"} · {group.leader.agent_profile} · {group.leader.provider} · {toStatusLabel(group.leader.status)}
+                    会话标题：{group.leader.session_name || "-"} · ID: {group.leader.id} · {group.leader.agent_profile} · {group.leader.provider} · {toStatusLabel(group.leader.status)}
                   </div>
                   <div style={{ display: "flex", marginTop: 6 }}>
                     <StatusPill
@@ -331,9 +333,11 @@ export default function AgentsPage() {
                                 background: "var(--surface)",
                               }}
                             >
-                              <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{member.id}</div>
+                              <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>
+                                {member.alias || member.id}
+                              </div>
                               <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                                会话标题：{member.session_name || "-"} · {member.provider}
+                                会话标题：{member.session_name || "-"} · ID: {member.id} · {member.provider}
                               </div>
                               <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
                                 状态：{toStatusLabel(member.status)}
