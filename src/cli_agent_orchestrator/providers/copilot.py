@@ -27,6 +27,9 @@ def _build_copilot_command(agent_profile: Optional[str], terminal_id: str) -> st
 
     command_parts.extend(["--agent", agent_profile])
 
+    if profile.model:
+        command_parts.extend(["--model", profile.model])
+
     if profile.mcpServers:
         mcp_config = {}
         for server_name, server_config in profile.mcpServers.items():

@@ -122,6 +122,17 @@ uv run cao --help   # 校验安装
 cao install code_supervisor
 ```
 
+默认会安装到所有支持的 Provider（文件型 Agent + 运行时注入型）。
+如需仅安装到单一 Provider：
+
+```bash
+cao install code_supervisor --provider q_cli
+cao install code_supervisor --provider kiro_cli
+cao install code_supervisor --provider qoder_cli
+cao install code_supervisor --provider codebuddy
+cao install code_supervisor --provider copilot
+```
+
 可选安装额外工作 Agent：
 
 ```bash

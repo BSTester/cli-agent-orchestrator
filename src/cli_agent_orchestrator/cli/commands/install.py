@@ -8,16 +8,25 @@ import requests
 
 from cli_agent_orchestrator.constants import (
     AGENT_CONTEXT_DIR,
-    DEFAULT_PROVIDER,
+    CODEBUDDY_AGENTS_DIR,
+    COPILOT_AGENTS_DIR,
     KIRO_AGENTS_DIR,
     LOCAL_AGENT_STORE_DIR,
     PROVIDERS,
+    QODER_AGENTS_DIR,
     Q_AGENTS_DIR,
 )
 from cli_agent_orchestrator.models.kiro_agent import KiroAgentConfig
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.q_agent import QAgentConfig
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+
+ALL_PROVIDERS = "all"
+
+RUNTIME_INJECTED_PROVIDERS = {
+    ProviderType.CLAUDE_CODE.value,
+    ProviderType.CODEX.value,
+}
 
 
 def _download_agent(source: str) -> str:
@@ -60,9 +69,12 @@ def _download_agent(source: str) -> str:
 @click.argument("agent_source")
 @click.option(
     "--provider",
-    type=click.Choice(PROVIDERS),
-    default=DEFAULT_PROVIDER,
-    help=f"Provider to use (default: {DEFAULT_PROVIDER})",
+    type=click.Choice([ALL_PROVIDERS, *PROVIDERS]),
+    default=ALL_PROVIDERS,
+    help=(
+        f"Provider to install for (default: {ALL_PROVIDERS}); "
+        f"use one of: {', '.join(PROVIDERS)}"
+    ),
 )
 def install(agent_source: str, provider: str):
     """
@@ -115,52 +127,94 @@ def install(agent_source: str, provider: str):
                 for server_name in profile.mcpServers.keys():
                     allowed_tools.append(f"@{server_name}")
 
-        # Create agent config based on provider
-        agent_file = None
-        if provider == ProviderType.Q_CLI.value:
-            Q_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
-            agent_config = QAgentConfig(
-                name=profile.name,
-                description=profile.description,
-                tools=profile.tools if profile.tools is not None else ["*"],
-                allowedTools=allowed_tools,
-                resources=[f"file://{dest_file.absolute()}"],
-                prompt=profile.prompt,
-                mcpServers=profile.mcpServers,
-                toolAliases=profile.toolAliases,
-                toolsSettings=profile.toolsSettings,
-                hooks=profile.hooks,
-                model=profile.model,
-            )
-            safe_filename = profile.name.replace("/", "__")
-            agent_file = Q_AGENTS_DIR / f"{safe_filename}.json"
-            with open(agent_file, "w") as f:
-                f.write(agent_config.model_dump_json(indent=2, exclude_none=True))
+        # Create provider-specific agent artifacts
+        safe_filename = profile.name.replace("/", "__")
+        target_providers = PROVIDERS if provider == ALL_PROVIDERS else [provider]
 
-        elif provider == ProviderType.KIRO_CLI.value:
-            KIRO_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
-            agent_config = KiroAgentConfig(
-                name=profile.name,
-                description=profile.description,
-                tools=profile.tools if profile.tools is not None else ["*"],
-                allowedTools=allowed_tools,
-                resources=[f"file://{dest_file.absolute()}"],
-                prompt=profile.prompt,
-                mcpServers=profile.mcpServers,
-                toolAliases=profile.toolAliases,
-                toolsSettings=profile.toolsSettings,
-                hooks=profile.hooks,
-                model=profile.model,
-            )
-            safe_filename = profile.name.replace("/", "__")
-            agent_file = KIRO_AGENTS_DIR / f"{safe_filename}.json"
-            with open(agent_file, "w") as f:
-                f.write(agent_config.model_dump_json(indent=2, exclude_none=True))
+        installed_files = []
+        runtime_injected = []
+
+        for target_provider in target_providers:
+            if target_provider == ProviderType.Q_CLI.value:
+                Q_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+                agent_config = QAgentConfig(
+                    name=profile.name,
+                    description=profile.description,
+                    tools=profile.tools if profile.tools is not None else ["*"],
+                    allowedTools=allowed_tools,
+                    resources=[f"file://{dest_file.absolute()}"],
+                    prompt=profile.prompt or profile.system_prompt,
+                    mcpServers=profile.mcpServers,
+                    toolAliases=profile.toolAliases,
+                    toolsSettings=profile.toolsSettings,
+                    hooks=profile.hooks,
+                    model=profile.model,
+                )
+                agent_file = Q_AGENTS_DIR / f"{safe_filename}.json"
+                with open(agent_file, "w") as f:
+                    f.write(agent_config.model_dump_json(indent=2, exclude_none=True))
+                installed_files.append((target_provider, agent_file))
+                continue
+
+            if target_provider == ProviderType.KIRO_CLI.value:
+                KIRO_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+                agent_config = KiroAgentConfig(
+                    name=profile.name,
+                    description=profile.description,
+                    tools=profile.tools if profile.tools is not None else ["*"],
+                    allowedTools=allowed_tools,
+                    resources=[f"file://{dest_file.absolute()}"],
+                    prompt=profile.prompt or profile.system_prompt,
+                    mcpServers=profile.mcpServers,
+                    toolAliases=profile.toolAliases,
+                    toolsSettings=profile.toolsSettings,
+                    hooks=profile.hooks,
+                    model=profile.model,
+                )
+                agent_file = KIRO_AGENTS_DIR / f"{safe_filename}.json"
+                with open(agent_file, "w") as f:
+                    f.write(agent_config.model_dump_json(indent=2, exclude_none=True))
+                installed_files.append((target_provider, agent_file))
+                continue
+
+            if target_provider == ProviderType.COPILOT.value:
+                COPILOT_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+                agent_file = COPILOT_AGENTS_DIR / f"{safe_filename}.md"
+                agent_file.write_text(source_file.read_text())
+                installed_files.append((target_provider, agent_file))
+                continue
+
+            if target_provider == ProviderType.QODER_CLI.value:
+                QODER_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+                agent_file = QODER_AGENTS_DIR / f"{safe_filename}.md"
+                agent_file.write_text(source_file.read_text())
+                installed_files.append((target_provider, agent_file))
+                continue
+
+            if target_provider == ProviderType.CODEBUDDY.value:
+                CODEBUDDY_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+                agent_file = CODEBUDDY_AGENTS_DIR / f"{safe_filename}.md"
+                agent_file.write_text(source_file.read_text())
+                installed_files.append((target_provider, agent_file))
+                continue
+
+            if target_provider in RUNTIME_INJECTED_PROVIDERS:
+                runtime_injected.append(target_provider)
+                continue
 
         click.echo(f"✓ Agent '{profile.name}' installed successfully")
         click.echo(f"✓ Context file: {dest_file}")
-        if agent_file:
-            click.echo(f"✓ {provider} agent: {agent_file}")
+        for target_provider, agent_file in installed_files:
+            click.echo(f"✓ {target_provider} agent: {agent_file}")
+
+        if runtime_injected:
+            click.echo(
+                "✓ Runtime-injected providers (no local agent file needed): "
+                + ", ".join(runtime_injected)
+            )
+
+        if provider == ALL_PROVIDERS:
+            click.echo(f"✓ Installed for providers: {', '.join(target_providers)}")
 
     except FileNotFoundError as e:
         click.echo(f"Error: {e}", err=True)

@@ -307,3 +307,181 @@ class TestInstallCommand:
             result = runner.invoke(install, ["test-agent", "--provider", "claude_code"])
 
             assert "installed successfully" in result.output
+
+    @patch("cli_agent_orchestrator.cli.commands.install.load_agent_profile")
+    @patch("cli_agent_orchestrator.cli.commands.install.AGENT_CONTEXT_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.CODEBUDDY_AGENTS_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.COPILOT_AGENTS_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.QODER_AGENTS_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.KIRO_AGENTS_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.Q_AGENTS_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.LOCAL_AGENT_STORE_DIR")
+    def test_install_default_all_providers(
+        self,
+        mock_local_store,
+        mock_q_dir,
+        mock_kiro_dir,
+        mock_qoder_dir,
+        mock_copilot_dir,
+        mock_codebuddy_dir,
+        mock_context_dir,
+        mock_load,
+        runner,
+        mock_agent_profile,
+    ):
+        """Test installing agent to all providers when --provider is omitted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            local_path = tmppath / "local"
+            local_path.mkdir(parents=True, exist_ok=True)
+            local_profile = local_path / "test-agent.md"
+            local_profile.write_text("# Test\nname: test-agent")
+
+            mock_local_store.__truediv__ = lambda self, x: local_path / x
+            mock_q_dir.__truediv__ = lambda self, x: tmppath / "q" / x
+            mock_kiro_dir.__truediv__ = lambda self, x: tmppath / "kiro" / x
+            mock_qoder_dir.__truediv__ = lambda self, x: tmppath / "qoder" / x
+            mock_copilot_dir.__truediv__ = lambda self, x: tmppath / "copilot" / x
+            mock_codebuddy_dir.__truediv__ = lambda self, x: tmppath / "codebuddy" / x
+            mock_q_dir.mkdir = MagicMock()
+            mock_kiro_dir.mkdir = MagicMock()
+            mock_qoder_dir.mkdir = MagicMock()
+            mock_copilot_dir.mkdir = MagicMock()
+            mock_codebuddy_dir.mkdir = MagicMock()
+            mock_context_dir.__truediv__ = lambda self, x: tmppath / "context" / x
+            mock_context_dir.mkdir = MagicMock()
+
+            mock_load.return_value = mock_agent_profile
+
+            (tmppath / "context").mkdir(parents=True, exist_ok=True)
+            (tmppath / "q").mkdir(parents=True, exist_ok=True)
+            (tmppath / "kiro").mkdir(parents=True, exist_ok=True)
+            (tmppath / "qoder").mkdir(parents=True, exist_ok=True)
+            (tmppath / "copilot").mkdir(parents=True, exist_ok=True)
+            (tmppath / "codebuddy").mkdir(parents=True, exist_ok=True)
+
+            result = runner.invoke(install, ["test-agent"])
+
+            assert result.exit_code == 0
+            assert "q_cli agent" in result.output
+            assert "kiro_cli agent" in result.output
+            assert "qoder_cli agent" in result.output
+            assert "codebuddy agent" in result.output
+            assert "copilot agent" in result.output
+            assert "Runtime-injected providers" in result.output
+            assert "Installed for providers" in result.output
+
+    @patch("cli_agent_orchestrator.cli.commands.install.load_agent_profile")
+    @patch("cli_agent_orchestrator.cli.commands.install.AGENT_CONTEXT_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.QODER_AGENTS_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.LOCAL_AGENT_STORE_DIR")
+    def test_install_qoder_provider(
+        self,
+        mock_local_store,
+        mock_qoder_dir,
+        mock_context_dir,
+        mock_load,
+        runner,
+        mock_agent_profile,
+    ):
+        """Test installing agent for qoder_cli provider creates local qoder agent file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            local_path = tmppath / "local"
+            local_path.mkdir(parents=True, exist_ok=True)
+            local_profile = local_path / "test-agent.md"
+            local_profile.write_text("# Test\nname: test-agent")
+
+            mock_local_store.__truediv__ = lambda self, x: local_path / x
+            mock_qoder_dir.__truediv__ = lambda self, x: tmppath / "qoder" / x
+            mock_qoder_dir.mkdir = MagicMock()
+            mock_context_dir.__truediv__ = lambda self, x: tmppath / "context" / x
+            mock_context_dir.mkdir = MagicMock()
+
+            mock_load.return_value = mock_agent_profile
+
+            (tmppath / "context").mkdir(parents=True, exist_ok=True)
+            (tmppath / "qoder").mkdir(parents=True, exist_ok=True)
+
+            result = runner.invoke(install, ["test-agent", "--provider", "qoder_cli"])
+
+            assert result.exit_code == 0
+            assert "qoder_cli agent" in result.output
+
+    @patch("cli_agent_orchestrator.cli.commands.install.load_agent_profile")
+    @patch("cli_agent_orchestrator.cli.commands.install.AGENT_CONTEXT_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.CODEBUDDY_AGENTS_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.LOCAL_AGENT_STORE_DIR")
+    def test_install_codebuddy_provider(
+        self,
+        mock_local_store,
+        mock_codebuddy_dir,
+        mock_context_dir,
+        mock_load,
+        runner,
+        mock_agent_profile,
+    ):
+        """Test installing agent for codebuddy provider creates local codebuddy agent file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            local_path = tmppath / "local"
+            local_path.mkdir(parents=True, exist_ok=True)
+            local_profile = local_path / "test-agent.md"
+            local_profile.write_text("# Test\nname: test-agent")
+
+            mock_local_store.__truediv__ = lambda self, x: local_path / x
+            mock_codebuddy_dir.__truediv__ = lambda self, x: tmppath / "codebuddy" / x
+            mock_codebuddy_dir.mkdir = MagicMock()
+            mock_context_dir.__truediv__ = lambda self, x: tmppath / "context" / x
+            mock_context_dir.mkdir = MagicMock()
+
+            mock_load.return_value = mock_agent_profile
+
+            (tmppath / "context").mkdir(parents=True, exist_ok=True)
+            (tmppath / "codebuddy").mkdir(parents=True, exist_ok=True)
+
+            result = runner.invoke(install, ["test-agent", "--provider", "codebuddy"])
+
+            assert result.exit_code == 0
+            assert "codebuddy agent" in result.output
+
+    @patch("cli_agent_orchestrator.cli.commands.install.load_agent_profile")
+    @patch("cli_agent_orchestrator.cli.commands.install.AGENT_CONTEXT_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.COPILOT_AGENTS_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.LOCAL_AGENT_STORE_DIR")
+    def test_install_copilot_provider(
+        self,
+        mock_local_store,
+        mock_copilot_dir,
+        mock_context_dir,
+        mock_load,
+        runner,
+        mock_agent_profile,
+    ):
+        """Test installing agent for copilot provider creates local copilot agent file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            local_path = tmppath / "local"
+            local_path.mkdir(parents=True, exist_ok=True)
+            local_profile = local_path / "test-agent.md"
+            local_profile.write_text("# Test\nname: test-agent")
+
+            mock_local_store.__truediv__ = lambda self, x: local_path / x
+            mock_copilot_dir.__truediv__ = lambda self, x: tmppath / "copilot" / x
+            mock_copilot_dir.mkdir = MagicMock()
+            mock_context_dir.__truediv__ = lambda self, x: tmppath / "context" / x
+            mock_context_dir.mkdir = MagicMock()
+
+            mock_load.return_value = mock_agent_profile
+
+            (tmppath / "context").mkdir(parents=True, exist_ok=True)
+            (tmppath / "copilot").mkdir(parents=True, exist_ok=True)
+
+            result = runner.invoke(install, ["test-agent", "--provider", "copilot"])
+
+            assert result.exit_code == 0
+            assert "copilot agent" in result.output

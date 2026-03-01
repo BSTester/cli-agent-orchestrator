@@ -19,16 +19,31 @@ def test_qoder_cli_start_command_with_agent_profile(mock_load_profile) -> None:
     mock_profile.system_prompt = "You are a code supervisor"
     mock_profile.tools = ["Read", "Edit"]
     mock_profile.model = "gmodel"
+    mock_profile.mcpServers = {
+        "cao-mcp-server": {
+            "command": "uvx",
+            "args": ["cao-mcp-server"],
+        }
+    }
     mock_load_profile.return_value = mock_profile
 
-    provider = QoderCliProvider("t1", "s1", "w1", "code_supervisor")
+    provider = QoderCliProvider("term123", "s1", "w1", "code_supervisor")
 
-    assert provider._start_command.startswith("qodercli --yolo --agents")
+    assert "qodercli mcp get cao-mcp-server --scope user" in provider._start_command
+    assert "qodercli mcp add cao-mcp-server" in provider._start_command
+    assert "--transport stdio" in provider._start_command
+    assert "--scope user" in provider._start_command
+    assert "--env CAO_TERMINAL_ID=term123" in provider._start_command
+    assert " && qodercli --yolo" in provider._start_command
+    assert "--agents" in provider._start_command
+    assert "--model gmodel" in provider._start_command
     assert "code_supervisor" in provider._start_command
     assert "You are a code supervisor" in provider._start_command
     assert "Read" in provider._start_command
     assert "Edit" in provider._start_command
     assert "gmodel" in provider._start_command
+    # MCP is configured via `qodercli mcp add`, not embedded in --agents JSON.
+    assert '"mcpServers"' not in provider._start_command
 
 
 def test_codebuddy_start_command_skips_permissions() -> None:
@@ -39,7 +54,10 @@ def test_codebuddy_start_command_skips_permissions() -> None:
 @patch("cli_agent_orchestrator.providers.codebuddy.load_agent_profile")
 def test_codebuddy_start_command_includes_profile_prompt_and_mcp(mock_load_profile) -> None:
     mock_profile = MagicMock()
+    mock_profile.description = "Code supervisor"
     mock_profile.system_prompt = "Follow CAO orchestration"
+    mock_profile.tools = ["Read", "Edit"]
+    mock_profile.model = "glm-4.7"
     mock_profile.mcpServers = {
         "cao-mcp-server": {
             "command": "uvx",
@@ -50,9 +68,14 @@ def test_codebuddy_start_command_includes_profile_prompt_and_mcp(mock_load_profi
 
     provider = CodeBuddyProvider("term123", "s1", "w1", "code_supervisor")
 
-    assert "--append-system-prompt" in provider._start_command
+    assert "--agents" in provider._start_command
+    assert "--agent code_supervisor" not in provider._start_command
     assert "Follow CAO orchestration" in provider._start_command
+    assert "code_supervisor" in provider._start_command
+    assert "--model glm-4.7" in provider._start_command
+    assert "--append-system-prompt" not in provider._start_command
     assert "--mcp-config" in provider._start_command
+    assert "--strict-mcp-config" not in provider._start_command
     assert "cao-mcp-server" in provider._start_command
     assert "CAO_TERMINAL_ID" in provider._start_command
     assert "term123" in provider._start_command
@@ -66,6 +89,7 @@ def test_copilot_start_command_allows_all_without_ask_user() -> None:
 @patch("cli_agent_orchestrator.providers.copilot.load_agent_profile")
 def test_copilot_start_command_includes_profile_and_mcp(mock_load_profile) -> None:
     mock_profile = MagicMock()
+    mock_profile.model = "gpt-5.3-codex"
     mock_profile.mcpServers = {
         "cao-mcp-server": {
             "command": "uvx",
@@ -77,6 +101,7 @@ def test_copilot_start_command_includes_profile_and_mcp(mock_load_profile) -> No
     provider = CopilotProvider("term123", "s1", "w1", "code_supervisor")
 
     assert "--agent code_supervisor" in provider._start_command
+    assert "--model gpt-5.3-codex" in provider._start_command
     assert "--additional-mcp-config" in provider._start_command
     assert "cao-mcp-server" in provider._start_command
     assert "CAO_TERMINAL_ID" in provider._start_command

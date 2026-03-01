@@ -76,6 +76,9 @@ LOCAL_AGENT_STORE_DIR = CAO_HOME_DIR / "agent-store"
 # Provider-specific agent directories
 Q_AGENTS_DIR = Path.home() / ".aws" / "amazonq" / "cli-agents"  # Q CLI agents
 KIRO_AGENTS_DIR = Path.home() / ".kiro" / "agents"  # Kiro CLI agents
+QODER_AGENTS_DIR = Path.home() / ".qoder" / "agents"  # Qoder CLI agents
+CODEBUDDY_AGENTS_DIR = Path.home() / ".codebuddy" / "agents"  # CodeBuddy CLI agents
+COPILOT_AGENTS_DIR = Path.home() / ".copilot" / "agents"  # Copilot custom agents
 
 # =============================================================================
 # Database Configuration

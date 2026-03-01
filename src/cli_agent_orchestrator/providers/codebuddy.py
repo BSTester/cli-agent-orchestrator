@@ -25,8 +25,23 @@ def _build_codebuddy_command(agent_profile: Optional[str], terminal_id: str) -> 
     except Exception as e:
         raise ProviderError(f"Failed to load agent profile '{agent_profile}': {e}")
 
-    if profile.system_prompt:
-        command_parts.extend(["--append-system-prompt", profile.system_prompt])
+    system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
+    if system_prompt or profile.tools or profile.model:
+        agent_definition = {
+            agent_profile: {
+                "description": profile.description,
+            }
+        }
+        if system_prompt:
+            agent_definition[agent_profile]["prompt"] = system_prompt
+        if profile.tools:
+            agent_definition[agent_profile]["tools"] = profile.tools
+        if profile.model:
+            agent_definition[agent_profile]["model"] = profile.model
+        command_parts.extend(["--agents", json.dumps(agent_definition)])
+
+    if profile.model:
+        command_parts.extend(["--model", profile.model])
 
     if profile.mcpServers:
         mcp_config = {}
