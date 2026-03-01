@@ -215,3 +215,39 @@ def test_create_provider_copilot():
     )
 
     assert isinstance(provider, CopilotProvider)
+
+
+@patch("cli_agent_orchestrator.providers.manager.QoderCliProvider")
+def test_create_provider_qoder_cli_forwards_agent_profile(mock_qoder_provider):
+    manager = ProviderManager()
+    mock_instance = MagicMock()
+    mock_qoder_provider.return_value = mock_instance
+
+    provider = manager.create_provider(
+        ProviderType.QODER_CLI.value,
+        terminal_id="t1",
+        tmux_session="s1",
+        tmux_window="w1",
+        agent_profile="code_supervisor",
+    )
+
+    assert provider is mock_instance
+    mock_qoder_provider.assert_called_once_with("t1", "s1", "w1", "code_supervisor")
+
+
+@patch("cli_agent_orchestrator.providers.manager.CopilotProvider")
+def test_create_provider_copilot_forwards_agent_profile(mock_copilot_provider):
+    manager = ProviderManager()
+    mock_instance = MagicMock()
+    mock_copilot_provider.return_value = mock_instance
+
+    provider = manager.create_provider(
+        ProviderType.COPILOT.value,
+        terminal_id="t1",
+        tmux_session="s1",
+        tmux_window="w1",
+        agent_profile="code_supervisor",
+    )
+
+    assert provider is mock_instance
+    mock_copilot_provider.assert_called_once_with("t1", "s1", "w1", "code_supervisor")

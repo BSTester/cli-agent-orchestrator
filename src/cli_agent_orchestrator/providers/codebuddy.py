@@ -1,5 +1,6 @@
 """CodeBuddy CLI provider implementation."""
 
+import json
 import shlex
 from typing import Optional
 
@@ -7,12 +8,41 @@ from cli_agent_orchestrator.providers.simple_tui import SimpleTuiProvider
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 
 
-def _build_codebuddy_command(agent_profile: Optional[str]) -> str:
+class ProviderError(Exception):
+    """Exception raised for provider-specific errors."""
+
+    pass
+
+
+def _build_codebuddy_command(agent_profile: Optional[str], terminal_id: str) -> str:
     command_parts = ["codebuddy", "--dangerously-skip-permissions"]
-    if agent_profile:
+
+    if not agent_profile:
+        return shlex.join(command_parts)
+
+    try:
         profile = load_agent_profile(agent_profile)
-        if profile.system_prompt:
-            command_parts.extend(["--append-system-prompt", profile.system_prompt])
+    except Exception as e:
+        raise ProviderError(f"Failed to load agent profile '{agent_profile}': {e}")
+
+    if profile.system_prompt:
+        command_parts.extend(["--append-system-prompt", profile.system_prompt])
+
+    if profile.mcpServers:
+        mcp_config = {}
+        for server_name, server_config in profile.mcpServers.items():
+            if isinstance(server_config, dict):
+                mcp_config[server_name] = dict(server_config)
+            else:
+                mcp_config[server_name] = server_config.model_dump(exclude_none=True)
+
+            env = mcp_config[server_name].get("env", {})
+            if "CAO_TERMINAL_ID" not in env:
+                env["CAO_TERMINAL_ID"] = terminal_id
+                mcp_config[server_name]["env"] = env
+
+        command_parts.extend(["--mcp-config", json.dumps({"mcpServers": mcp_config})])
+
     return shlex.join(command_parts)
 
 
@@ -30,7 +60,7 @@ class CodeBuddyProvider(SimpleTuiProvider):
             terminal_id=terminal_id,
             session_name=session_name,
             window_name=window_name,
-            start_command=_build_codebuddy_command(agent_profile),
+            start_command=_build_codebuddy_command(agent_profile, terminal_id),
             idle_prompt_pattern=r"[>❯›]\s",
             idle_prompt_pattern_log=r"[>❯›]\s",
         )

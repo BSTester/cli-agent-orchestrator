@@ -47,11 +47,11 @@ class ProviderManager:
             elif provider_type == ProviderType.CODEX.value:
                 provider = CodexProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             elif provider_type == ProviderType.QODER_CLI.value:
-                provider = QoderCliProvider(terminal_id, tmux_session, tmux_window)
+                provider = QoderCliProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             elif provider_type == ProviderType.CODEBUDDY.value:
                 provider = CodeBuddyProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             elif provider_type == ProviderType.COPILOT.value:
-                provider = CopilotProvider(terminal_id, tmux_session, tmux_window)
+                provider = CopilotProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             else:
                 raise ValueError(f"Unknown provider type: {provider_type}")
 
