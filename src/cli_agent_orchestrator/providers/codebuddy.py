@@ -78,4 +78,5 @@ class CodeBuddyProvider(SimpleTuiProvider):
             start_command=_build_codebuddy_command(agent_profile, terminal_id),
             idle_prompt_pattern=r"[>❯›]\s",
             idle_prompt_pattern_log=r"[>❯›]\s",
+            auto_accept_input="3",
         )

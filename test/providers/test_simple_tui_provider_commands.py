@@ -49,6 +49,7 @@ def test_qoder_cli_start_command_with_agent_profile(mock_load_profile) -> None:
 def test_codebuddy_start_command_skips_permissions() -> None:
     provider = CodeBuddyProvider("t1", "s1", "w1")
     assert provider._start_command == "codebuddy --dangerously-skip-permissions"
+    assert provider._auto_accept_input == "3"
 
 
 @patch("cli_agent_orchestrator.providers.codebuddy.load_agent_profile")

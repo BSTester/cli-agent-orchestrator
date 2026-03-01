@@ -30,6 +30,7 @@ class SimpleTuiProvider(BaseProvider):
         waiting_patterns: Optional[Iterable[str]] = None,
         processing_patterns: Optional[Iterable[str]] = None,
         error_patterns: Optional[Iterable[str]] = None,
+        auto_accept_input: str = "",
         exit_command: str = "C-d",
     ):
         super().__init__(terminal_id, session_name, window_name)
@@ -76,6 +77,7 @@ class SimpleTuiProvider(BaseProvider):
                 r"exception",
             ]
         )
+        self._auto_accept_input = auto_accept_input
         self._exit_command = exit_command
         self._initialized = False
         self._input_received = False
@@ -86,6 +88,10 @@ class SimpleTuiProvider(BaseProvider):
     def _has_idle_prompt(self, clean_output: str) -> bool:
         lines = clean_output.splitlines()
         for line in lines[-8:]:
+            # Ignore interactive menu option lines like "> 3. Trust ...".
+            # They can appear in startup trust dialogs and are not real idle prompts.
+            if re.search(r"^\s*[>❯›]\s+\d+\.", line):
+                continue
             if re.search(self._idle_prompt_pattern, line):
                 return True
         return False
@@ -103,9 +109,6 @@ class SimpleTuiProvider(BaseProvider):
                 continue
 
             clean_output = self._clean_output(output)
-            if self._has_idle_prompt(clean_output):
-                return
-
             if self._matches_any(self._auto_accept_patterns, clean_output):
                 logger.info("Startup trust/permission prompt detected, auto-accepting")
                 session = tmux_client.server.sessions.get(session_name=self.session_name)
@@ -118,9 +121,12 @@ class SimpleTuiProvider(BaseProvider):
                     continue
                 pane = window.active_pane
                 if pane:
-                    pane.send_keys("", enter=True)
+                    pane.send_keys(self._auto_accept_input, enter=True)
                 time.sleep(1.0)
                 continue
+
+            if self._has_idle_prompt(clean_output):
+                return
 
             time.sleep(1.0)
 
