@@ -316,19 +316,56 @@ def _list_latest_task_titles(receiver_ids: List[str]) -> Dict[str, str]:
                     SELECT
                         receiver_id,
                         message,
+                        event_at,
                         ROW_NUMBER() OVER (
                             PARTITION BY receiver_id
-                            ORDER BY created_at DESC, id DESC
+                            ORDER BY event_at DESC
                         ) AS rn
-                    FROM inbox
-                    WHERE receiver_id IN ({placeholders})
+                    FROM (
+                        SELECT
+                            receiver_id,
+                            message,
+                            datetime(created_at) AS event_at
+                        FROM inbox
+                        WHERE receiver_id IN ({placeholders})
+
+                        UNION ALL
+
+                        SELECT
+                            receiver_id,
+                            message,
+                            datetime(updated_at) AS event_at
+                        FROM terminal_latest_tasks
+                        WHERE receiver_id IN ({placeholders})
+                    ) merged
                 ) ranked
                 WHERE rn = 1
                 """,
-                targets,
+                targets + targets,
             ).fetchall()
     except sqlite3.Error:
-        return {}
+        try:
+            with sqlite3.connect(str(DATABASE_FILE)) as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT receiver_id, message
+                    FROM (
+                        SELECT
+                            receiver_id,
+                            message,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY receiver_id
+                                ORDER BY created_at DESC, id DESC
+                            ) AS rn
+                        FROM inbox
+                        WHERE receiver_id IN ({placeholders})
+                    ) ranked
+                    WHERE rn = 1
+                    """,
+                    targets,
+                ).fetchall()
+        except sqlite3.Error:
+            return {}
 
     result: Dict[str, str] = {}
     for receiver_id, message in rows:

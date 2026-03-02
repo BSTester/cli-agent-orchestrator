@@ -42,6 +42,16 @@ class InboxModel(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+class TerminalLatestTaskModel(Base):
+    """SQLAlchemy model for the latest task message per terminal."""
+
+    __tablename__ = "terminal_latest_tasks"
+
+    receiver_id = Column(String, primary_key=True)
+    message = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now)
+
+
 class FlowModel(Base):
     """SQLAlchemy model for flow metadata."""
 
@@ -232,6 +242,55 @@ def update_message_status(message_id: int, status: MessageStatus) -> bool:
             db.commit()
             return True
         return False
+
+
+def upsert_terminal_latest_task(receiver_id: str, message: str) -> bool:
+    """Upsert latest task message for a terminal.
+
+    Returns True when stored, False when receiver/message is blank.
+    """
+    normalized_receiver = receiver_id.strip()
+    if not normalized_receiver or not message.strip():
+        return False
+
+    with SessionLocal() as db:
+        existing = (
+            db.query(TerminalLatestTaskModel)
+            .filter(TerminalLatestTaskModel.receiver_id == normalized_receiver)
+            .first()
+        )
+        if existing:
+            existing.message = message
+            existing.updated_at = datetime.now()
+        else:
+            db.add(
+                TerminalLatestTaskModel(
+                    receiver_id=normalized_receiver,
+                    message=message,
+                    updated_at=datetime.now(),
+                )
+            )
+        db.commit()
+        return True
+
+
+def get_latest_task_messages(receiver_ids: List[str]) -> Dict[str, str]:
+    """Get latest task messages for terminal IDs."""
+    targets = [receiver_id.strip() for receiver_id in receiver_ids if receiver_id and receiver_id.strip()]
+    if not targets:
+        return {}
+
+    with SessionLocal() as db:
+        rows = (
+            db.query(TerminalLatestTaskModel)
+            .filter(TerminalLatestTaskModel.receiver_id.in_(targets))
+            .all()
+        )
+        return {
+            str(row.receiver_id): str(row.message)
+            for row in rows
+            if row.receiver_id and row.message
+        }
 
 
 # Flow database functions

@@ -1,5 +1,6 @@
 """Tests for the control panel FastAPI interface layer."""
 
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -836,6 +837,49 @@ def test_console_tasks_success(client: TestClient) -> None:
         assert body["teams"][0]["leader"]["id"] == "leader1"
         assert len(body["teams"][0]["scheduled_tasks"]) == 1
         assert body["teams"][0]["scheduled_tasks"][0]["name"] == "flowA"
+
+
+def test_list_latest_task_titles_reads_terminal_latest_tasks(tmp_path: Path) -> None:
+    from cli_agent_orchestrator.control_panel.main import _list_latest_task_titles
+
+    db_path = tmp_path / "control_panel_task_titles.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE inbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receiver_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE terminal_latest_tasks (
+                receiver_id TEXT PRIMARY KEY,
+                message TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO terminal_latest_tasks (receiver_id, message, updated_at)
+            VALUES (?, ?, ?)
+            """,
+            (
+                "worker1",
+                "Implement the dashboard data sync and report progress",
+                "2026-03-02 12:00:00",
+            ),
+        )
+        conn.commit()
+
+    with patch("cli_agent_orchestrator.control_panel.main.DATABASE_FILE", db_path):
+        titles = _list_latest_task_titles(["worker1"])
+
+    assert titles["worker1"].startswith("Implement the dashboard data sync")
 
 
 def test_console_create_scheduled_task_success(client: TestClient) -> None:

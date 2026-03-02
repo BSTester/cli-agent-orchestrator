@@ -207,6 +207,33 @@ class TestGetInboxMessagesEndpoint:
                     assert msg_data["status"] == status_value
 
 
+def test_create_inbox_message_updates_latest_task(client):
+    inbox_msg = InboxMessage(
+        id=10,
+        sender_id="leader1",
+        receiver_id="abcdef12",
+        message="Implement feature A",
+        status=MessageStatus.PENDING,
+        created_at=datetime(2026, 3, 2, 10, 0, 0),
+    )
+
+    with (
+        patch("cli_agent_orchestrator.api.main.create_inbox_message", return_value=inbox_msg),
+        patch("cli_agent_orchestrator.api.main.upsert_terminal_latest_task") as mock_upsert,
+        patch("cli_agent_orchestrator.api.main.inbox_service.check_and_send_pending_messages"),
+    ):
+        response = client.post(
+            "/terminals/abcdef12/inbox/messages",
+            params={"sender_id": "leader1", "message": "Implement feature A"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["receiver_id"] == "abcdef12"
+        mock_upsert.assert_called_once_with("abcdef12", "Implement feature A")
+
+
 class TestDatabaseFunctionCompatibility:
     """Test compatibility with enhanced database functions."""
 

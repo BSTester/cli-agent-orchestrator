@@ -298,3 +298,20 @@ class TestExitTerminalEndpoint:
 
             assert response.status_code == 500
             assert "Failed to exit terminal" in response.json()["detail"]
+
+
+class TestTaskTitleTracking:
+    """Tests for latest-task persistence used by control panel task titles."""
+
+    def test_send_terminal_input_updates_latest_task(self, client):
+        with (
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+            patch("cli_agent_orchestrator.api.main.upsert_terminal_latest_task") as mock_upsert,
+        ):
+            mock_svc.send_input.return_value = True
+
+            response = client.post("/terminals/abcd1234/input", params={"message": "Do work"})
+
+            assert response.status_code == 200
+            assert response.json() == {"success": True}
+            mock_upsert.assert_called_once_with("abcd1234", "Do work")

@@ -16,6 +16,7 @@ from cli_agent_orchestrator.clients.database import (
     create_inbox_message,
     get_inbox_messages,
     init_db,
+    upsert_terminal_latest_task,
 )
 from cli_agent_orchestrator.constants import (
     CORS_ORIGINS,
@@ -367,6 +368,8 @@ async def get_terminal_working_directory(terminal_id: TerminalId) -> WorkingDire
 async def send_terminal_input(terminal_id: TerminalId, message: str) -> Dict:
     try:
         success = terminal_service.send_input(terminal_id, message)
+        if success:
+            upsert_terminal_latest_task(terminal_id, message)
         return {"success": success}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -440,6 +443,7 @@ async def create_inbox_message_endpoint(
     """Create inbox message and attempt immediate delivery."""
     try:
         inbox_msg = create_inbox_message(sender_id, receiver_id, message)
+        upsert_terminal_latest_task(receiver_id, message)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
