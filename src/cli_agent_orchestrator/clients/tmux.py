@@ -45,6 +45,10 @@ class TmuxClient:
     _ALLOWED_WORKING_DIRECTORIES_ENV = "CAO_ALLOWED_WORKING_DIRECTORIES"
 
     @staticmethod
+    def _default_workspace_directory(home_dir: str) -> str:
+        return os.path.realpath(os.path.abspath(os.path.join(home_dir, "workspace")))
+
+    @staticmethod
     def _is_within_directory(path: str, root: str) -> bool:
         """Return whether path is exactly root or a child of root."""
         return path == root or path.startswith(root + os.sep)
@@ -126,6 +130,7 @@ class TmuxClient:
                 or is outside the user's home directory
         """
         home_dir = os.path.realpath(os.path.expanduser("~"))
+        workspace_dir = self._default_workspace_directory(home_dir)
         explicit_directory = working_directory is not None
         allowed_roots = self._get_allowed_working_directory_roots(home_dir)
 
@@ -146,11 +151,16 @@ class TmuxClient:
         ):
             if not explicit_directory:
                 logger.warning(
-                    "Current working directory %s is outside allowed roots %s; falling back to home directory",
+                    "Current working directory %s is outside allowed roots %s; falling back to workspace directory",
                     safe_working_directory,
                     allowed_roots,
                 )
-                safe_working_directory = home_dir
+                if not os.path.isdir(workspace_dir):
+                    try:
+                        os.makedirs(workspace_dir, exist_ok=True)
+                    except OSError as exc:
+                        logger.warning("Failed to create workspace directory %s: %s", workspace_dir, exc)
+                safe_working_directory = workspace_dir
             else:
                 raise ValueError(
                     f"Working directory not allowed: {working_directory} "

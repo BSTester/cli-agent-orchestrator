@@ -182,6 +182,16 @@ class TestTmuxClientWorkingDirectory:
                 with pytest.raises(ValueError, match="outside home directory"):
                     client._resolve_and_validate_working_directory("/opt/some/dir")
 
+    def test_implicit_cwd_outside_allowed_roots_falls_back_to_workspace(self):
+        """Test implicit cwd fallback goes to ~/workspace instead of home."""
+        client = TmuxClient()
+        with patch("os.getcwd", return_value="/opt/outside"):
+            with patch("os.path.expanduser", return_value="/home/user"):
+                with patch("os.path.isdir", return_value=True):
+                    result = client._resolve_and_validate_working_directory(None)
+
+        assert result == "/home/user/workspace"
+
     def test_allows_path_in_configured_allowed_working_directories(self, tmp_path):
         """Test explicit external directory allowed by CAO_ALLOWED_WORKING_DIRECTORIES."""
         client = TmuxClient()

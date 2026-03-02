@@ -177,7 +177,7 @@ export default function OrganizationPage() {
   const loadHomeWorkdirOptions = useCallback(async () => {
     const result = await caoRequest<ConsoleHomeWorkdirsResponse>("GET", "/console/workdirs/home");
     if (!result.ok) {
-      setError("获取 home 工作目录选项失败");
+      setError("获取 workspace 工作目录选项失败");
       return;
     }
 
@@ -647,14 +647,14 @@ export default function OrganizationPage() {
               <TextInput
                 value={mainTeamWorkdirName}
                 onChange={(e) => setMainTeamWorkdirName(e.target.value)}
-                placeholder="团队工作目录（输入或选择 home 一级目录）"
+                placeholder="团队工作目录（输入或选择 workspace 一级目录）"
                 list="main-team-workdir-options"
               />
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
                 <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                  根目录：{homeDirectory || "~"}（输入新目录名会自动在 home 下创建一级目录）
+                  根目录：{homeDirectory || "~/workspace"}（输入新目录名会自动在 workspace 下创建一级目录）
                 </div>
                 <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
                   可输入新目录名，也可下拉选择已有一级目录

@@ -291,7 +291,9 @@ def _list_team_working_directories() -> Dict[str, str]:
 
 
 def _home_directory() -> Path:
-    return Path.home().resolve()
+    workspace_dir = (Path.home() / "workspace").resolve()
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    return workspace_dir
 
 
 def _resolve_home_level1_directory(
@@ -310,7 +312,7 @@ def _resolve_home_level1_directory(
     if Path(normalized_name).name != normalized_name:
         raise HTTPException(
             status_code=400,
-            detail="team_workdir_name must be a single directory name under home",
+            detail="team_workdir_name must be a single directory name under workspace",
         )
 
     home_dir = _home_directory()
@@ -319,19 +321,22 @@ def _resolve_home_level1_directory(
     try:
         relative_parts = candidate.relative_to(home_dir).parts
     except ValueError:
-        raise HTTPException(status_code=400, detail="Directory must be under home directory")
+        raise HTTPException(status_code=400, detail="Directory must be under workspace directory")
 
     if len(relative_parts) != 1:
         raise HTTPException(
             status_code=400,
-            detail="team_workdir_name must target a first-level directory under home",
+            detail="team_workdir_name must target a first-level directory under workspace",
         )
 
     if create_if_missing:
         candidate.mkdir(parents=False, exist_ok=True)
 
     if must_exist and not candidate.exists():
-        raise HTTPException(status_code=400, detail=f"Directory does not exist under home: {normalized_name}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Directory does not exist under workspace: {normalized_name}",
+        )
 
     if candidate.exists() and not candidate.is_dir():
         raise HTTPException(status_code=400, detail=f"Path is not a directory: {normalized_name}")
