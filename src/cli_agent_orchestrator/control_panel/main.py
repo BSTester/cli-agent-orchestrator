@@ -994,7 +994,7 @@ async def health_check() -> dict[str, str]:
     """Health check endpoint for the control panel."""
     try:
         # Also check if cao-server is reachable
-        response = requests.get(f"{CAO_SERVER_URL}/health", timeout=5)
+        response = await asyncio.to_thread(requests.get, f"{CAO_SERVER_URL}/health", timeout=5)
         cao_status = "healthy" if response.status_code == 200 else "unhealthy"
     except Exception:
         cao_status = "unreachable"
@@ -1041,7 +1041,7 @@ async def me(request: Request) -> Dict[str, Any]:
 @app.get("/console/overview")
 async def console_overview() -> Dict[str, Any]:
     try:
-        terminals = _get_terminals_from_sessions()
+        terminals = await asyncio.to_thread(_get_terminals_from_sessions)
         provider_counts = Counter(str(t.get("provider", "unknown")) for t in terminals)
         status_counts = Counter(str(t.get("status", "unknown")) for t in terminals)
         profile_counts = Counter(str(t.get("agent_profile", "unknown")) for t in terminals)
@@ -1065,7 +1065,7 @@ async def console_overview() -> Dict[str, Any]:
 @app.get("/console/agents")
 async def console_agents() -> Dict[str, Any]:
     try:
-        terminals = _get_terminals_from_sessions()
+        terminals = await asyncio.to_thread(_get_terminals_from_sessions)
         terminals_sorted = sorted(
             terminals,
             key=lambda item: str(item.get("last_active", "")),
@@ -1079,8 +1079,8 @@ async def console_agents() -> Dict[str, Any]:
 @app.get("/console/organization")
 async def console_organization() -> Dict[str, Any]:
     try:
-        terminals = _get_terminals_from_sessions()
-        organization = _build_organization(terminals)
+        terminals = await asyncio.to_thread(_get_terminals_from_sessions)
+        organization = await asyncio.to_thread(_build_organization, terminals)
         return {
             "leaders_total": len(organization["leaders"]),
             "workers_total": len(organization["workers"]),
@@ -1093,17 +1093,17 @@ async def console_organization() -> Dict[str, Any]:
 @app.get("/console/tasks")
 async def console_tasks() -> Dict[str, Any]:
     try:
-        terminals = _get_terminals_from_sessions()
-        organization = _build_organization(terminals)
+        terminals = await asyncio.to_thread(_get_terminals_from_sessions)
+        organization = await asyncio.to_thread(_build_organization, terminals)
         terminal_ids = [str(item.get("id", "")) for item in terminals if isinstance(item, dict)]
-        latest_task_titles = _list_latest_task_titles(terminal_ids)
+        latest_task_titles = await asyncio.to_thread(_list_latest_task_titles, terminal_ids)
 
-        flows_response = _request_cao("GET", "/flows")
-        flow_items = _response_json_or_text(flows_response)
+        flows_response = await asyncio.to_thread(_request_cao, "GET", "/flows")
+        flow_items = await asyncio.to_thread(_response_json_or_text, flows_response)
         if not isinstance(flow_items, list):
             flow_items = []
 
-        flow_team_links = _list_flow_team_links()
+        flow_team_links = await asyncio.to_thread(_list_flow_team_links)
         flows_by_leader: Dict[str, List[Dict[str, Any]]] = {}
         unassigned_flows: List[Dict[str, Any]] = []
 
@@ -1174,19 +1174,19 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
     flow_content = payload.flow_content.strip() if payload.flow_content else ""
 
     if file_name:
-        flow_path = _resolve_console_flow_file(file_name)
+        flow_path = await asyncio.to_thread(_resolve_console_flow_file, file_name)
         if flow_content:
-            flow_path = _overwrite_console_flow_file(flow_path, flow_content)
+            flow_path = await asyncio.to_thread(_overwrite_console_flow_file, flow_path, flow_content)
     elif flow_content:
-        flow_path = _save_flow_content_to_file(flow_content, payload.flow_name)
+        flow_path = await asyncio.to_thread(_save_flow_content_to_file, flow_content, payload.flow_name)
     else:
         raise HTTPException(status_code=400, detail="Provide either file_name or flow_content")
 
     body = {"file_path": str(flow_path)}
 
     try:
-        response = _request_cao("POST", "/flows", json_body=body)
-        created_flow = _response_json_or_text(response)
+        response = await asyncio.to_thread(_request_cao, "POST", "/flows", None, body)
+        created_flow = await asyncio.to_thread(_response_json_or_text, response)
         if not isinstance(created_flow, dict):
             raise HTTPException(status_code=500, detail="Invalid flow creation response")
 
@@ -1195,7 +1195,7 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
             raise HTTPException(status_code=500, detail="Flow name missing in response")
 
         leader_id = payload.leader_id.strip() if payload.leader_id else None
-        _set_flow_team_link(flow_name, leader_id)
+        await asyncio.to_thread(_set_flow_team_link, flow_name, leader_id)
         return {
             "ok": True,
             "flow": created_flow,
@@ -1208,13 +1208,14 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
 
 @app.get("/console/tasks/scheduled/files")
 async def console_list_scheduled_task_files() -> Dict[str, Any]:
-    return {"files": _list_console_flow_files()}
+    files = await asyncio.to_thread(_list_console_flow_files)
+    return {"files": files}
 
 
 @app.get("/console/tasks/scheduled/files/{file_name}")
 async def console_get_scheduled_task_file(file_name: str) -> Dict[str, Any]:
-    flow_path = _resolve_console_flow_file(file_name)
-    content = flow_path.read_text(encoding="utf-8")
+    flow_path = await asyncio.to_thread(_resolve_console_flow_file, file_name)
+    content = await asyncio.to_thread(flow_path.read_text, encoding="utf-8")
     return {
         "file_name": flow_path.name,
         "flow_name": flow_path.stem,
@@ -1226,8 +1227,8 @@ async def console_get_scheduled_task_file(file_name: str) -> Dict[str, Any]:
 @app.post("/console/tasks/scheduled/{flow_name}/run")
 async def console_run_scheduled_task(flow_name: str) -> Dict[str, Any]:
     try:
-        response = _request_cao("POST", f"/flows/{flow_name}/run")
-        result = _response_json_or_text(response)
+        response = await asyncio.to_thread(_request_cao, "POST", f"/flows/{flow_name}/run")
+        result = await asyncio.to_thread(_response_json_or_text, response)
         return {"ok": True, "result": result}
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to run scheduled task: {exc}")
@@ -1236,8 +1237,8 @@ async def console_run_scheduled_task(flow_name: str) -> Dict[str, Any]:
 @app.post("/console/tasks/scheduled/{flow_name}/enable")
 async def console_enable_scheduled_task(flow_name: str) -> Dict[str, Any]:
     try:
-        response = _request_cao("POST", f"/flows/{flow_name}/enable")
-        result = _response_json_or_text(response)
+        response = await asyncio.to_thread(_request_cao, "POST", f"/flows/{flow_name}/enable")
+        result = await asyncio.to_thread(_response_json_or_text, response)
         return {"ok": True, "result": result}
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to enable scheduled task: {exc}")
@@ -1246,8 +1247,8 @@ async def console_enable_scheduled_task(flow_name: str) -> Dict[str, Any]:
 @app.post("/console/tasks/scheduled/{flow_name}/disable")
 async def console_disable_scheduled_task(flow_name: str) -> Dict[str, Any]:
     try:
-        response = _request_cao("POST", f"/flows/{flow_name}/disable")
-        result = _response_json_or_text(response)
+        response = await asyncio.to_thread(_request_cao, "POST", f"/flows/{flow_name}/disable")
+        result = await asyncio.to_thread(_response_json_or_text, response)
         return {"ok": True, "result": result}
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to disable scheduled task: {exc}")
@@ -1256,9 +1257,9 @@ async def console_disable_scheduled_task(flow_name: str) -> Dict[str, Any]:
 @app.delete("/console/tasks/scheduled/{flow_name}")
 async def console_delete_scheduled_task(flow_name: str) -> Dict[str, Any]:
     try:
-        response = _request_cao("DELETE", f"/flows/{flow_name}")
-        result = _response_json_or_text(response)
-        _remove_flow_team_link(flow_name)
+        response = await asyncio.to_thread(_request_cao, "DELETE", f"/flows/{flow_name}")
+        result = await asyncio.to_thread(_response_json_or_text, response)
+        await asyncio.to_thread(_remove_flow_team_link, flow_name)
         return {"ok": True, "result": result}
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to delete scheduled task: {exc}")
@@ -1266,16 +1267,18 @@ async def console_delete_scheduled_task(flow_name: str) -> Dict[str, Any]:
 
 @app.get("/console/agent-profiles")
 async def console_agent_profiles() -> Dict[str, Any]:
-    return {"profiles": _list_available_agent_profiles()}
+    profiles = await asyncio.to_thread(_list_available_agent_profiles)
+    return {"profiles": profiles}
 
 
 @app.post("/console/agent-profiles")
 async def console_create_agent_profile(payload: AgentProfileCreateRequest) -> Dict[str, Any]:
-    created_path = _create_local_agent_profile(
-        name=payload.name,
-        description=payload.description,
-        system_prompt=payload.system_prompt,
-        provider=payload.provider,
+    created_path = await asyncio.to_thread(
+        _create_local_agent_profile,
+        payload.name,
+        payload.description,
+        payload.system_prompt,
+        payload.provider,
     )
     return {
         "ok": True,
@@ -1287,13 +1290,16 @@ async def console_create_agent_profile(payload: AgentProfileCreateRequest) -> Di
 @app.get("/console/agent-profiles/{profile_name}")
 async def console_get_agent_profile(profile_name: str) -> Dict[str, Any]:
     profile_path = _profile_file_path(profile_name)
-    if not profile_path.exists():
+    exists = await asyncio.to_thread(profile_path.exists)
+    if not exists:
         raise HTTPException(status_code=404, detail="Agent profile not found")
+
+    content = await asyncio.to_thread(profile_path.read_text, encoding="utf-8")
 
     return {
         "profile": profile_name,
         "file_path": str(profile_path),
-        "content": profile_path.read_text(encoding="utf-8"),
+        "content": content,
     }
 
 
@@ -1303,21 +1309,24 @@ async def console_update_agent_profile(
     payload: AgentProfileUpdateRequest,
 ) -> Dict[str, Any]:
     profile_path = _profile_file_path(profile_name)
-    if not profile_path.exists():
+    exists = await asyncio.to_thread(profile_path.exists)
+    if not exists:
         raise HTTPException(status_code=404, detail="Agent profile not found")
 
-    profile_path.write_text(payload.content, encoding="utf-8")
+    await asyncio.to_thread(profile_path.write_text, payload.content, encoding="utf-8")
     return {"ok": True, "profile": profile_name, "file_path": str(profile_path)}
 
 
 @app.post("/console/agent-profiles/{profile_name}/install")
 async def console_install_agent_profile(profile_name: str) -> Dict[str, Any]:
     profile_path = _profile_file_path(profile_name)
-    if not profile_path.exists():
+    exists = await asyncio.to_thread(profile_path.exists)
+    if not exists:
         raise HTTPException(status_code=404, detail="Agent profile not found")
 
     try:
-        process = subprocess.run(
+        process = await asyncio.to_thread(
+            subprocess.run,
             ["uv", "run", "cao", "install", str(profile_path)],
             capture_output=True,
             text=True,
@@ -1343,8 +1352,8 @@ async def console_link_worker(payload: OrgLinkRequest) -> Dict[str, Any]:
     leader_id = payload.leader_id.strip() if payload.leader_id else None
 
     try:
-        worker_response = _request_cao("GET", f"/terminals/{worker_id}")
-        worker_terminal = _response_json_or_text(worker_response)
+        worker_response = await asyncio.to_thread(_request_cao, "GET", f"/terminals/{worker_id}")
+        worker_terminal = await asyncio.to_thread(_response_json_or_text, worker_response)
         if not isinstance(worker_terminal, dict):
             raise HTTPException(status_code=400, detail="Invalid worker terminal")
         worker_profile = str(worker_terminal.get("agent_profile", "")).lower()
@@ -1352,17 +1361,17 @@ async def console_link_worker(payload: OrgLinkRequest) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail="worker_id cannot be a main agent")
 
         if leader_id:
-            leader_response = _request_cao("GET", f"/terminals/{leader_id}")
-            leader_terminal = _response_json_or_text(leader_response)
+            leader_response = await asyncio.to_thread(_request_cao, "GET", f"/terminals/{leader_id}")
+            leader_terminal = await asyncio.to_thread(_response_json_or_text, leader_response)
             if not isinstance(leader_terminal, dict):
                 raise HTTPException(status_code=400, detail="Invalid leader terminal")
             leader_profile = str(leader_terminal.get("agent_profile", "")).lower()
             if "supervisor" not in leader_profile:
                 raise HTTPException(status_code=400, detail="leader_id must be a main agent")
-            _register_team(leader_id)
-            _set_worker_link(worker_id, leader_id)
+            await asyncio.to_thread(_register_team, leader_id)
+            await asyncio.to_thread(_set_worker_link, worker_id, leader_id)
         else:
-            _remove_worker_link(worker_id)
+            await asyncio.to_thread(_remove_worker_link, worker_id)
 
         return {"ok": True, "worker_id": worker_id, "leader_id": leader_id}
     except requests.exceptions.RequestException as exc:
@@ -1379,15 +1388,15 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
 
     try:
         if payload.role_type == "main":
-            created_response = _request_cao("POST", "/sessions", params=params)
-            created_agent = _response_json_or_text(created_response)
+            created_response = await asyncio.to_thread(_request_cao, "POST", "/sessions", params)
+            created_agent = await asyncio.to_thread(_response_json_or_text, created_response)
             if isinstance(created_agent, dict) and isinstance(created_agent.get("id"), str):
                 leader_id = created_agent["id"]
-                _register_team(leader_id)
+                await asyncio.to_thread(_register_team, leader_id)
                 if payload.team_alias:
-                    _set_team_alias(leader_id, payload.team_alias)
+                    await asyncio.to_thread(_set_team_alias, leader_id, payload.team_alias)
                 if payload.agent_alias:
-                    _set_agent_alias(leader_id, payload.agent_alias)
+                    await asyncio.to_thread(_set_agent_alias, leader_id, payload.agent_alias)
             return {
                 "ok": True,
                 "role_type": payload.role_type,
@@ -1396,26 +1405,29 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
             }
 
         if payload.leader_id:
-            leader_response = _request_cao("GET", f"/terminals/{payload.leader_id}")
-            leader_terminal = _response_json_or_text(leader_response)
+            leader_response = await asyncio.to_thread(
+                _request_cao, "GET", f"/terminals/{payload.leader_id}"
+            )
+            leader_terminal = await asyncio.to_thread(_response_json_or_text, leader_response)
             if not isinstance(leader_terminal, dict):
                 raise HTTPException(status_code=400, detail="Invalid leader_id")
             session_name = leader_terminal.get("session_name")
             if not session_name:
                 raise HTTPException(status_code=400, detail="leader has no session")
 
-            created_response = _request_cao(
+            created_response = await asyncio.to_thread(
+                _request_cao,
                 "POST",
                 f"/sessions/{session_name}/terminals",
-                params=params,
+                params,
             )
-            created_agent = _response_json_or_text(created_response)
+            created_agent = await asyncio.to_thread(_response_json_or_text, created_response)
             if isinstance(created_agent, dict) and isinstance(created_agent.get("id"), str):
-                _register_team(payload.leader_id)
+                await asyncio.to_thread(_register_team, payload.leader_id)
                 worker_id = created_agent["id"]
-                _set_worker_link(worker_id, payload.leader_id)
+                await asyncio.to_thread(_set_worker_link, worker_id, payload.leader_id)
                 if payload.agent_alias:
-                    _set_agent_alias(worker_id, payload.agent_alias)
+                    await asyncio.to_thread(_set_agent_alias, worker_id, payload.agent_alias)
             return {
                 "ok": True,
                 "role_type": payload.role_type,
@@ -1423,15 +1435,15 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
                 "agent": created_agent,
             }
 
-        created_response = _request_cao("POST", "/sessions", params=params)
-        created_agent = _response_json_or_text(created_response)
+        created_response = await asyncio.to_thread(_request_cao, "POST", "/sessions", params)
+        created_agent = await asyncio.to_thread(_response_json_or_text, created_response)
         created_agent_id = created_agent.get("id") if isinstance(created_agent, dict) else None
         if isinstance(created_agent_id, str):
-            _register_team(created_agent_id)
+            await asyncio.to_thread(_register_team, created_agent_id)
             if payload.team_alias:
-                _set_team_alias(created_agent_id, payload.team_alias)
+                await asyncio.to_thread(_set_team_alias, created_agent_id, payload.team_alias)
             if payload.agent_alias:
-                _set_agent_alias(created_agent_id, payload.agent_alias)
+                await asyncio.to_thread(_set_agent_alias, created_agent_id, payload.agent_alias)
         return {
             "ok": True,
             "role_type": payload.role_type,
@@ -1462,12 +1474,13 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
 @app.post("/console/agents/{terminal_id}/input")
 async def send_input_to_agent(terminal_id: str, payload: AgentMessageRequest) -> Dict[str, Any]:
     try:
-        response = _request_cao(
+        response = await asyncio.to_thread(
+            _request_cao,
             "POST",
             f"/terminals/{terminal_id}/input",
-            params={"message": payload.message},
+            {"message": payload.message},
         )
-        body = _response_json_or_text(response)
+        body = await asyncio.to_thread(_response_json_or_text, response)
         return {"ok": True, "terminal_id": terminal_id, "result": body}
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to send input: {exc}")
@@ -1476,10 +1489,10 @@ async def send_input_to_agent(terminal_id: str, payload: AgentMessageRequest) ->
 @app.post("/console/agents/{terminal_id}/tmux/input")
 async def send_input_to_agent_tmux(terminal_id: str, payload: AgentTmuxInputRequest) -> Dict[str, Any]:
     try:
-        tmux_session, tmux_window = _get_terminal_tmux_target(terminal_id)
-        tmux_client.send_raw_input(tmux_session, tmux_window, payload.message)
+        tmux_session, tmux_window = await asyncio.to_thread(_get_terminal_tmux_target, terminal_id)
+        await asyncio.to_thread(tmux_client.send_raw_input, tmux_session, tmux_window, payload.message)
         if payload.press_enter:
-            tmux_client.send_special_key(tmux_session, tmux_window, "C-m")
+            await asyncio.to_thread(tmux_client.send_special_key, tmux_session, tmux_window, "C-m")
         return {
             "ok": True,
             "terminal_id": terminal_id,
@@ -1499,8 +1512,13 @@ async def send_input_to_agent_tmux(terminal_id: str, payload: AgentTmuxInputRequ
 async def get_agent_tmux_output(terminal_id: str, lines: int = 300) -> Dict[str, Any]:
     safe_lines = max(20, min(lines, 1000))
     try:
-        tmux_session, tmux_window = _get_terminal_tmux_target(terminal_id)
-        output = tmux_client.get_history(tmux_session, tmux_window, tail_lines=safe_lines)
+        tmux_session, tmux_window = await asyncio.to_thread(_get_terminal_tmux_target, terminal_id)
+        output = await asyncio.to_thread(
+            tmux_client.get_history,
+            tmux_session,
+            tmux_window,
+            safe_lines,
+        )
         return {
             "terminal_id": terminal_id,
             "tmux_session": tmux_session,
@@ -1524,7 +1542,7 @@ async def stream_agent_tmux_ws(websocket: WebSocket, terminal_id: str) -> None:
         return
 
     try:
-        tmux_session, tmux_window = _get_terminal_tmux_target(terminal_id)
+        tmux_session, tmux_window = await asyncio.to_thread(_get_terminal_tmux_target, terminal_id)
     except Exception:
         await websocket.close(code=4404)
         return
@@ -1630,12 +1648,13 @@ async def stream_agent_output(
                 break
 
             try:
-                response = _request_cao(
+                response = await asyncio.to_thread(
+                    _request_cao,
                     "GET",
                     f"/terminals/{terminal_id}/output",
-                    params={"mode": "last"},
+                    {"mode": "last"},
                 )
-                body = _response_json_or_text(response)
+                body = await asyncio.to_thread(_response_json_or_text, response)
                 output_text = ""
                 if isinstance(body, dict):
                     output_text = str(body.get("output", "")).strip()
@@ -1675,7 +1694,7 @@ async def stream_agent_output(
 
 @app.post("/console/agents/{receiver_id}/message")
 async def send_message_to_agent(receiver_id: str, payload: InboxMessageRequest) -> Dict[str, Any]:
-    sender_id = payload.sender_id or _resolve_sender_id(receiver_id)
+    sender_id = payload.sender_id or await asyncio.to_thread(_resolve_sender_id, receiver_id)
     if not sender_id:
         raise HTTPException(
             status_code=400,
@@ -1683,12 +1702,13 @@ async def send_message_to_agent(receiver_id: str, payload: InboxMessageRequest) 
         )
 
     try:
-        response = _request_cao(
+        response = await asyncio.to_thread(
+            _request_cao,
             "POST",
             f"/terminals/{receiver_id}/inbox/messages",
-            params={"sender_id": sender_id, "message": payload.message},
+            {"sender_id": sender_id, "message": payload.message},
         )
-        body = _response_json_or_text(response)
+        body = await asyncio.to_thread(_response_json_or_text, response)
         return {
             "ok": True,
             "receiver_id": receiver_id,
@@ -1738,7 +1758,8 @@ async def proxy_to_cao(request: Request, path: str) -> Response:
         )
 
         # Make request to cao-server
-        response = requests.request(
+        response = await asyncio.to_thread(
+            requests.request,
             method=request.method,
             url=upstream_url,
             headers=headers,

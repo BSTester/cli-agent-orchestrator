@@ -174,3 +174,79 @@ def test_assign_fails_when_terminal_not_ready(mock_create, mock_send, mock_wait)
     assert result["terminal_id"] == "dev-terminal-7"
     assert "did not become ready" in result["message"]
     mock_send.assert_not_called()
+
+
+def test_assign_fails_when_message_is_blank():
+    result = _assign_impl("developer", "   ")
+
+    assert result["success"] is False
+    assert result["terminal_id"] is None
+    assert "message cannot be empty" in result["message"]
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
+@patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
+@patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
+def test_assign_waits_stabilization_before_sending(
+    mock_create,
+    mock_send,
+    mock_send_inbox,
+    mock_wait,
+    mock_sleep,
+):
+    mock_create.return_value = ("dev-terminal-8", "kiro_cli")
+    mock_wait.return_value = True
+
+    result = _assign_impl("developer", "Do work")
+
+    assert result["success"] is True
+    mock_sleep.assert_called_once_with(2.0)
+    mock_send_inbox.assert_called_once_with("dev-terminal-8", "Do work")
+    mock_send.assert_not_called()
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
+@patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
+@patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
+def test_assign_does_not_resend_when_initial_inbox_send_succeeds(
+    mock_create,
+    mock_send,
+    mock_send_inbox,
+    mock_wait,
+    mock_sleep,
+):
+    mock_create.return_value = ("dev-terminal-9", "kiro_cli")
+    mock_wait.return_value = True
+
+    result = _assign_impl("developer", "Do work")
+
+    assert result["success"] is True
+    mock_send_inbox.assert_called_once_with("dev-terminal-9", "Do work")
+    mock_send.assert_not_called()
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
+@patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
+@patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
+def test_assign_fallbacks_to_direct_input_if_inbox_send_fails(
+    mock_create,
+    mock_send,
+    mock_send_inbox,
+    mock_wait,
+    mock_sleep,
+):
+    mock_create.return_value = ("dev-terminal-10", "kiro_cli")
+    mock_wait.return_value = True
+    mock_send_inbox.side_effect = ValueError("CAO_TERMINAL_ID not set")
+
+    result = _assign_impl("developer", "Do work")
+
+    assert result["success"] is True
+    mock_send.assert_called_once_with("dev-terminal-10", "Do work")
+    mock_send_inbox.assert_called_once_with("dev-terminal-10", "Do work")

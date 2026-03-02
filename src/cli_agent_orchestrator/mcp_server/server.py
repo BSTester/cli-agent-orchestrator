@@ -23,6 +23,7 @@ REQUEST_RETRY_ATTEMPTS = 3
 REQUEST_RETRY_BACKOFF_SECONDS = 0.5
 PROVIDER_READY_TIMEOUT_SECONDS = 120.0
 PROVIDER_READY_STATUSES = {TerminalStatus.IDLE, TerminalStatus.COMPLETED}
+ASSIGN_POST_READY_STABILIZATION_SECONDS = 2.0
 
 # Environment variable to enable/disable working_directory parameter
 ENABLE_WORKING_DIRECTORY = os.getenv("CAO_ENABLE_WORKING_DIRECTORY", "false").lower() == "true"
@@ -199,6 +200,9 @@ def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
     sender_id = os.getenv("CAO_TERMINAL_ID")
     if not sender_id:
         raise ValueError("CAO_TERMINAL_ID not set - cannot determine sender")
+
+    if not message.strip():
+        raise ValueError("Message cannot be empty")
 
     response = _request_with_retry(
         "POST",
@@ -446,6 +450,13 @@ def _assign_impl(
 ) -> Dict[str, Any]:
     """Implementation of assign logic."""
     try:
+        if not message.strip():
+            return {
+                "success": False,
+                "terminal_id": None,
+                "message": "Assignment failed: message cannot be empty",
+            }
+
         # Create terminal
         terminal_id, resolved_provider = _create_terminal(
             agent_profile, working_directory=working_directory, provider=provider
@@ -465,8 +476,20 @@ def _assign_impl(
                 ),
             }
 
-        # Send message immediately
-        _send_direct_input(terminal_id, message)
+        # Newly created worker terminals may report ready slightly before the
+        # interactive prompt fully stabilizes. Add a short delay to match
+        # handoff behavior and avoid first-assignment input being ignored.
+        time.sleep(ASSIGN_POST_READY_STABILIZATION_SECONDS)
+
+        try:
+            _send_to_inbox(terminal_id, message)
+        except Exception as exc:
+            logger.warning(
+                "Inbox initial assignment failed for %s (%s); falling back to direct input",
+                terminal_id,
+                exc,
+            )
+            _send_direct_input(terminal_id, message)
 
         return {
             "success": True,
@@ -490,6 +513,7 @@ if ENABLE_WORKING_DIRECTORY:
             description='The agent profile for the worker agent (e.g., "developer", "analyst")'
         ),
         message: str = Field(
+            min_length=1,
             description="The task message to send. Include callback instructions for the worker to send results back."
         ),
         provider: Optional[str] = Field(
@@ -534,6 +558,7 @@ else:
             description='The agent profile for the worker agent (e.g., "developer", "analyst")'
         ),
         message: str = Field(
+            min_length=1,
             description="The task message to send. Include callback instructions for the worker to send results back."
         ),
         provider: Optional[str] = Field(

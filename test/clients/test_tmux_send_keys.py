@@ -126,12 +126,23 @@ class TestSendKeys:
 
         assert mock_subprocess.run.call_count == 5  # load + paste + 2 Enter + delete
         calls = mock_subprocess.run.call_args_list
-        # Both Enters
+        # Both Enter submissions
         assert calls[2] == call(
             ["tmux", "send-keys", "-t", "sess:win", "Enter"],
             check=True,
         )
         assert calls[3] == call(
+            ["tmux", "send-keys", "-t", "sess:win", "Enter"],
+            check=True,
+        )
+
+    def test_enter_count_clamped_to_one(self, client, mock_subprocess, mock_uuid):
+        """enter_count<=0 should still send one submit key."""
+        client.send_keys("sess", "win", "hello", enter_count=0)
+
+        assert mock_subprocess.run.call_count == 4
+        calls = mock_subprocess.run.call_args_list
+        assert calls[2] == call(
             ["tmux", "send-keys", "-t", "sess:win", "Enter"],
             check=True,
         )

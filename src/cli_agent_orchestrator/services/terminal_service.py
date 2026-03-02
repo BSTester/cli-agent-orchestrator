@@ -250,6 +250,8 @@ def send_input(terminal_id: str, message: str) -> bool:
         # Check how many Enter keys the provider needs after paste
         provider = provider_manager.get_provider(terminal_id)
         enter_count = provider.paste_enter_count if provider else 1
+        if enter_count < 1:
+            enter_count = 1
 
         tmux_client.send_keys(
             metadata["tmux_session"], metadata["tmux_window"], message, enter_count=enter_count

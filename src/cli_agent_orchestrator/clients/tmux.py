@@ -272,6 +272,7 @@ class TmuxClient:
         """
         target = f"{session_name}:{window_name}"
         buf_name = f"cao_{uuid.uuid4().hex[:8]}"
+        safe_enter_count = max(1, int(enter_count))
         try:
             logger.info(f"send_keys: {target} - keys: {keys}")
             subprocess.run(
@@ -287,7 +288,7 @@ class TmuxClient:
             # before sending Enter. Without this, some TUIs (e.g., Claude Code 2.x)
             # swallow the Enter that immediately follows paste-buffer -p.
             time.sleep(0.3)
-            for i in range(enter_count):
+            for i in range(safe_enter_count):
                 if i > 0:
                     # Delay between Enter presses for TUIs that need time to
                     # process the previous Enter (e.g., Ink adding a newline)
