@@ -40,7 +40,6 @@ const providers = [
   "kiro_cli",
   "claude_code",
   "codex",
-  "q_cli",
   "qoder_cli",
   "codebuddy",
   "copilot",
@@ -126,16 +125,15 @@ export default function OrganizationPage() {
     ).sort();
     setProfileOptions(profiles);
 
-    const workerProfiles = profiles.filter((profileName) => profileName !== "code_supervisor");
+    const preferredProfile = profiles.includes("developer")
+      ? "developer"
+      : profiles[0] || "";
 
-    if (!mainProfile || mainProfile !== "code_supervisor") {
-      setMainProfile("code_supervisor");
+    if (!mainProfile || !profiles.includes(mainProfile)) {
+      setMainProfile(preferredProfile);
     }
-    if (!workerProfile || workerProfile === "code_supervisor") {
-      const preferredWorker = workerProfiles.includes("developer")
-        ? "developer"
-        : workerProfiles[0] || "";
-      setWorkerProfile(preferredWorker);
+    if (!workerProfile || !profiles.includes(workerProfile)) {
+      setWorkerProfile(preferredProfile);
     }
   }, [mainProfile, workerProfile]);
 
@@ -309,7 +307,7 @@ export default function OrganizationPage() {
       team_alias?: string;
     } = {
       role_type: "main",
-      agent_profile: "code_supervisor",
+      agent_profile: mainProfile.trim(),
     };
 
     if (mainProvider) {
@@ -378,8 +376,8 @@ export default function OrganizationPage() {
       .map((group) => [group.leader.id, (group.team_alias || "").trim()] as const)
       .filter(([, alias]) => Boolean(alias))
   );
-  const mainProfileOptions = ["code_supervisor"];
-  const workerProfileOptions = profileOptions.filter((profileName) => profileName !== "code_supervisor");
+  const mainProfileOptions = profileOptions;
+  const workerProfileOptions = profileOptions;
 
   return (
     <RequireAuth>
