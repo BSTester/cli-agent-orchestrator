@@ -26,6 +26,7 @@ import {
   caoRequest,
   ConsoleAgent,
   ConsoleAgentProfilesResponse,
+  ConsoleHomeWorkdirsResponse,
   CreateAgentProfileRequest,
   CreateAgentProfileResponse,
   ConsoleOrganization,
@@ -54,6 +55,9 @@ export default function OrganizationPage() {
   const [mainProfile, setMainProfile] = useState("");
   const [mainProvider, setMainProvider] = useState("");
   const [mainTeamAlias, setMainTeamAlias] = useState("");
+  const [homeDirectory, setHomeDirectory] = useState("");
+  const [homeSubdirs, setHomeSubdirs] = useState<string[]>([]);
+  const [mainTeamWorkdirName, setMainTeamWorkdirName] = useState("");
   const [creatingMain, setCreatingMain] = useState(false);
 
   const [workerProfile, setWorkerProfile] = useState("");
@@ -136,6 +140,18 @@ export default function OrganizationPage() {
       setWorkerProfile(preferredProfile);
     }
   }, [mainProfile, workerProfile]);
+
+  const loadHomeWorkdirOptions = useCallback(async () => {
+    const result = await caoRequest<ConsoleHomeWorkdirsResponse>("GET", "/console/workdirs/home");
+    if (!result.ok) {
+      setError("获取 home 工作目录选项失败");
+      return;
+    }
+
+    setHomeDirectory(result.data.home_directory || "");
+    const names = (result.data.directories || []).map((item) => item.name).filter(Boolean);
+    setHomeSubdirs(names);
+  }, []);
 
   async function shutdownSessionByTerminal(agentId: string, terminalId?: string, sessionName?: string) {
     if (!terminalId) {
@@ -285,6 +301,7 @@ export default function OrganizationPage() {
     void loadOrganization();
     const bootstrapTimer = setTimeout(() => {
       void loadProfileOptions();
+      void loadHomeWorkdirOptions();
     }, 0);
     const timer = setInterval(() => {
       void loadOrganization();
@@ -293,7 +310,7 @@ export default function OrganizationPage() {
       clearInterval(timer);
       clearTimeout(bootstrapTimer);
     };
-  }, [loadOrganization, loadProfileOptions]);
+  }, [loadOrganization, loadProfileOptions, loadHomeWorkdirOptions]);
 
   async function createMainAgent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -305,6 +322,8 @@ export default function OrganizationPage() {
       agent_profile: string;
       provider?: string;
       team_alias?: string;
+      team_workdir_mode?: "existing" | "new";
+      team_workdir_name?: string;
     } = {
       role_type: "main",
       agent_profile: mainProfile.trim(),
@@ -317,6 +336,12 @@ export default function OrganizationPage() {
       body.team_alias = mainTeamAlias.trim();
     }
 
+    const workdirName = mainTeamWorkdirName.trim();
+    if (workdirName) {
+      body.team_workdir_name = workdirName;
+      body.team_workdir_mode = homeSubdirs.includes(workdirName) ? "existing" : "new";
+    }
+
     const result = await caoRequest("POST", "/console/organization/create", { body });
     if (!result.ok) {
       const detail = extractErrorDetail(result.data);
@@ -327,7 +352,9 @@ export default function OrganizationPage() {
 
     setCreatingMain(false);
     setMainTeamAlias("");
+    setMainTeamWorkdirName("");
     await loadOrganization();
+    await loadHomeWorkdirOptions();
   }
 
   async function createWorkerAgent(event: FormEvent<HTMLFormElement>) {
@@ -468,7 +495,8 @@ export default function OrganizationPage() {
           <SectionCard>
             <SectionTitle title="团队编制管理" />
             <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增负责人</div>
-            <form onSubmit={createMainAgent} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10 }}>
+            <form onSubmit={createMainAgent} style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <SelectInput
                 value={mainProfile}
                 onChange={(e) => setMainProfile(e.target.value)}
@@ -495,12 +523,35 @@ export default function OrganizationPage() {
                 onChange={(e) => setMainTeamAlias(e.target.value)}
                 placeholder="团队别名（可选）"
               />
-              <PrimaryButton
-                type="submit"
-                disabled={creatingMain}
-              >
-                {creatingMain ? "组建中..." : "启动团队"}
-              </PrimaryButton>
+              <TextInput
+                value={mainTeamWorkdirName}
+                onChange={(e) => setMainTeamWorkdirName(e.target.value)}
+                placeholder="团队工作目录（输入或选择 home 一级目录）"
+                list="main-team-workdir-options"
+              />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
+                <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                  根目录：{homeDirectory || "~"}（输入新目录名会自动在 home 下创建一级目录）
+                </div>
+                <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                  可输入新目录名，也可下拉选择已有一级目录
+                </div>
+                <PrimaryButton
+                  type="submit"
+                  disabled={creatingMain}
+                  style={{ width: "fit-content", justifySelf: "end" }}
+                >
+                  {creatingMain ? "组建中..." : "启动团队"}
+                </PrimaryButton>
+              </div>
+
+              <datalist id="main-team-workdir-options">
+                {homeSubdirs.map((dirName) => (
+                  <option key={`main-team-workdir-${dirName}`} value={dirName} />
+                ))}
+              </datalist>
             </form>
 
             <div style={{ height: 1, background: "var(--border)", margin: "14px 0" }} />
@@ -575,6 +626,11 @@ export default function OrganizationPage() {
                     <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
                       负责人：{group.leader.alias || group.leader.id} · {group.leader.agent_profile} · {toStatusLabel(group.leader.status)}
                     </span>
+                    {group.team_working_directory ? (
+                      <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
+                        工作目录：{group.team_working_directory}
+                      </span>
+                    ) : null}
                   </div>
                   <SecondaryButton
                     type="button"

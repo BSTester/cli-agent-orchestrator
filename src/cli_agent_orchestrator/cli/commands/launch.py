@@ -44,8 +44,13 @@ def _resolve_provider(agent_name: str, provider: Optional[str]) -> str:
 @click.option(
     "--provider", default=None, help="Provider to use (default: profile provider or system default)"
 )
+@click.option(
+    "--working-directory",
+    default=None,
+    help="Working directory to launch the agent in (default: current directory)",
+)
 @click.option("--yolo", is_flag=True, help="Skip workspace trust confirmation")
-def launch(agents, session_name, headless, provider, yolo):
+def launch(agents, session_name, headless, provider, working_directory, yolo):
     """Launch cao session with specified agent profile."""
     try:
         resolved_provider = _resolve_provider(agents, provider)
@@ -55,7 +60,11 @@ def launch(agents, session_name, headless, provider, yolo):
             raise click.ClickException(
                 f"Invalid provider '{resolved_provider}'. Available providers: {', '.join(PROVIDERS)}"
             )
-        working_directory = os.path.realpath(os.getcwd())
+        resolved_working_directory = os.path.realpath(working_directory or os.getcwd())
+        if not os.path.isdir(resolved_working_directory):
+            raise click.ClickException(
+                f"Working directory does not exist or is not a directory: {resolved_working_directory}"
+            )
 
         # Ask for workspace trust confirmation for providers that need it.
         # Note: CAO itself does not access the workspace — it is the underlying
@@ -65,7 +74,7 @@ def launch(agents, session_name, headless, provider, yolo):
             click.echo(
                 f"The underlying provider ({resolved_provider}) will be trusted to perform all actions "
                 f"(read, write, and execute) in:\n"
-                f"  {working_directory}\n\n"
+                f"  {resolved_working_directory}\n\n"
                 f"To skip this confirmation, use: cao launch --yolo\n"
             )
             if not click.confirm("Do you trust all the actions in this folder?", default=True):
@@ -76,7 +85,7 @@ def launch(agents, session_name, headless, provider, yolo):
         params = {
             "provider": resolved_provider,
             "agent_profile": agents,
-            "working_directory": working_directory,
+            "working_directory": resolved_working_directory,
         }
         if session_name:
             params["session_name"] = session_name

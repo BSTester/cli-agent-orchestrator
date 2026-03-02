@@ -41,6 +41,58 @@ def test_launch_includes_working_directory():
         assert params["working_directory"] == os.path.realpath(os.getcwd())
 
 
+def test_launch_uses_explicit_working_directory(tmp_path):
+    """Test that launch uses explicitly provided --working-directory."""
+    runner = CliRunner()
+
+    with (
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.subprocess.run"),
+    ):
+        mock_post.return_value.json.return_value = {
+            "session_name": "test-session",
+            "name": "test-terminal",
+        }
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = runner.invoke(
+            launch,
+            [
+                "--agents",
+                "test-agent",
+                "--working-directory",
+                str(tmp_path),
+                "--headless",
+                "--yolo",
+            ],
+        )
+
+        assert result.exit_code == 0
+        params = mock_post.call_args.kwargs["params"]
+        assert params["working_directory"] == os.path.realpath(str(tmp_path))
+
+
+def test_launch_invalid_working_directory_fails():
+    """Test launch fails when --working-directory does not exist."""
+    runner = CliRunner()
+
+    missing_path = "/tmp/path-that-does-not-exist-for-cao-launch"
+    result = runner.invoke(
+        launch,
+        [
+            "--agents",
+            "test-agent",
+            "--working-directory",
+            missing_path,
+            "--headless",
+            "--yolo",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Working directory does not exist or is not a directory" in result.output
+
+
 def test_launch_invalid_provider():
     """Test launch with invalid provider."""
     runner = CliRunner()

@@ -1,65 +1,58 @@
-# Copilot Instructions for `cli-agent-orchestrator`
+<!-- BMAD:START -->
+# BMAD Method — Project Instructions
 
-## Build, test, and lint commands
+## Project Configuration
 
-Use `uv` for all local development commands (matches CI/workflows).
+- **Project**: cli-agent-orchestrator
+- **User**: Penn
+- **Communication Language**: 中文
+- **Document Output Language**: 中文
+- **User Skill Level**: intermediate
+- **Output Folder**: {project-root}/_bmad-output
+- **Planning Artifacts**: {project-root}/_bmad-output/planning-artifacts
+- **Implementation Artifacts**: {project-root}/_bmad-output/implementation-artifacts
+- **Project Knowledge**: {project-root}/docs
 
-```bash
-# Install dependencies (dev + extras used in CI)
-uv sync --all-extras --dev
+## BMAD Runtime Structure
 
-# Run unit-style suite used by CI (no e2e, no q_cli integration)
-uv run pytest test/ --ignore=test/providers/test_q_cli_integration.py --ignore=test/e2e -m "not e2e" -v
+- **Agent definitions**: `_bmad/bmm/agents/` (BMM module) and `_bmad/core/agents/` (core)
+- **Workflow definitions**: `_bmad/bmm/workflows/` (organized by phase)
+- **Core tasks**: `_bmad/core/tasks/` (help, editorial review, indexing, sharding, adversarial review)
+- **Core workflows**: `_bmad/core/workflows/` (brainstorming, party-mode, advanced-elicitation)
+- **Workflow engine**: `_bmad/core/tasks/workflow.xml` (executes YAML-based workflows)
+- **Module configuration**: `_bmad/bmm/config.yaml`
+- **Core configuration**: `_bmad/core/config.yaml`
+- **Agent manifest**: `_bmad/_config/agent-manifest.csv`
+- **Workflow manifest**: `_bmad/_config/workflow-manifest.csv`
+- **Help manifest**: `_bmad/_config/bmad-help.csv`
+- **Agent memory**: `_bmad/_memory/`
 
-# Run all default tests (pyproject addopts applies coverage and excludes e2e)
-uv run pytest -v
+## Key Conventions
 
-# Run a single test file
-uv run pytest test/providers/test_codex_provider_unit.py -v
+- Always load `_bmad/bmm/config.yaml` before any agent activation or workflow execution
+- Store all config fields as session variables: `{user_name}`, `{communication_language}`, `{output_folder}`, `{planning_artifacts}`, `{implementation_artifacts}`, `{project_knowledge}`
+- MD-based workflows execute directly — load and follow the `.md` file
+- YAML-based workflows require the workflow engine — load `workflow.xml` first, then pass the `.yaml` config
+- Follow step-based workflow execution: load steps JIT, never multiple at once
+- Save outputs after EACH step when using the workflow engine
+- The `{project-root}` variable resolves to the workspace root at runtime
 
-# Run a single test class / test case
-uv run pytest test/providers/test_codex_provider_unit.py::TestCodexBuildCommand -v
-uv run pytest test/providers/test_codex_provider_unit.py::TestCodexBuildCommand::test_build_command_no_profile -v
+## Available Agents
 
-# Run e2e tests explicitly (requires running cao-server and real CLI auth)
-uv run pytest -m e2e test/e2e/ -v
+| Agent | Persona | Title | Capabilities |
+|---|---|---|---|
+| bmad-master | BMad Master | BMad Master Executor, Knowledge Custodian, and Workflow Orchestrator | runtime resource management, workflow orchestration, task execution, knowledge custodian |
+| analyst | Mary | Business Analyst | market research, competitive analysis, requirements elicitation, domain expertise |
+| architect | Winston | Architect | distributed systems, cloud infrastructure, API design, scalable patterns |
+| dev | Amelia | Developer Agent | story execution, test-driven development, code implementation |
+| pm | John | Product Manager | PRD creation, requirements discovery, stakeholder alignment, user interviews |
+| qa | Quinn | QA Engineer | test automation, API testing, E2E testing, coverage analysis |
+| quick-flow-solo-dev | Barry | Quick Flow Solo Dev | rapid spec creation, lean implementation, minimum ceremony |
+| sm | Bob | Scrum Master | sprint planning, story preparation, agile ceremonies, backlog management |
+| tech-writer | Paige | Technical Writer | agent capabilities |
+| ux-designer | Sally | UX Designer | user research, interaction design, UI patterns, experience strategy |
 
-# Lint/type-check commands
-uv run black --check src/ test/
-uv run isort --check-only src/ test/
-uv run mypy src/
-```
+## Slash Commands
 
-## High-level architecture
-
-- **Three entrypoints**:
-  - `cao` (Click CLI): user-facing commands (`launch`, `shutdown`, `install`, `init`, `flow`)
-  - `cao-server` (FastAPI on `localhost:9889`): session/terminal/inbox/flow HTTP API
-  - `cao-mcp-server` (FastMCP): MCP tools `handoff`, `assign`, `send_message` that call the HTTP API
-- **Core runtime flow**:
-  1. Terminal/session operations go through `services/terminal_service.py`
-  2. Metadata persists in SQLite via `clients/database.py`
-  3. Real terminal interaction happens via tmux client (`clients/tmux.py`)
-  4. Provider-specific behavior is delegated through `providers/manager.py` + provider implementations (`q_cli`, `kiro_cli`, `claude_code`, `codex`)
-- **Async coordination model**:
-  - `handoff`: synchronous create/send/wait/read-output/exit flow
-  - `assign`: fire-and-forget worker creation
-  - `send_message`: queued inbox delivery between terminals
-- **Inbox delivery path**:
-  - Messages are persisted first (`inbox` table), then delivered when receiver becomes idle.
-  - `watchdog` polls terminal log files (`tmux pipe-pane` output) and triggers delivery checks.
-- **Flow scheduler**:
-  - `flow_service` parses markdown frontmatter, evaluates cron via APScheduler, optionally executes scripts, renders prompt templates, then launches new sessions.
-
-## Key repository conventions
-
-- **Provider strings must match `ProviderType` enum values**: `q_cli`, `kiro_cli`, `claude_code`, `codex`.
-- **Default provider is `kiro_cli`** unless explicitly overridden.
-- **CAO tmux session naming**: managed sessions use `cao-` prefix (`SESSION_PREFIX`).
-- **Terminal creation order matters**: create tmux session/window -> persist DB metadata -> initialize provider -> start `pipe-pane` logging.
-- **Input delivery convention**: terminal input uses bracketed paste; provider decides Enter behavior via `paste_enter_count` (default 2).
-- **Ready-state convention**: code frequently treats both `IDLE` and `COMPLETED` as acceptable pre-input ready states for providers.
-- **Flow script contract**: script output must be JSON with both `execute` (bool) and `output` (object) keys.
-- **Pytest defaults in `pyproject.toml`**:
-  - `addopts = "--cov=src --cov-report=term-missing -m 'not e2e'"`
-  - e2e tests are excluded unless explicitly selected.
+Type `/bmad-` in Copilot Chat to see all available BMAD workflows and agent activators. Agents are also available in the agents dropdown.
+<!-- BMAD:END -->

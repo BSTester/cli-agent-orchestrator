@@ -578,6 +578,94 @@ def test_console_create_main_team_with_alias(client: TestClient) -> None:
         mock_set_team_alias.assert_called_once_with("leader-main-1", "产品技术团队")
 
 
+def test_console_create_main_team_with_new_working_directory(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._resolve_home_level1_directory", return_value="/home/test/team-alpha") as mock_resolve_workdir,
+        patch("cli_agent_orchestrator.control_panel.main._register_team") as mock_register_team,
+        patch("cli_agent_orchestrator.control_panel.main._set_team_working_directory") as mock_set_team_workdir,
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+    ):
+        created = MagicMock()
+        created.raise_for_status.return_value = None
+        created.json.return_value = {
+            "id": "leader-main-2",
+            "agent_profile": "code_supervisor",
+            "session_name": "cao-main-2",
+        }
+        mock_request.return_value = created
+
+        response = client.post(
+            "/console/organization/create",
+            json={
+                "role_type": "main",
+                "agent_profile": "code_supervisor",
+                "team_workdir_mode": "new",
+                "team_workdir_name": "team-alpha",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        mock_resolve_workdir.assert_called_once_with(
+            "team-alpha",
+            must_exist=True,
+            create_if_missing=True,
+        )
+        mock_register_team.assert_called_once_with("leader-main-2")
+        mock_set_team_workdir.assert_called_once_with("leader-main-2", "/home/test/team-alpha")
+
+        create_call = mock_request.call_args
+        assert create_call.kwargs["params"]["working_directory"] == "/home/test/team-alpha"
+
+
+def test_console_create_org_worker_inherits_team_working_directory(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_team_working_directories", return_value={"leader1": "/home/test/team-alpha"}),
+        patch("cli_agent_orchestrator.control_panel.main._register_team") as mock_register_team,
+        patch("cli_agent_orchestrator.control_panel.main._set_worker_link") as mock_set_worker_link,
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+    ):
+        leader = MagicMock()
+        leader.raise_for_status.return_value = None
+        leader.json.return_value = {
+            "id": "leader1",
+            "agent_profile": "code_supervisor",
+            "session_name": "cao-team1",
+            "working_directory": "/home/test/team-alpha",
+        }
+
+        created = MagicMock()
+        created.raise_for_status.return_value = None
+        created.json.return_value = {
+            "id": "worker9",
+            "agent_profile": "developer",
+            "session_name": "cao-team1",
+        }
+
+        mock_request.side_effect = [leader, created]
+
+        response = client.post(
+            "/console/organization/create",
+            json={
+                "role_type": "worker",
+                "agent_profile": "developer",
+                "leader_id": "leader1",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        mock_register_team.assert_called_once_with("leader1")
+        mock_set_worker_link.assert_called_once_with("worker9", "leader1")
+
+        create_call = mock_request.call_args_list[1]
+        assert create_call.kwargs["params"]["working_directory"] == "/home/test/team-alpha"
+
+
 def test_console_create_org_worker_with_agent_alias(client: TestClient) -> None:
     login(client)
 
@@ -621,6 +709,23 @@ def test_console_create_org_worker_with_agent_alias(client: TestClient) -> None:
         mock_register_team.assert_called_once_with("leader1")
         mock_set_worker_link.assert_called_once_with("worker1", "leader1")
         mock_set_agent_alias.assert_called_once_with("worker1", "后端工程师-A")
+
+
+def test_console_home_workdirs_lists_home_level1_directories(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    (tmp_path / "team-a").mkdir()
+    (tmp_path / "team-b").mkdir()
+    (tmp_path / "not-a-dir.txt").write_text("x", encoding="utf-8")
+
+    with patch("cli_agent_orchestrator.control_panel.main._home_directory", return_value=tmp_path.resolve()):
+        response = client.get("/console/workdirs/home")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["home_directory"] == str(tmp_path.resolve())
+    names = [item["name"] for item in body["directories"]]
+    assert names == ["team-a", "team-b"]
 
 
 def test_console_create_org_agent_propagates_upstream_http_error(client: TestClient) -> None:

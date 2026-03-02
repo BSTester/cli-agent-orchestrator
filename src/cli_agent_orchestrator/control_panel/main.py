@@ -122,6 +122,15 @@ def _init_organization_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS org_team_workdirs (
+                leader_id TEXT PRIMARY KEY,
+                working_directory TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
 
@@ -244,6 +253,100 @@ def _list_agent_aliases() -> Dict[str, str]:
     with sqlite3.connect(str(DATABASE_FILE)) as conn:
         rows = conn.execute("SELECT agent_id, alias FROM org_agent_aliases").fetchall()
     return {str(agent_id): str(alias) for agent_id, alias in rows if agent_id and alias}
+
+
+def _set_team_working_directory(leader_id: str, working_directory: str) -> None:
+    normalized_working_directory = working_directory.strip()
+    if not normalized_working_directory:
+        return
+
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute(
+            """
+            INSERT INTO org_team_workdirs (leader_id, working_directory, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(leader_id) DO UPDATE SET
+                working_directory=excluded.working_directory,
+                updated_at=excluded.updated_at
+            """,
+            (
+                leader_id,
+                normalized_working_directory,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def _list_team_working_directories() -> Dict[str, str]:
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        rows = conn.execute("SELECT leader_id, working_directory FROM org_team_workdirs").fetchall()
+    return {
+        str(leader_id): str(working_directory)
+        for leader_id, working_directory in rows
+        if leader_id and working_directory
+    }
+
+
+def _home_directory() -> Path:
+    return Path.home().resolve()
+
+
+def _resolve_home_level1_directory(
+    dir_name: str,
+    *,
+    must_exist: bool,
+    create_if_missing: bool,
+) -> str:
+    normalized_name = (dir_name or "").strip()
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="team_workdir_name cannot be empty")
+
+    if normalized_name in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid team_workdir_name")
+
+    if Path(normalized_name).name != normalized_name:
+        raise HTTPException(
+            status_code=400,
+            detail="team_workdir_name must be a single directory name under home",
+        )
+
+    home_dir = _home_directory()
+    candidate = (home_dir / normalized_name).resolve()
+
+    try:
+        relative_parts = candidate.relative_to(home_dir).parts
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Directory must be under home directory")
+
+    if len(relative_parts) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="team_workdir_name must target a first-level directory under home",
+        )
+
+    if create_if_missing:
+        candidate.mkdir(parents=False, exist_ok=True)
+
+    if must_exist and not candidate.exists():
+        raise HTTPException(status_code=400, detail=f"Directory does not exist under home: {normalized_name}")
+
+    if candidate.exists() and not candidate.is_dir():
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {normalized_name}")
+
+    return str(candidate)
+
+
+def _list_home_first_level_directories() -> List[Dict[str, str]]:
+    home_dir = _home_directory()
+    items: List[Dict[str, str]] = []
+
+    for child in sorted(home_dir.iterdir(), key=lambda item: item.name.lower()):
+        if not child.is_dir():
+            continue
+        items.append({"name": child.name, "path": str(child.resolve())})
+
+    return items
 
 
 def _infer_worker_leader_links_from_inbox(
@@ -550,6 +653,8 @@ class OrgCreateRequest(BaseModel):
     provider: Optional[str] = None
     leader_id: Optional[str] = None
     working_directory: Optional[str] = None
+    team_workdir_mode: Optional[Literal["existing", "new"]] = None
+    team_workdir_name: Optional[str] = None
     team_alias: Optional[str] = None
     agent_alias: Optional[str] = None
 
@@ -889,6 +994,7 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
     links_from_db = _list_worker_links()
     team_aliases = _list_team_aliases()
+    team_workdirs = _list_team_working_directories()
     agent_aliases = _list_agent_aliases()
 
     for terminal in terminals:
@@ -974,6 +1080,7 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
             {
                 "leader": leader,
                 "team_alias": team_aliases.get(leader_id),
+                "team_working_directory": team_workdirs.get(leader_id),
                 "members": sorted(
                     members_by_leader.get(leader_id, []),
                     key=lambda item: str(item.get("last_active", "")),
@@ -1125,6 +1232,16 @@ async def console_organization() -> Dict[str, Any]:
         }
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch organization: {exc}")
+
+
+@app.get("/console/workdirs/home")
+async def console_home_workdirs() -> Dict[str, Any]:
+    home_dir = await asyncio.to_thread(_home_directory)
+    directories = await asyncio.to_thread(_list_home_first_level_directories)
+    return {
+        "home_directory": str(home_dir),
+        "directories": directories,
+    }
 
 
 @app.get("/console/tasks")
@@ -1420,8 +1537,45 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
     params: Dict[str, str] = {"agent_profile": payload.agent_profile}
     if payload.provider:
         params["provider"] = payload.provider
-    if payload.working_directory:
-        params["working_directory"] = payload.working_directory
+
+    explicit_working_directory = (payload.working_directory or "").strip()
+    if payload.team_workdir_mode and payload.role_type != "main":
+        raise HTTPException(status_code=400, detail="team_workdir_mode is only supported for main role")
+
+    if payload.team_workdir_name and payload.role_type != "main":
+        raise HTTPException(status_code=400, detail="team_workdir_name is only supported for main role")
+
+    main_team_working_directory: Optional[str] = None
+    if payload.role_type == "main":
+        mode = payload.team_workdir_mode
+        dir_name = payload.team_workdir_name
+
+        if mode and not dir_name:
+            raise HTTPException(status_code=400, detail="team_workdir_name is required when team_workdir_mode is set")
+        if dir_name and not mode:
+            raise HTTPException(status_code=400, detail="team_workdir_mode is required when team_workdir_name is set")
+
+        if mode == "existing":
+            main_team_working_directory = await asyncio.to_thread(
+                _resolve_home_level1_directory,
+                dir_name or "",
+                must_exist=True,
+                create_if_missing=False,
+            )
+        elif mode == "new":
+            main_team_working_directory = await asyncio.to_thread(
+                _resolve_home_level1_directory,
+                dir_name or "",
+                must_exist=True,
+                create_if_missing=True,
+            )
+        elif explicit_working_directory:
+            main_team_working_directory = explicit_working_directory
+
+        if main_team_working_directory:
+            params["working_directory"] = main_team_working_directory
+    elif explicit_working_directory:
+        params["working_directory"] = explicit_working_directory
 
     try:
         if payload.role_type == "main":
@@ -1430,6 +1584,12 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
             if isinstance(created_agent, dict) and isinstance(created_agent.get("id"), str):
                 leader_id = created_agent["id"]
                 await asyncio.to_thread(_register_team, leader_id)
+                if main_team_working_directory:
+                    await asyncio.to_thread(
+                        _set_team_working_directory,
+                        leader_id,
+                        main_team_working_directory,
+                    )
                 if payload.team_alias:
                     await asyncio.to_thread(_set_team_alias, leader_id, payload.team_alias)
                 if payload.agent_alias:
@@ -1451,6 +1611,13 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
             session_name = leader_terminal.get("session_name")
             if not session_name:
                 raise HTTPException(status_code=400, detail="leader has no session")
+
+            team_workdirs = await asyncio.to_thread(_list_team_working_directories)
+            inherited_working_directory = team_workdirs.get(payload.leader_id)
+            if not inherited_working_directory:
+                inherited_working_directory = str(leader_terminal.get("working_directory", "") or "").strip()
+            if inherited_working_directory:
+                params["working_directory"] = inherited_working_directory
 
             created_response = await asyncio.to_thread(
                 _request_cao,

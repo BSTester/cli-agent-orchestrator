@@ -159,6 +159,7 @@ export interface ConsoleOverview {
 export interface ConsoleLeaderGroup {
   leader: ConsoleAgent;
   team_alias?: string;
+  team_working_directory?: string;
   members: ConsoleAgent[];
 }
 
@@ -169,6 +170,16 @@ export interface ConsoleOrganization {
   workers: ConsoleAgent[];
   leader_groups: ConsoleLeaderGroup[];
   unassigned_workers: ConsoleAgent[];
+}
+
+export interface ConsoleHomeDirectoryItem {
+  name: string;
+  path: string;
+}
+
+export interface ConsoleHomeWorkdirsResponse {
+  home_directory: string;
+  directories: ConsoleHomeDirectoryItem[];
 }
 
 export interface ConsoleAgentProfilesResponse {
