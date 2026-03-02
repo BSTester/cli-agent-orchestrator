@@ -23,8 +23,10 @@ import {
 } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
 import {
+  AgentProfileFileResponse,
   caoRequest,
   ConsoleAgent,
+  ConsoleAgentProfileFilesResponse,
   ConsoleAgentProfilesResponse,
   ConsoleHomeWorkdirsResponse,
   CreateAgentProfileRequest,
@@ -45,6 +47,29 @@ const providers = [
   "codebuddy",
   "copilot",
 ];
+
+const defaultProfileTemplate = `---
+name: data_analyst
+description: Analyze data and summarize key business insights.
+provider: codex
+mcpServers:
+  cao-mcp-server:
+    type: stdio
+    command: uvx
+    args:
+      - "--from"
+      - "git+https://github.com/BSTester/cli-agent-orchestrator.git@main"
+      - "cao-mcp-server"
+---
+
+# DATA ANALYST
+
+你是一名数据分析岗位 Agent，请按以下原则工作：
+
+1. 先明确目标、口径与数据范围。
+2. 输出关键指标、趋势和异常点。
+3. 给出可执行建议，并标注假设与风险。
+`;
 
 export default function OrganizationPage() {
   const [data, setData] = useState<ConsoleOrganization | null>(null);
@@ -67,9 +92,11 @@ export default function OrganizationPage() {
   const [creatingWorker, setCreatingWorker] = useState(false);
 
   const [newAgentName, setNewAgentName] = useState("");
-  const [newAgentDescription, setNewAgentDescription] = useState("");
+  const [profileFiles, setProfileFiles] = useState<ConsoleAgentProfileFilesResponse["files"]>([]);
+  const [selectedProfileFileName, setSelectedProfileFileName] = useState("");
   const [newAgentProvider, setNewAgentProvider] = useState("");
-  const [newAgentPrompt, setNewAgentPrompt] = useState("");
+  const [newAgentPrompt, setNewAgentPrompt] = useState(defaultProfileTemplate);
+  const [loadingProfileFile, setLoadingProfileFile] = useState(false);
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [offboardTarget, setOffboardTarget] = useState<{ agentId: string; sessionName: string; terminalId: string } | null>(null);
   const [disbandTarget, setDisbandTarget] = useState<{
@@ -129,15 +156,21 @@ export default function OrganizationPage() {
     ).sort();
     setProfileOptions(profiles);
 
-    const preferredProfile = profiles.includes("developer")
+    const preferredMainProfile = profiles.includes("code_supervisor")
+      ? "code_supervisor"
+      : profiles.includes("developer")
+        ? "developer"
+        : profiles[0] || "";
+
+    const preferredWorkerProfile = profiles.includes("developer")
       ? "developer"
       : profiles[0] || "";
 
     if (!mainProfile || !profiles.includes(mainProfile)) {
-      setMainProfile(preferredProfile);
+      setMainProfile(preferredMainProfile);
     }
     if (!workerProfile || !profiles.includes(workerProfile)) {
-      setWorkerProfile(preferredProfile);
+      setWorkerProfile(preferredWorkerProfile);
     }
   }, [mainProfile, workerProfile]);
 
@@ -152,6 +185,43 @@ export default function OrganizationPage() {
     const names = (result.data.directories || []).map((item) => item.name).filter(Boolean);
     setHomeSubdirs(names);
   }, []);
+
+  const loadProfileFiles = useCallback(async () => {
+    const result = await caoRequest<ConsoleAgentProfileFilesResponse>(
+      "GET",
+      "/console/agent-profiles/files"
+    );
+    if (!result.ok) {
+      setError("获取岗位文件列表失败");
+      return;
+    }
+    setProfileFiles(result.data.files || []);
+  }, []);
+
+  async function onSelectProfileFile(fileName: string) {
+    setSelectedProfileFileName(fileName);
+    if (!fileName) {
+      setNewAgentName("");
+      setNewAgentPrompt(defaultProfileTemplate);
+      return;
+    }
+
+    setLoadingProfileFile(true);
+    const result = await caoRequest<AgentProfileFileResponse>(
+      "GET",
+      `/console/agent-profiles/files/${encodeURIComponent(fileName)}`
+    );
+
+    if (!result.ok) {
+      setError("读取岗位文件失败");
+      setLoadingProfileFile(false);
+      return;
+    }
+
+    setNewAgentName(result.data.profile || fileName.replace(/\.md$/i, ""));
+    setNewAgentPrompt(result.data.content || "");
+    setLoadingProfileFile(false);
+  }
 
   async function shutdownSessionByTerminal(agentId: string, terminalId?: string, sessionName?: string) {
     if (!terminalId) {
@@ -249,6 +319,10 @@ export default function OrganizationPage() {
 
   async function onboardNewEmployee(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!newAgentName.trim()) {
+      setError("岗位名称不能为空");
+      return;
+    }
     if (!newAgentPrompt.trim()) {
       setError("系统提示词不能为空");
       return;
@@ -256,13 +330,45 @@ export default function OrganizationPage() {
     setCreatingProfile(true);
     setError("");
 
+    const isEditing = Boolean(selectedProfileFileName.trim());
     const body: CreateAgentProfileRequest = {
       name: newAgentName.trim(),
-      description: newAgentDescription.trim(),
-      system_prompt: newAgentPrompt.trim(),
+      content: newAgentPrompt.trim(),
     };
     if (newAgentProvider) {
       body.provider = newAgentProvider;
+    }
+
+    if (isEditing) {
+      const targetProfile = selectedProfileFileName.replace(/\.md$/i, "");
+      const result = await caoRequest(
+        "PUT",
+        `/console/agent-profiles/${encodeURIComponent(targetProfile)}`,
+        { body: { content: newAgentPrompt.trim() } }
+      );
+      if (!result.ok) {
+        const detail = extractErrorDetail(result.data);
+        setError(detail ? `更新岗位文件失败：${detail}` : "更新岗位文件失败");
+        setCreatingProfile(false);
+        return;
+      }
+
+      const reinstallResult = await caoRequest<InstallAgentProfileResponse>(
+        "POST",
+        `/console/agent-profiles/${encodeURIComponent(targetProfile)}/install`
+      );
+      if (!reinstallResult.ok || !reinstallResult.data.ok) {
+        const detail = extractErrorDetail(reinstallResult.data);
+        setError(detail ? `岗位文件已更新，但重装失败：${detail}` : "岗位文件已更新，但重装失败，请检查后端日志");
+        setCreatingProfile(false);
+        return;
+      }
+
+      setCreatingProfile(false);
+      await loadProfileFiles();
+      await loadProfileOptions();
+      setNotice("岗位文件已更新并重装完成");
+      return;
     }
 
     const result = await caoRequest<CreateAgentProfileResponse>(
@@ -272,7 +378,8 @@ export default function OrganizationPage() {
     );
 
     if (!result.ok) {
-      setError("创建自定义 Agent 类型失败，请检查名称是否重复或格式是否正确");
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `创建岗位失败：${detail}` : "创建岗位失败，请检查名称是否重复或格式是否正确");
       setCreatingProfile(false);
       return;
     }
@@ -283,17 +390,20 @@ export default function OrganizationPage() {
       `/console/agent-profiles/${profileName}/install`
     );
     if (!installResult.ok || !installResult.data.ok) {
-      setError("岗位档案已保存，但安装失败，请检查后端日志");
+      const detail = extractErrorDetail(installResult.data);
+      setError(detail ? `岗位文件已保存，但安装失败：${detail}` : "岗位文件已保存，但安装失败，请检查后端日志");
       setCreatingProfile(false);
       return;
     }
 
     setNewAgentName("");
-    setNewAgentDescription("");
     setNewAgentProvider("");
-    setNewAgentPrompt("");
+    setNewAgentPrompt(defaultProfileTemplate);
+    setSelectedProfileFileName("");
     setCreatingProfile(false);
     await loadProfileOptions();
+    await loadProfileFiles();
+    setNotice("新增岗位并安装完成");
   }
 
   useEffect(() => {
@@ -302,6 +412,7 @@ export default function OrganizationPage() {
     const bootstrapTimer = setTimeout(() => {
       void loadProfileOptions();
       void loadHomeWorkdirOptions();
+      void loadProfileFiles();
     }, 0);
     const timer = setInterval(() => {
       void loadOrganization();
@@ -310,7 +421,7 @@ export default function OrganizationPage() {
       clearInterval(timer);
       clearTimeout(bootstrapTimer);
     };
-  }, [loadOrganization, loadProfileOptions, loadHomeWorkdirOptions]);
+  }, [loadOrganization, loadProfileOptions, loadHomeWorkdirOptions, loadProfileFiles]);
 
   async function createMainAgent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -412,7 +523,7 @@ export default function OrganizationPage() {
       <PageShell>
         <PageIntro
           title="组织管理"
-          description="负责团队编制操作：新建团队、保存岗位类型、加入团队。"
+          description="负责团队编制操作：新建团队、新增/编辑岗位、加入团队。"
         />
 
         {error && <ErrorBanner text={error} />}
@@ -442,20 +553,26 @@ export default function OrganizationPage() {
           }}
         >
           <SectionCard>
-            <SectionTitle title="新增岗位类型" />
+            <SectionTitle title="新增/编辑岗位" />
             <form onSubmit={onboardNewEmployee}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <SelectInput
+                value={selectedProfileFileName}
+                onChange={(e) => void onSelectProfileFile(e.target.value)}
+              >
+                <option value="">新增岗位（新建文件）</option>
+                {profileFiles.map((fileItem) => (
+                  <option key={fileItem.file_name} value={fileItem.file_name}>
+                    编辑：{fileItem.file_name}
+                  </option>
+                ))}
+              </SelectInput>
               <TextInput
                 value={newAgentName}
                 onChange={(e) => setNewAgentName(e.target.value)}
                 required
-                placeholder="name，例如 data_analyst"
-              />
-              <TextInput
-                value={newAgentDescription}
-                onChange={(e) => setNewAgentDescription(e.target.value)}
-                required
-                placeholder="description"
+                disabled={Boolean(selectedProfileFileName)}
+                placeholder="岗位名称，例如 data_analyst"
               />
             </div>
             <div style={{ marginBottom: 10 }}>
@@ -478,15 +595,19 @@ export default function OrganizationPage() {
               showToolbar
               enableFormat
               required
-              placeholder="系统提示词（markdown 内容）"
+              placeholder="岗位配置 markdown 内容"
               style={{ width: "100%", minHeight: 240, marginBottom: 10 }}
             />
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <PrimaryButton
                 type="submit"
-                disabled={creatingProfile}
+                disabled={creatingProfile || loadingProfileFile}
               >
-                {creatingProfile ? "保存中..." : "保存岗位并完成安装"}
+                {creatingProfile
+                  ? "保存中..."
+                  : selectedProfileFileName
+                    ? "保存岗位文件"
+                    : "保存岗位并完成安装"}
               </PrimaryButton>
             </div>
             </form>
@@ -564,7 +685,6 @@ export default function OrganizationPage() {
                   onChange={(e) => setWorkerProfile(e.target.value)}
                   required
                 >
-                  <option value="">岗位类型</option>
                   {workerProfileOptions.map((profileName) => (
                     <option key={`worker-${profileName}`} value={profileName}>
                       {profileName}

@@ -111,8 +111,11 @@ export default function AgentsPage() {
         convertEol: true,
         cursorBlink: true,
         cursorStyle: "block",
-        fontFamily: "var(--mono)",
+        fontFamily: "var(--terminal-mono)",
         fontSize: 13,
+        lineHeight: 1,
+        letterSpacing: 0,
+        rescaleOverlappingGlyphs: true,
         theme: {
           background: "#0d1117",
           foreground: "#d1d5db",
@@ -370,21 +373,21 @@ export default function AgentsPage() {
       <ConsoleNav />
       <PageShell>
         <PageIntro
-          title="团队管理"
-          description="以团队为单位查看在线情况，点击成员可打开实时控制台并直接执行终端命令。"
+          title="会话管理"
+          description="以会话为单位查看在线情况，点击成员可打开实时控制台并直接执行终端命令。"
         />
 
         {error && <ErrorBanner text={error} />}
 
         <SectionCard style={{ padding: 10 }}>
           <CardGrid minWidth={180} gap={10}>
-            <StatCard label="团队总数" value={organization?.leaders_total ?? 0} />
+            <StatCard label="会话总数" value={organization?.leaders_total ?? 0} />
             <StatCard label="在岗员工总数" value={agentsCount} />
           </CardGrid>
         </SectionCard>
 
         {leaderGroups.length === 0 ? (
-          <EmptyState text="暂无团队数据" />
+          <EmptyState text="暂无会话数据" />
         ) : (
           leaderGroups.map((group) => {
             const membersByProfile = group.members.reduce<Record<string, ConsoleAgent[]>>(
@@ -406,7 +409,7 @@ export default function AgentsPage() {
             return (
               <SectionCard key={group.leader.id}>
                 <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>
-                  团队：{group.team_alias || group.leader.session_name || group.leader.id}
+                  会话：{group.team_alias || group.leader.session_name || group.leader.id}
                 </div>
 
                 <div
@@ -450,7 +453,7 @@ export default function AgentsPage() {
                 </div>
 
                 {memberProfileGroups.length === 0 ? (
-                  <EmptyState text="暂无团队成员" />
+                  <EmptyState text="暂无会话成员" />
                 ) : (
                   <div style={{ display: "grid", gap: 10 }}>
                     {memberProfileGroups.map(([profileName, members]) => (

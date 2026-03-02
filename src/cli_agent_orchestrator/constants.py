@@ -70,6 +70,9 @@ RETENTION_DAYS = 14
 # Directory for agent context files (shared state between sessions)
 AGENT_CONTEXT_DIR = CAO_HOME_DIR / "agent-context"
 
+# Directory for flow/task definition files managed by control panel
+AGENT_FLOW_DIR = CAO_HOME_DIR / "agent-flow"
+
 # Local agent store for custom agent profiles
 LOCAL_AGENT_STORE_DIR = CAO_HOME_DIR / "agent-store"
 

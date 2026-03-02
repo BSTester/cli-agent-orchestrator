@@ -17,7 +17,8 @@
   --radius: 8px;
   --sidebar: 220px;
   --font: system-ui, -apple-system, sans-serif;
-  --mono: "Cascadia Code", "Fira Code", "Consolas", monospace;
+  --mono: "Sarasa Mono SC", "Noto Sans Mono CJK SC", "Noto Sans Mono CJK TC", "Cascadia Code", "Fira Code", "Consolas", monospace;
+  --terminal-mono: "DejaVu Sans Mono", "Cascadia Mono", "JetBrains Mono", "Sarasa Mono SC", "Noto Sans Mono CJK SC", "Source Han Mono SC", "WenQuanYi Zen Hei Mono", "SF Mono", "Consolas", "Liberation Mono", monospace;
 }
 
 html, body {
@@ -36,4 +37,9 @@ html, body {
   outline: none !important;
   box-shadow: none !important;
   text-shadow: none !important;
+}
+
+.xterm .xterm-rows {
+  font-variant-ligatures: none !important;
+  font-feature-settings: "liga" 0, "calt" 0 !important;
 }

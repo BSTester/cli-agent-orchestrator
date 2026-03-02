@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import requests
+import frontmatter
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,10 +26,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from cli_agent_orchestrator.constants import (
+    AGENT_CONTEXT_DIR,
+    AGENT_FLOW_DIR,
     API_BASE_URL,
     DATABASE_FILE,
     DB_DIR,
-    LOCAL_AGENT_STORE_DIR,
 )
 from cli_agent_orchestrator.clients.tmux import tmux_client
 
@@ -557,8 +559,8 @@ def _list_available_agent_profiles() -> List[str]:
         logger.warning("Failed to list built-in agent profiles: %s", exc)
 
     try:
-        if LOCAL_AGENT_STORE_DIR.exists():
-            for child in LOCAL_AGENT_STORE_DIR.iterdir():
+        if AGENT_CONTEXT_DIR.exists():
+            for child in AGENT_CONTEXT_DIR.iterdir():
                 if child.is_file() and child.suffix == ".md":
                     names.add(child.stem)
     except Exception as exc:
@@ -580,8 +582,8 @@ def _create_local_agent_profile(
             detail="Invalid profile name. Use letters, numbers, underscore, or hyphen.",
         )
 
-    LOCAL_AGENT_STORE_DIR.mkdir(parents=True, exist_ok=True)
-    profile_path = LOCAL_AGENT_STORE_DIR / f"{normalized_name}.md"
+    AGENT_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
+    profile_path = AGENT_CONTEXT_DIR / f"{normalized_name}.md"
 
     if profile_path.exists():
         raise HTTPException(status_code=409, detail="Agent profile already exists")
@@ -601,6 +603,30 @@ def _create_local_agent_profile(
     return profile_path
 
 
+def _create_local_agent_profile_from_content(name: str, content: str) -> Path:
+    normalized_name = name.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid profile name. Use letters, numbers, underscore, or hyphen.",
+        )
+
+    normalized_content = content.strip()
+    if not normalized_content:
+        raise HTTPException(status_code=400, detail="Profile content cannot be empty")
+
+    _validate_profile_markdown_content(normalized_content)
+
+    AGENT_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
+    profile_path = AGENT_CONTEXT_DIR / f"{normalized_name}.md"
+
+    if profile_path.exists():
+        raise HTTPException(status_code=409, detail="Agent profile already exists")
+
+    profile_path.write_text(normalized_content + "\n", encoding="utf-8")
+    return profile_path
+
+
 def _validate_profile_name(profile_name: str) -> str:
     normalized_name = profile_name.strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_name):
@@ -613,7 +639,21 @@ def _validate_profile_name(profile_name: str) -> str:
 
 def _profile_file_path(profile_name: str) -> Path:
     normalized_name = _validate_profile_name(profile_name)
-    return LOCAL_AGENT_STORE_DIR / f"{normalized_name}.md"
+    return AGENT_CONTEXT_DIR / f"{normalized_name}.md"
+
+
+def _list_local_agent_profile_files() -> List[Dict[str, Any]]:
+    AGENT_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
+    files: List[Dict[str, Any]] = []
+    for file_path in sorted(AGENT_CONTEXT_DIR.glob("*.md")):
+        files.append(
+            {
+                "file_name": file_path.name,
+                "profile": file_path.stem,
+                "file_path": str(file_path),
+            }
+        )
+    return files
 
 
 _init_organization_db()
@@ -661,8 +701,9 @@ class OrgCreateRequest(BaseModel):
 
 class AgentProfileCreateRequest(BaseModel):
     name: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    system_prompt: str = Field(min_length=1)
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    content: Optional[str] = None
     provider: Optional[str] = None
 
 
@@ -674,22 +715,43 @@ class ConsoleCreateScheduledTaskRequest(BaseModel):
     flow_content: Optional[str] = None
     flow_name: Optional[str] = None
     file_name: Optional[str] = None
+    session_name: Optional[str] = None
     leader_id: Optional[str] = None
 
 
-def _console_flow_dir() -> Path:
-    flow_dir = DB_DIR / "console_flows"
+def _console_flow_root_dir() -> Path:
+    flow_dir = AGENT_FLOW_DIR
     flow_dir.mkdir(parents=True, exist_ok=True)
     return flow_dir
 
 
+def _validate_flow_session_name(session_name: str) -> str:
+    normalized_session_name = (session_name or "").strip()
+    if not normalized_session_name:
+        raise HTTPException(status_code=400, detail="session_name cannot be empty")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", normalized_session_name):
+        raise HTTPException(status_code=400, detail="Invalid session_name")
+    return normalized_session_name
+
+
+def _console_flow_dir(session_name: Optional[str] = None) -> Path:
+    flow_root_dir = _console_flow_root_dir()
+    if not session_name:
+        return flow_root_dir
+    normalized_session_name = _validate_flow_session_name(session_name)
+    session_dir = flow_root_dir / normalized_session_name
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir
+
+
 def _list_console_flow_files() -> List[Dict[str, Any]]:
-    flow_dir = _console_flow_dir()
+    flow_dir = _console_flow_root_dir()
     files: List[Dict[str, Any]] = []
-    for file_path in sorted(flow_dir.glob("*.md")):
+    for file_path in sorted(flow_dir.glob("**/*.md")):
+        relative_name = file_path.relative_to(flow_dir).as_posix()
         files.append(
             {
-                "file_name": file_path.name,
+                "file_name": relative_name,
                 "flow_name": file_path.stem,
                 "file_path": str(file_path),
             }
@@ -697,22 +759,79 @@ def _list_console_flow_files() -> List[Dict[str, Any]]:
     return files
 
 
-def _resolve_console_flow_file(file_name: str) -> Path:
-    normalized_name = file_name.strip()
+def _normalize_console_flow_relative_name(file_name: str) -> str:
+    normalized_name = (file_name or "").strip()
     if not normalized_name:
         raise HTTPException(status_code=400, detail="file_name cannot be empty")
-
-    # Only allow selecting files by basename from the managed flow directory.
-    if Path(normalized_name).name != normalized_name:
-        raise HTTPException(status_code=400, detail="Invalid file_name")
-
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+", normalized_name):
-        raise HTTPException(status_code=400, detail="Invalid file_name")
 
     if not normalized_name.endswith(".md"):
         normalized_name = f"{normalized_name}.md"
 
-    flow_path = _console_flow_dir() / normalized_name
+    relative_path = Path(normalized_name)
+    if relative_path.is_absolute():
+        raise HTTPException(status_code=400, detail="Invalid file_name")
+
+    path_parts = relative_path.parts
+    if any(part in {"", ".", ".."} for part in path_parts):
+        raise HTTPException(status_code=400, detail="Invalid file_name")
+
+    for part in path_parts:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", part):
+            raise HTTPException(status_code=400, detail="Invalid file_name")
+
+    return Path(*path_parts).as_posix()
+
+
+def _parse_markdown_frontmatter(content: str, resource_name: str) -> Dict[str, Any]:
+    try:
+        post = frontmatter.loads(content)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {resource_name} markdown: {exc}")
+
+    metadata = post.metadata if isinstance(post.metadata, dict) else {}
+    if not metadata:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {resource_name} markdown: missing YAML frontmatter",
+        )
+    return metadata
+
+
+def _validate_required_frontmatter_fields(
+    metadata: Dict[str, Any],
+    required_fields: List[str],
+    resource_name: str,
+) -> None:
+    missing_fields = [field for field in required_fields if not str(metadata.get(field, "")).strip()]
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {resource_name} markdown: missing required fields {', '.join(missing_fields)}",
+        )
+
+
+def _validate_profile_markdown_content(content: str) -> Dict[str, Any]:
+    metadata = _parse_markdown_frontmatter(content, "agent profile")
+    _validate_required_frontmatter_fields(metadata, ["name"], "agent profile")
+    return metadata
+
+
+def _validate_flow_markdown_content(content: str) -> Dict[str, Any]:
+    metadata = _parse_markdown_frontmatter(content, "flow")
+    _validate_required_frontmatter_fields(metadata, ["name", "schedule", "agent_profile"], "flow")
+    return metadata
+
+
+def _resolve_console_flow_file(file_name: str) -> Path:
+    flow_root_dir = _console_flow_root_dir().resolve()
+    normalized_name = _normalize_console_flow_relative_name(file_name)
+    flow_path = (flow_root_dir / normalized_name).resolve()
+
+    try:
+        flow_path.relative_to(flow_root_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file_name")
+
     if not flow_path.exists():
         raise HTTPException(status_code=404, detail=f"Flow file not found: {normalized_name}")
 
@@ -726,10 +845,16 @@ def _extract_flow_name_from_content(flow_content: str) -> Optional[str]:
     return None
 
 
-def _save_flow_content_to_file(flow_content: str, flow_name: Optional[str]) -> Path:
+def _save_flow_content_to_file(
+    flow_content: str,
+    flow_name: Optional[str],
+    session_name: Optional[str] = None,
+) -> Path:
     content = flow_content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Flow content cannot be empty")
+
+    _validate_flow_markdown_content(content)
 
     extracted_name = _extract_flow_name_from_content(content)
     normalized_name = (flow_name or extracted_name or "").strip()
@@ -742,7 +867,7 @@ def _save_flow_content_to_file(flow_content: str, flow_name: Optional[str]) -> P
             detail="Invalid flow name. Use letters, numbers, underscore, or hyphen.",
         )
 
-    flow_dir = _console_flow_dir()
+    flow_dir = _console_flow_dir(session_name=session_name)
     flow_path = flow_dir / f"{normalized_name}.md"
     flow_path.write_text(content + "\n", encoding="utf-8")
     return flow_path
@@ -752,6 +877,9 @@ def _overwrite_console_flow_file(flow_path: Path, flow_content: str) -> Path:
     content = flow_content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Flow content cannot be empty")
+
+    _validate_flow_markdown_content(content)
+
     flow_path.write_text(content + "\n", encoding="utf-8")
     return flow_path
 
@@ -1332,7 +1460,12 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
         if flow_content:
             flow_path = await asyncio.to_thread(_overwrite_console_flow_file, flow_path, flow_content)
     elif flow_content:
-        flow_path = await asyncio.to_thread(_save_flow_content_to_file, flow_content, payload.flow_name)
+        flow_path = await asyncio.to_thread(
+            _save_flow_content_to_file,
+            flow_content,
+            payload.flow_name,
+            payload.session_name,
+        )
     else:
         raise HTTPException(status_code=400, detail="Provide either file_name or flow_content")
 
@@ -1366,12 +1499,14 @@ async def console_list_scheduled_task_files() -> Dict[str, Any]:
     return {"files": files}
 
 
-@app.get("/console/tasks/scheduled/files/{file_name}")
+@app.get("/console/tasks/scheduled/files/{file_name:path}")
 async def console_get_scheduled_task_file(file_name: str) -> Dict[str, Any]:
     flow_path = await asyncio.to_thread(_resolve_console_flow_file, file_name)
     content = await asyncio.to_thread(flow_path.read_text, encoding="utf-8")
+    flow_root_dir = await asyncio.to_thread(_console_flow_root_dir)
+    relative_name = flow_path.relative_to(flow_root_dir).as_posix()
     return {
-        "file_name": flow_path.name,
+        "file_name": relative_name,
         "flow_name": flow_path.stem,
         "file_path": str(flow_path),
         "content": content,
@@ -1427,17 +1562,52 @@ async def console_agent_profiles() -> Dict[str, Any]:
 
 @app.post("/console/agent-profiles")
 async def console_create_agent_profile(payload: AgentProfileCreateRequest) -> Dict[str, Any]:
-    created_path = await asyncio.to_thread(
-        _create_local_agent_profile,
-        payload.name,
-        payload.description,
-        payload.system_prompt,
-        payload.provider,
-    )
+    if payload.content is not None:
+        created_path = await asyncio.to_thread(
+            _create_local_agent_profile_from_content,
+            payload.name,
+            payload.content,
+        )
+    else:
+        if not payload.description or not payload.system_prompt:
+            raise HTTPException(
+                status_code=400,
+                detail="description and system_prompt are required when content is not provided",
+            )
+        created_path = await asyncio.to_thread(
+            _create_local_agent_profile,
+            payload.name,
+            payload.description,
+            payload.system_prompt,
+            payload.provider,
+        )
     return {
         "ok": True,
         "profile": payload.name.strip(),
         "file_path": str(created_path),
+    }
+
+
+@app.get("/console/agent-profiles/files")
+async def console_list_agent_profile_files() -> Dict[str, Any]:
+    files = await asyncio.to_thread(_list_local_agent_profile_files)
+    return {"files": files}
+
+
+@app.get("/console/agent-profiles/files/{file_name}")
+async def console_get_agent_profile_file(file_name: str) -> Dict[str, Any]:
+    profile_name = Path(file_name).stem
+    profile_path = _profile_file_path(profile_name)
+    exists = await asyncio.to_thread(profile_path.exists)
+    if not exists or profile_path.name != file_name:
+        raise HTTPException(status_code=404, detail="Agent profile not found")
+
+    content = await asyncio.to_thread(profile_path.read_text, encoding="utf-8")
+    return {
+        "profile": profile_name,
+        "file_name": profile_path.name,
+        "file_path": str(profile_path),
+        "content": content,
     }
 
 
@@ -1466,6 +1636,8 @@ async def console_update_agent_profile(
     exists = await asyncio.to_thread(profile_path.exists)
     if not exists:
         raise HTTPException(status_code=404, detail="Agent profile not found")
+
+    await asyncio.to_thread(_validate_profile_markdown_content, payload.content)
 
     await asyncio.to_thread(profile_path.write_text, payload.content, encoding="utf-8")
     return {"ok": True, "profile": profile_name, "file_path": str(profile_path)}

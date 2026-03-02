@@ -771,14 +771,12 @@ def test_console_agent_profiles(client: TestClient) -> None:
 def test_console_create_agent_profile(client: TestClient, tmp_path) -> None:
     login(client)
 
-    with patch("cli_agent_orchestrator.control_panel.main.LOCAL_AGENT_STORE_DIR", tmp_path):
+    with patch("cli_agent_orchestrator.control_panel.main.AGENT_CONTEXT_DIR", tmp_path):
         response = client.post(
             "/console/agent-profiles",
             json={
                 "name": "data_analyst",
-                "description": "Analyze business data",
-                "provider": "codex",
-                "system_prompt": "# DATA ANALYST\nFocus on metrics.",
+                "content": "---\nname: data_analyst\nprovider: codex\n---\n\n# DATA ANALYST\nFocus on metrics.",
             },
         )
 
@@ -791,7 +789,6 @@ def test_console_create_agent_profile(client: TestClient, tmp_path) -> None:
         assert profile_file.exists()
         content = profile_file.read_text(encoding="utf-8")
         assert "name: data_analyst" in content
-        assert "description: Analyze business data" in content
         assert "provider: codex" in content
         assert "# DATA ANALYST" in content
 
@@ -802,7 +799,7 @@ def test_console_get_and_update_agent_profile(client: TestClient, tmp_path) -> N
     profile_file = tmp_path / "designer.md"
     profile_file.write_text("---\nname: designer\ndescription: ui\n---\n\nhello\n", encoding="utf-8")
 
-    with patch("cli_agent_orchestrator.control_panel.main.LOCAL_AGENT_STORE_DIR", tmp_path):
+    with patch("cli_agent_orchestrator.control_panel.main.AGENT_CONTEXT_DIR", tmp_path):
         get_response = client.get("/console/agent-profiles/designer")
         assert get_response.status_code == 200
         assert "description: ui" in get_response.json()["content"]
@@ -814,6 +811,30 @@ def test_console_get_and_update_agent_profile(client: TestClient, tmp_path) -> N
         assert update_response.status_code == 200
         assert "description: ui2" in profile_file.read_text(encoding="utf-8")
 
+        list_response = client.get("/console/agent-profiles/files")
+        assert list_response.status_code == 200
+        assert list_response.json()["files"][0]["file_name"] == "designer.md"
+
+        file_response = client.get("/console/agent-profiles/files/designer.md")
+        assert file_response.status_code == 200
+        assert file_response.json()["profile"] == "designer"
+
+
+def test_console_create_agent_profile_rejects_invalid_markdown(client: TestClient, tmp_path) -> None:
+    login(client)
+
+    with patch("cli_agent_orchestrator.control_panel.main.AGENT_CONTEXT_DIR", tmp_path):
+        response = client.post(
+            "/console/agent-profiles",
+            json={
+                "name": "bad_profile",
+                "content": "# no frontmatter",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "Invalid agent profile markdown" in response.json()["detail"]
+
 
 def test_console_install_agent_profile(client: TestClient, tmp_path) -> None:
     login(client)
@@ -822,7 +843,7 @@ def test_console_install_agent_profile(client: TestClient, tmp_path) -> None:
     profile_file.write_text("---\nname: ops\ndescription: ops\n---\n\nrun\n", encoding="utf-8")
 
     with (
-        patch("cli_agent_orchestrator.control_panel.main.LOCAL_AGENT_STORE_DIR", tmp_path),
+        patch("cli_agent_orchestrator.control_panel.main.AGENT_CONTEXT_DIR", tmp_path),
         patch("cli_agent_orchestrator.control_panel.main.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(returncode=0, stdout="installed", stderr="")
@@ -1012,6 +1033,7 @@ def test_console_create_scheduled_task_success(client: TestClient) -> None:
             json={
                 "flow_name": "flowA",
                 "flow_content": "---\nname: flowA\nschedule: '*/5 * * * *'\nagent_profile: developer\n---\nhello",
+                "session_name": "cao-team1",
                 "leader_id": "leader1",
             },
         )
@@ -1021,24 +1043,49 @@ def test_console_create_scheduled_task_success(client: TestClient) -> None:
         assert body["ok"] is True
         assert body["flow"]["name"] == "flowA"
         assert body["saved_file_path"] == "/tmp/console_flows/flowA.md"
+        mock_save_file.assert_called_once_with(
+            "---\nname: flowA\nschedule: '*/5 * * * *'\nagent_profile: developer\n---\nhello",
+            "flowA",
+            "cao-team1",
+        )
         mock_set_link.assert_called_once_with("flowA", "leader1")
+
+
+def test_console_create_scheduled_task_rejects_invalid_markdown(client: TestClient) -> None:
+    login(client)
+
+    with patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao:
+        response = client.post(
+            "/console/tasks/scheduled",
+            json={
+                "flow_name": "invalid",
+                "flow_content": "hello without frontmatter",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "Invalid flow markdown" in response.json()["detail"]
+    mock_request_cao.assert_not_called()
 
 
 def test_console_list_scheduled_task_files(client: TestClient, tmp_path: Path) -> None:
     login(client)
 
-    with patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path):
-        flow_dir = tmp_path / "console_flows"
+    with patch("cli_agent_orchestrator.control_panel.main.AGENT_FLOW_DIR", tmp_path):
+        flow_dir = tmp_path
         flow_dir.mkdir(parents=True, exist_ok=True)
         (flow_dir / "daily.md").write_text("---\nname: daily\n---\n", encoding="utf-8")
         (flow_dir / "nightly.md").write_text("---\nname: nightly\n---\n", encoding="utf-8")
+        session_dir = flow_dir / "cao-team1"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        (session_dir / "session.md").write_text("---\nname: session\n---\n", encoding="utf-8")
 
         response = client.get("/console/tasks/scheduled/files")
 
         assert response.status_code == 200
         body = response.json()
         names = [item["file_name"] for item in body["files"]]
-        assert names == ["daily.md", "nightly.md"]
+        assert names == ["cao-team1/session.md", "daily.md", "nightly.md"]
 
 
 def test_console_create_scheduled_task_from_existing_file(client: TestClient) -> None:
@@ -1080,17 +1127,19 @@ def test_console_create_scheduled_task_from_existing_file(client: TestClient) ->
 def test_console_get_scheduled_task_file_content(client: TestClient, tmp_path: Path) -> None:
     login(client)
 
-    with patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path):
-        flow_dir = tmp_path / "console_flows"
+    with patch("cli_agent_orchestrator.control_panel.main.AGENT_FLOW_DIR", tmp_path):
+        flow_dir = tmp_path
         flow_dir.mkdir(parents=True, exist_ok=True)
-        flow_file = flow_dir / "editable.md"
+        session_dir = flow_dir / "cao-team1"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        flow_file = session_dir / "editable.md"
         flow_file.write_text("---\nname: editable\n---\n\nhello\n", encoding="utf-8")
 
-        response = client.get("/console/tasks/scheduled/files/editable.md")
+        response = client.get("/console/tasks/scheduled/files/cao-team1/editable.md")
 
         assert response.status_code == 200
         body = response.json()
-        assert body["file_name"] == "editable.md"
+        assert body["file_name"] == "cao-team1/editable.md"
         assert body["flow_name"] == "editable"
         assert "name: editable" in body["content"]
 

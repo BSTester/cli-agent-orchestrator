@@ -50,6 +50,31 @@ Share one interesting world trivia for today.
 
   const [selectedFileName, setSelectedFileName] = useState("");
 
+  function extractErrorDetail(payload: unknown): string {
+    if (!payload || typeof payload !== "object") {
+      return "";
+    }
+
+    const detail = (payload as { detail?: unknown }).detail;
+    if (typeof detail === "string") {
+      return detail;
+    }
+    if (detail && typeof detail === "object") {
+      const nestedMessage = (detail as { message?: unknown }).message;
+      if (typeof nestedMessage === "string") {
+        return nestedMessage;
+      }
+      return JSON.stringify(detail);
+    }
+
+    const error = (payload as { error?: unknown }).error;
+    if (typeof error === "string") {
+      return error;
+    }
+
+    return "";
+  }
+
   const loadTasks = useCallback(async () => {
     const result = await caoRequest<ConsoleTasksResponse>("GET", "/console/tasks");
     if (!result.ok) {
@@ -95,17 +120,22 @@ Share one interesting world trivia for today.
 
     setCreating(true);
 
+    const selectedLeader = teams.find((team) => team.leader.id === leaderId)?.leader;
+    const sessionName = selectedLeader?.session_name?.trim() || undefined;
+
     const result = await caoRequest("POST", "/console/tasks/scheduled", {
       body: {
         file_name: selectedFileName.trim() || undefined,
         flow_name: selectedFileName.trim() ? undefined : flowName.trim() || undefined,
         flow_content: flowContent.trim(),
+        session_name: sessionName,
         leader_id: leaderId.trim() || undefined,
       },
     });
 
     if (!result.ok) {
-      setError("创建定时任务失败");
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `创建定时任务失败：${detail}` : "创建定时任务失败");
       setCreating(false);
       return;
     }
@@ -125,7 +155,7 @@ Share one interesting world trivia for today.
     setLoadingFileContent(true);
     const result = await caoRequest<ConsoleScheduledTaskFile & { content: string }>(
       "GET",
-      `/console/tasks/scheduled/files/${encodeURIComponent(fileName)}`
+      `/console/tasks/scheduled/files/${encodeURI(fileName)}`
     );
 
     if (!result.ok) {

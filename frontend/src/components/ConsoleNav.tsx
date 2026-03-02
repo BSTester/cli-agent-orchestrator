@@ -9,13 +9,17 @@ import { caoRequest } from "@/lib/cao";
 const navItems = [
   { href: "/dashboard", label: "集团总览" },
   { href: "/organization", label: "组织管理" },
-  { href: "/agents", label: "团队管理" },
+  { href: "/agents", label: "会话管理" },
   { href: "/tasks", label: "任务管理" },
 ];
 
 export default function ConsoleNav() {
   const pathname = usePathname();
   const router = useRouter();
+
+  const normalizedPathname = pathname.endsWith("/") && pathname !== "/"
+    ? pathname.slice(0, -1)
+    : pathname;
 
   async function handleLogout() {
     await caoRequest("POST", "/auth/logout");
@@ -36,7 +40,7 @@ export default function ConsoleNav() {
       <div style={{ fontWeight: 700, color: "var(--text-bright)" }}>一人集团公司</div>
       <nav style={{ display: "flex", gap: 16 }}>
         {navItems.map((item) => {
-          const active = pathname === item.href;
+          const active = normalizedPathname === item.href;
           return (
             <Link
               key={item.href}

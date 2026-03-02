@@ -188,8 +188,9 @@ export interface ConsoleAgentProfilesResponse {
 
 export interface CreateAgentProfileRequest {
   name: string;
-  description: string;
-  system_prompt: string;
+  description?: string;
+  system_prompt?: string;
+  content?: string;
   provider?: string;
 }
 
@@ -201,8 +202,19 @@ export interface CreateAgentProfileResponse {
 
 export interface AgentProfileFileResponse {
   profile: string;
+  file_name?: string;
   file_path: string;
   content: string;
+}
+
+export interface ConsoleAgentProfileFileItem {
+  file_name: string;
+  profile: string;
+  file_path: string;
+}
+
+export interface ConsoleAgentProfileFilesResponse {
+  files: ConsoleAgentProfileFileItem[];
 }
 
 export interface UpdateAgentProfileResponse {

@@ -8,7 +8,7 @@ A Next.js web console for the **CLI Agent Orchestrator** (CAO) API.
 - Dashboard（集团总览）：展示团队规模、成员规模、状态与任务概览。
 - Agents（团队管理）：按团队查看在线状态与任务，并提供实时终端控制台（Web 内直接执行命令）。
 - Organization（组织管理）：
-   - 新建岗位类型（Profile 创建并安装）
+   - 新增/编辑岗位（本地岗位文件创建/编辑，并支持安装 Profile）
    - 新建负责人、创建员工并加入团队
    - 团队成员退出、团队解散
    - 团队工作目录配置（仅 home 一级目录）：
@@ -17,6 +17,7 @@ A Next.js web console for the **CLI Agent Orchestrator** (CAO) API.
 - Tasks（任务管理）：
    - 按团队查看即时任务与定时任务
    - 新建/编辑定时任务，支持加载已有 flow 文件
+   - 选择团队创建任务时，flow 文件可保存到 `~/.aws/cli-agent-orchestrator/agent-flow/<session_name>/`
    - 手动触发、启停、删除定时任务
    - 定时任务绑定到指定团队
 
