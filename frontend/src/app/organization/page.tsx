@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, InputHTMLAttributes, useCallback, useEffect, useState } from "react";
 
 import ConsoleNav from "@/components/ConsoleNav";
 import {
@@ -71,6 +71,46 @@ mcpServers:
 3. 给出可执行建议，并标注假设与风险。
 `;
 
+function SearchableDatalistInput(
+  props: InputHTMLAttributes<HTMLInputElement> & { onClear?: () => void }
+) {
+  const { onClear, value, style, className, ...rest } = props;
+  const hasValue = String(value ?? "").length > 0;
+
+  return (
+    <div style={{ position: "relative", width: "100%" }}>
+      <TextInput
+        {...rest}
+        className={["cao-searchable-datalist", className].filter(Boolean).join(" ")}
+        value={value}
+        style={{ width: "100%", ...(style || {}), paddingRight: 28 }}
+      />
+      {hasValue ? (
+        <button
+          type="button"
+          aria-label="清空"
+          onClick={onClear}
+          style={{
+            position: "absolute",
+            right: 8,
+            top: "50%",
+            transform: "translateY(-50%)",
+            border: "none",
+            background: "transparent",
+            color: "var(--text-dim)",
+            cursor: "pointer",
+            fontSize: 14,
+            lineHeight: 1,
+            padding: 0,
+          }}
+        >
+          ×
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export default function OrganizationPage() {
   const [data, setData] = useState<ConsoleOrganization | null>(null);
   const [error, setError] = useState("");
@@ -87,6 +127,7 @@ export default function OrganizationPage() {
   const [workerProfile, setWorkerProfile] = useState("");
   const [workerProvider, setWorkerProvider] = useState("");
   const [workerLeaderId, setWorkerLeaderId] = useState("");
+  const [workerLeaderQuery, setWorkerLeaderQuery] = useState("");
   const [workerAlias, setWorkerAlias] = useState("");
   const [creatingWorker, setCreatingWorker] = useState(false);
 
@@ -164,13 +205,19 @@ export default function OrganizationPage() {
       ? "developer"
       : profiles[0] || "";
 
-    if (!mainProfile || !profiles.includes(mainProfile)) {
-      setMainProfile(preferredMainProfile);
-    }
-    if (!workerProfile || !profiles.includes(workerProfile)) {
-      setWorkerProfile(preferredWorkerProfile);
-    }
-  }, [mainProfile, workerProfile]);
+    setMainProfile((previous) => {
+      if (!previous || !profiles.includes(previous)) {
+        return preferredMainProfile;
+      }
+      return previous;
+    });
+    setWorkerProfile((previous) => {
+      if (!previous || !profiles.includes(previous)) {
+        return preferredWorkerProfile;
+      }
+      return previous;
+    });
+  }, []);
 
   const loadHomeWorkdirOptions = useCallback(async () => {
     const result = await caoRequest<ConsoleHomeWorkdirsResponse>("GET", "/console/workdirs/home");
@@ -515,6 +562,8 @@ export default function OrganizationPage() {
 
     setCreatingWorker(false);
     setWorkerAlias("");
+    setWorkerLeaderId("");
+    setWorkerLeaderQuery("");
     await loadOrganization();
   }
 
@@ -527,6 +576,10 @@ export default function OrganizationPage() {
   );
   const mainProfileOptions = profileOptions;
   const workerProfileOptions = profileOptions;
+  const workerLeaderOptions = leaders.map((leader: ConsoleAgent) => ({
+    leaderId: leader.id,
+    label: `${groupAliases.get(leader.id) || leader.id} · ${leader.agent_profile} · ${leader.id}`,
+  }));
   const isEditingProfileFile = profileFiles.some(
     (fileItem) => fileItem.file_name === selectedProfileFileName.trim()
   );
@@ -570,9 +623,10 @@ export default function OrganizationPage() {
             <SectionTitle title="新增/编辑岗位" />
             <form onSubmit={onboardNewEmployee}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-              <TextInput
+              <SearchableDatalistInput
                 value={selectedProfileFileName}
                 onChange={(e) => onProfileFileInputChange(e.target.value)}
+                onClear={() => onProfileFileInputChange("")}
                 list="agent-profile-file-options"
                 placeholder="选择/搜索已有岗位文件，或留空新增岗位"
               />
@@ -621,9 +675,10 @@ export default function OrganizationPage() {
             <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增负责人</div>
             <form onSubmit={createMainAgent} style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <TextInput
+              <SearchableDatalistInput
                 value={mainProfile}
                 onChange={(e) => setMainProfile(e.target.value)}
+                onClear={() => setMainProfile("")}
                 list="main-profile-options"
                 placeholder="选择/搜索负责人岗位"
                 required
@@ -643,9 +698,10 @@ export default function OrganizationPage() {
                 onChange={(e) => setMainTeamAlias(e.target.value)}
                 placeholder="团队别名（可选）"
               />
-              <TextInput
+              <SearchableDatalistInput
                 value={mainTeamWorkdirName}
                 onChange={(e) => setMainTeamWorkdirName(e.target.value)}
+                onClear={() => setMainTeamWorkdirName("")}
                 placeholder="团队工作目录（输入或选择 workspace 一级目录）"
                 list="main-team-workdir-options"
               />
@@ -685,9 +741,10 @@ export default function OrganizationPage() {
             <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增员工</div>
             <form onSubmit={createWorkerAgent} style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <TextInput
+                <SearchableDatalistInput
                   value={workerProfile}
                   onChange={(e) => setWorkerProfile(e.target.value)}
+                  onClear={() => setWorkerProfile("")}
                   list="worker-profile-options"
                   placeholder="选择/搜索员工岗位"
                   required
@@ -704,11 +761,20 @@ export default function OrganizationPage() {
                 </SelectInput>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
-                <TextInput
-                  value={workerLeaderId}
-                  onChange={(e) => setWorkerLeaderId(e.target.value)}
+                <SearchableDatalistInput
+                  value={workerLeaderQuery}
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    setWorkerLeaderQuery(nextValue);
+                    const matched = workerLeaderOptions.find((item) => item.label === nextValue);
+                    setWorkerLeaderId(matched ? matched.leaderId : "");
+                  }}
+                  onClear={() => {
+                    setWorkerLeaderQuery("");
+                    setWorkerLeaderId("");
+                  }}
                   list="worker-leader-options"
-                  placeholder="选择/搜索负责人（可留空）"
+                  placeholder="选择/搜索团队（可留空）"
                 />
                 <datalist id="worker-profile-options">
                   {workerProfileOptions.map((profileName) => (
@@ -716,11 +782,8 @@ export default function OrganizationPage() {
                   ))}
                 </datalist>
                 <datalist id="worker-leader-options">
-                  <option value="">不分配团队（独立团队编制）</option>
-                  {leaders.map((leader: ConsoleAgent) => (
-                    <option key={leader.id} value={leader.id}>
-                      {(groupAliases.get(leader.id) || leader.id)} · {leader.agent_profile}
-                    </option>
+                  {workerLeaderOptions.map((option) => (
+                    <option key={option.leaderId} value={option.label} />
                   ))}
                 </datalist>
                 <TextInput

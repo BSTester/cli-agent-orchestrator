@@ -43,3 +43,14 @@ html, body {
   font-variant-ligatures: none !important;
   font-feature-settings: "liga" 0, "calt" 0 !important;
 }
+
+input.cao-searchable-datalist {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+input.cao-searchable-datalist::-webkit-calendar-picker-indicator {
+  display: none !important;
+  opacity: 0;
+  pointer-events: none;
+}
