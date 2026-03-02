@@ -93,7 +93,6 @@ export default function OrganizationPage() {
   const [newAgentName, setNewAgentName] = useState("");
   const [profileFiles, setProfileFiles] = useState<ConsoleAgentProfileFilesResponse["files"]>([]);
   const [selectedProfileFileName, setSelectedProfileFileName] = useState("");
-  const [newAgentProvider, setNewAgentProvider] = useState("");
   const [newAgentPrompt, setNewAgentPrompt] = useState(defaultProfileTemplate);
   const [loadingProfileFile, setLoadingProfileFile] = useState(false);
   const [creatingProfile, setCreatingProfile] = useState(false);
@@ -221,6 +220,21 @@ export default function OrganizationPage() {
     setLoadingProfileFile(false);
   }
 
+  function onProfileFileInputChange(fileName: string) {
+    setSelectedProfileFileName(fileName);
+
+    if (!fileName) {
+      setNewAgentName("");
+      setNewAgentPrompt(defaultProfileTemplate);
+      return;
+    }
+
+    const exists = profileFiles.some((fileItem) => fileItem.file_name === fileName);
+    if (exists) {
+      void onSelectProfileFile(fileName);
+    }
+  }
+
   async function shutdownSessionByTerminal(agentId: string, terminalId?: string, sessionName?: string) {
     if (!terminalId) {
       setError("退出团队失败：目标Agent没有终端信息");
@@ -328,17 +342,17 @@ export default function OrganizationPage() {
     setCreatingProfile(true);
     setError("");
 
-    const isEditing = Boolean(selectedProfileFileName.trim());
+    const selectedProfileFile = profileFiles.find(
+      (fileItem) => fileItem.file_name === selectedProfileFileName.trim()
+    );
+    const isEditing = Boolean(selectedProfileFile);
     const body: CreateAgentProfileRequest = {
       name: newAgentName.trim(),
       content: newAgentPrompt.trim(),
     };
-    if (newAgentProvider) {
-      body.provider = newAgentProvider;
-    }
 
     if (isEditing) {
-      const targetProfile = selectedProfileFileName.replace(/\.md$/i, "");
+      const targetProfile = (selectedProfileFile?.file_name || "").replace(/\.md$/i, "");
       const result = await caoRequest(
         "PUT",
         `/console/agent-profiles/${encodeURIComponent(targetProfile)}`,
@@ -395,7 +409,6 @@ export default function OrganizationPage() {
     }
 
     setNewAgentName("");
-    setNewAgentProvider("");
     setNewAgentPrompt(defaultProfileTemplate);
     setSelectedProfileFileName("");
     setCreatingProfile(false);
@@ -514,6 +527,9 @@ export default function OrganizationPage() {
   );
   const mainProfileOptions = profileOptions;
   const workerProfileOptions = profileOptions;
+  const isEditingProfileFile = profileFiles.some(
+    (fileItem) => fileItem.file_name === selectedProfileFileName.trim()
+  );
 
   return (
     <RequireAuth>
@@ -554,38 +570,27 @@ export default function OrganizationPage() {
             <SectionTitle title="新增/编辑岗位" />
             <form onSubmit={onboardNewEmployee}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-              <SelectInput
+              <TextInput
                 value={selectedProfileFileName}
-                onChange={(e) => void onSelectProfileFile(e.target.value)}
-              >
-                <option value="">新增岗位（新建文件）</option>
-                {profileFiles.map((fileItem) => (
-                  <option key={fileItem.file_name} value={fileItem.file_name}>
-                    编辑：{fileItem.file_name}
-                  </option>
-                ))}
-              </SelectInput>
+                onChange={(e) => onProfileFileInputChange(e.target.value)}
+                list="agent-profile-file-options"
+                placeholder="选择/搜索已有岗位文件，或留空新增岗位"
+              />
               <TextInput
                 value={newAgentName}
                 onChange={(e) => setNewAgentName(e.target.value)}
                 required
-                disabled={Boolean(selectedProfileFileName)}
+                disabled={isEditingProfileFile}
                 placeholder="岗位名称，例如 data_analyst"
               />
             </div>
-            <div style={{ marginBottom: 10 }}>
-              <SelectInput
-                value={newAgentProvider}
-                onChange={(e) => setNewAgentProvider(e.target.value)}
-                style={{ width: "100%" }}
-              >
-                {providers.map((item) => (
-                  <option key={item || "default-new-profile"} value={item}>
-                    {item || "不指定 provider（按系统默认）"}
-                  </option>
-                ))}
-              </SelectInput>
-            </div>
+            <datalist id="agent-profile-file-options">
+              {profileFiles.map((fileItem) => (
+                <option key={fileItem.file_name} value={fileItem.file_name}>
+                  编辑：{fileItem.file_name}
+                </option>
+              ))}
+            </datalist>
             <CodeEditorInput
               value={newAgentPrompt}
               onChange={setNewAgentPrompt}
@@ -603,7 +608,7 @@ export default function OrganizationPage() {
               >
                 {creatingProfile
                   ? "保存中..."
-                  : selectedProfileFileName
+                  : isEditingProfileFile
                     ? "保存岗位文件"
                     : "保存岗位并完成安装"}
               </PrimaryButton>
@@ -616,17 +621,13 @@ export default function OrganizationPage() {
             <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增负责人</div>
             <form onSubmit={createMainAgent} style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <SelectInput
+              <TextInput
                 value={mainProfile}
                 onChange={(e) => setMainProfile(e.target.value)}
+                list="main-profile-options"
+                placeholder="选择/搜索负责人岗位"
                 required
-              >
-                {mainProfileOptions.map((profileName) => (
-                  <option key={`main-${profileName}`} value={profileName}>
-                    {profileName}
-                  </option>
-                ))}
-              </SelectInput>
+              />
               <SelectInput
                 value={mainProvider}
                 onChange={(e) => setMainProvider(e.target.value)}
@@ -649,6 +650,12 @@ export default function OrganizationPage() {
                 list="main-team-workdir-options"
               />
               </div>
+
+              <datalist id="main-profile-options">
+                {mainProfileOptions.map((profileName) => (
+                  <option key={`main-${profileName}`} value={profileName} />
+                ))}
+              </datalist>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
                 <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
@@ -678,17 +685,13 @@ export default function OrganizationPage() {
             <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增员工</div>
             <form onSubmit={createWorkerAgent} style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <SelectInput
+                <TextInput
                   value={workerProfile}
                   onChange={(e) => setWorkerProfile(e.target.value)}
+                  list="worker-profile-options"
+                  placeholder="选择/搜索员工岗位"
                   required
-                >
-                  {workerProfileOptions.map((profileName) => (
-                    <option key={`worker-${profileName}`} value={profileName}>
-                      {profileName}
-                    </option>
-                  ))}
-                </SelectInput>
+                />
                 <SelectInput
                   value={workerProvider}
                   onChange={(e) => setWorkerProvider(e.target.value)}
@@ -701,17 +704,25 @@ export default function OrganizationPage() {
                 </SelectInput>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
-                <SelectInput
+                <TextInput
                   value={workerLeaderId}
                   onChange={(e) => setWorkerLeaderId(e.target.value)}
-                >
+                  list="worker-leader-options"
+                  placeholder="选择/搜索负责人（可留空）"
+                />
+                <datalist id="worker-profile-options">
+                  {workerProfileOptions.map((profileName) => (
+                    <option key={`worker-${profileName}`} value={profileName} />
+                  ))}
+                </datalist>
+                <datalist id="worker-leader-options">
                   <option value="">不分配团队（独立团队编制）</option>
                   {leaders.map((leader: ConsoleAgent) => (
                     <option key={leader.id} value={leader.id}>
                       {(groupAliases.get(leader.id) || leader.id)} · {leader.agent_profile}
                     </option>
                   ))}
-                </SelectInput>
+                </datalist>
                 <TextInput
                   value={workerAlias}
                   onChange={(e) => setWorkerAlias(e.target.value)}
