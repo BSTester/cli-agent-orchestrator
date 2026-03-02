@@ -1,15 +1,14 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import { ErrorBanner, InfoHint, PageShell, PrimaryButton, SectionCard, TextInput } from "@/components/ConsoleTheme";
 import { caoRequest } from "@/lib/cao";
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const nextPath = searchParams.get("next") || "/dashboard";
+  const [nextPath, setNextPath] = useState("/dashboard");
 
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -17,11 +16,13 @@ export default function LoginPage() {
 
   useEffect(() => {
     let canceled = false;
+    const fromQuery = new URLSearchParams(window.location.search).get("next") || "/dashboard";
+    setNextPath(fromQuery);
 
     async function checkExistingLogin() {
       const result = await caoRequest<{ authenticated: boolean }>("GET", "/auth/me");
       if (!canceled && result.ok && result.data.authenticated) {
-        router.replace(nextPath);
+        router.replace(fromQuery);
       }
     }
 
@@ -29,7 +30,7 @@ export default function LoginPage() {
     return () => {
       canceled = true;
     };
-  }, [nextPath, router]);
+  }, [router]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

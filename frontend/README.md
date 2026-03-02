@@ -6,26 +6,19 @@ A Next.js web console for the **CLI Agent Orchestrator** (CAO) API.
 
 ```
 Browser (React UI)
-    │
-    │  HTTP /api/cao/*
-    ▼
-Next.js App (port 3000)          ← this directory
-    │  Next.js API Routes
-    │  (middleware layer)
-    │  HTTP *
-    ▼
-cao-control-panel (port 8000)    ← FastAPI interface layer
+   │
+   │  HTTP /console/*, /auth/*, /api/*
+   ▼
+cao-control-panel (port 8000)    ← FastAPI interface layer + static frontend host
     │  Proxy layer
     │  HTTP *
     ▼
 cao-server (port 9889)           ← FastAPI backend
 ```
 
-The Next.js API routes at `/api/cao/[...path]` act as a **middleware layer**
-that proxies all requests from the browser to the `cao-control-panel`. The
-`cao-control-panel` is a FastAPI interface layer that communicates with the
-`cao-server` backend. This three-tier architecture keeps the frontend, control
-panel, and backend services decoupled and independent.
+The frontend is built as static files and hosted directly by `cao-control-panel`.
+`cao-control-panel` handles `/console/*` and `/auth/*` locally, and proxies
+`/api/*` to `cao-server`.
 
 ## Getting Started
 
@@ -35,37 +28,48 @@ panel, and backend services decoupled and independent.
    uv run cao-server
    ```
 
-2. Start the `cao-control-panel` interface layer (from the repo root):
+2. Build and deploy static frontend files into `cao-control-panel` package dir:
+
+   ```bash
+   cd frontend
+   npm install
+   npm run build
+   cd ..
+   rm -rf src/cli_agent_orchestrator/control_panel/static
+   mkdir -p src/cli_agent_orchestrator/control_panel/static
+   cp -a frontend/out/. src/cli_agent_orchestrator/control_panel/static/
+   ```
+
+3. Start the `cao-control-panel` interface layer (from the repo root):
 
    ```bash
    uv run cao-control-panel
    ```
 
-3. Install frontend dependencies:
+4. Open [http://localhost:8000](http://localhost:8000) in your browser.
+
+## Frontend-only development
+
+Run the frontend dev server separately when you need hot reload:
 
    ```bash
    cd frontend
-   npm install
-   ```
-
-4. Run the development server:
-
-   ```bash
    npm run dev
    ```
 
-5. Open [http://localhost:3000](http://localhost:3000) in your browser.
+Then open [http://localhost:3000](http://localhost:3000). It will call
+`http://localhost:8000` by default in local development.
 
 ## Configuration
 
 | Environment variable     | Default                 | Description                       |
 | ------------------------ | ----------------------- | --------------------------------- |
-| `CAO_CONTROL_PANEL_URL`  | `http://localhost:8000` | URL of the cao-control-panel      |
+| `NEXT_PUBLIC_CAO_CONTROL_PANEL_URL` | auto-detect (`http://localhost:8000` in local dev) | Control panel base URL used by browser API calls |
 
-Set `CAO_CONTROL_PANEL_URL` to override the default control panel address:
+Set `NEXT_PUBLIC_CAO_CONTROL_PANEL_URL` to override the default control panel address:
 
 ```bash
-CAO_CONTROL_PANEL_URL=http://my-control-panel:8000 npm run dev
+NEXT_PUBLIC_CAO_CONTROL_PANEL_URL=http://my-control-panel:8000 npm run dev
 ```
 
 ## Scripts
@@ -73,8 +77,8 @@ CAO_CONTROL_PANEL_URL=http://my-control-panel:8000 npm run dev
 | Command         | Description                  |
 | --------------- | ---------------------------- |
 | `npm run dev`   | Start development server     |
-| `npm run build` | Build for production         |
-| `npm run start` | Start production server      |
+| `npm run build` | Build static export to `out/` |
+| `npm run start` | Start Next.js server mode (optional) |
 | `npm run lint`  | Run ESLint                   |
 
 

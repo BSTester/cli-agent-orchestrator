@@ -6,7 +6,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
 import { EditorState, Extension } from "@codemirror/state";
 import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
-import { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes, useMemo, useState } from "react";
+import { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, KeyboardEventHandler, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes, useMemo, useState } from "react";
 
 const panelStyle: CSSProperties = {
   background: "var(--surface)",
@@ -246,7 +246,7 @@ function formatContent(value: string, language: CodeEditorLanguage): string {
 type CodeEditorInputProps = {
   value: string;
   onChange: (value: string) => void;
-  onKeyDown?: (event: globalThis.KeyboardEvent) => void;
+  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   language?: CodeEditorLanguage | "auto";
   fileName?: string;
   placeholder?: string;

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
 
 import ConsoleNav from "@/components/ConsoleNav";
 import {
@@ -137,7 +138,8 @@ export default function AgentsPage() {
       }
 
       const controlPanelHttp =
-        process.env.NEXT_PUBLIC_CAO_CONTROL_PANEL_URL || "http://localhost:8000";
+        process.env.NEXT_PUBLIC_CAO_CONTROL_PANEL_URL ||
+        (window.location.port === "3000" ? "http://localhost:8000" : window.location.origin);
       const wsBase = controlPanelHttp.replace(/^http/i, "ws").replace(/\/$/, "");
       const wsUrl = `${wsBase}/console/agents/${activeAgent.id}/tmux/ws?token=${encodeURIComponent(
         tokenResult.data.token

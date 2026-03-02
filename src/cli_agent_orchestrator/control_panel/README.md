@@ -5,14 +5,15 @@ FastAPI interface layer that acts as a middleware between the frontend control p
 ## Architecture
 
 ```
-Frontend (Next.js) → Control Panel (FastAPI) → CAO Server (FastAPI)
-   port 3000            port 8000                port 9889
+Frontend (static files) → Control Panel (FastAPI) → CAO Server (FastAPI)
+         served by               port 8000                port 9889
+      control-panel
 ```
 
-The control panel serves as an independent service that:
-- Receives requests from the frontend
-- Proxies them to the CAO server backend
-- Returns responses back to the frontend
+The control panel serves as a single service that:
+- Hosts the built frontend static files
+- Serves local control-panel APIs (`/auth/*`, `/console/*`)
+- Proxies backend APIs to CAO server (`/api/*`)
 
 This three-tier architecture provides:
 - **Decoupling**: Frontend and backend can evolve independently
@@ -46,10 +47,41 @@ The control panel reads configuration from environment variables:
 
 ## API Endpoints
 
-The control panel proxies all requests to the CAO server:
+Control panel local endpoints:
 
 - `GET /health` - Health check (includes CAO server status)
-- `GET|POST|PUT|PATCH|DELETE /{path:path}` - Proxy all requests to CAO server
+- `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` - Auth endpoints
+- `GET|POST ... /console/*` - Control panel management endpoints
+
+Proxy endpoint:
+
+- `GET|POST|PUT|PATCH|DELETE /api/{path:path}` - Proxy to CAO server
+
+Static frontend:
+
+- `GET /` and other frontend routes (`/dashboard`, `/organization`, etc.) are served from `control_panel/static`.
+
+## Build frontend static files
+
+From repo root:
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+rm -rf src/cli_agent_orchestrator/control_panel/static
+mkdir -p src/cli_agent_orchestrator/control_panel/static
+cp -a frontend/out/. src/cli_agent_orchestrator/control_panel/static/
+```
+
+Then run:
+
+```bash
+uv run cao-control-panel
+```
+
+Open `http://localhost:8000` directly (no separate frontend service needed).
 
 ## Testing
 

@@ -6,12 +6,54 @@ export interface ApiResponse<T> {
   data: T;
 }
 
+type ErrorLikePayload = {
+  detail?: unknown;
+  message?: unknown;
+};
+
 async function parseResponseBody(response: Response): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
     return response.json();
   }
   return response.text();
+}
+
+function resolveControlPanelBaseUrl(): string {
+  const fromEnv = process.env.NEXT_PUBLIC_CAO_CONTROL_PANEL_URL?.trim();
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, "");
+  }
+
+  if (window.location.port === "3000") {
+    return "http://localhost:8000";
+  }
+
+  return window.location.origin;
+}
+
+function resolveControlPanelBaseUrlCandidates(): string[] {
+  const fromEnv = process.env.NEXT_PUBLIC_CAO_CONTROL_PANEL_URL?.trim();
+  if (fromEnv) {
+    return [fromEnv.replace(/\/$/, "")];
+  }
+
+  if (window.location.port === "3000") {
+    return [
+      "http://localhost:8000",
+      "http://127.0.0.1:8000",
+      window.location.origin,
+    ];
+  }
+
+  return [window.location.origin, "http://localhost:8000", "http://127.0.0.1:8000"];
+}
+
+function resolveApiPath(path: string): string {
+  if (path.startsWith("/console") || path.startsWith("/auth")) {
+    return path;
+  }
+  return `/api${path}`;
 }
 
 export async function caoRequest<T = unknown>(
@@ -22,32 +64,73 @@ export async function caoRequest<T = unknown>(
     body?: unknown;
   }
 ): Promise<ApiResponse<T>> {
-  const url = new URL(`/api/cao${path}`, window.location.origin);
+  const normalizedPath = resolveApiPath(path);
+  const baseCandidates = resolveControlPanelBaseUrlCandidates();
+  const baseUrl = resolveControlPanelBaseUrl();
+  const deduplicatedBaseUrls = Array.from(new Set([baseUrl, ...baseCandidates]));
+  let lastErrorMessage = "";
 
-  if (options?.query) {
-    Object.entries(options.query).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== "") {
-        url.searchParams.set(key, String(value));
-      }
-    });
+  for (const candidate of deduplicatedBaseUrls) {
+    const url = new URL(normalizedPath, `${candidate}/`);
+
+    if (options?.query) {
+      Object.entries(options.query).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+          url.searchParams.set(key, String(value));
+        }
+      });
+    }
+
+    try {
+      const response = await fetch(url.toString(), {
+        method,
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: options?.body ? JSON.stringify(options.body) : undefined,
+        cache: "no-store",
+      });
+
+      const data = (await parseResponseBody(response)) as T;
+      return {
+        ok: response.ok,
+        status: response.status,
+        data,
+      };
+    } catch (error) {
+      lastErrorMessage = String(error);
+    }
   }
 
-  const response = await fetch(url.toString(), {
-    method,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: options?.body ? JSON.stringify(options.body) : undefined,
-    cache: "no-store",
-  });
-
-  const data = (await parseResponseBody(response)) as T;
   return {
-    ok: response.ok,
-    status: response.status,
-    data,
+    ok: false,
+    status: 0,
+    data: {
+      detail: `Network request failed: ${lastErrorMessage || "unknown error"}`,
+      path,
+      tried_base_urls: deduplicatedBaseUrls,
+    } as T,
   };
+}
+
+export function getCaoErrorHint(result: ApiResponse<unknown>, fallback: string): string {
+  if (result.status === 0) {
+    return `${fallback}：无法连接到控制面板服务，请确认 cao-control-panel 已启动（默认 http://localhost:8000）`;
+  }
+
+  const payload = result.data as ErrorLikePayload | undefined;
+  const detail = payload?.detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return `${fallback}：${detail}`;
+  }
+
+  const message = payload?.message;
+  if (typeof message === "string" && message.trim()) {
+    return `${fallback}：${message}`;
+  }
+
+  return fallback;
 }
 
 export interface ConsoleAgent {

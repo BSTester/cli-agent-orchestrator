@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import ConsoleNav from "@/components/ConsoleNav";
 import { CardGrid, EmptyState, ErrorBanner, PageIntro, PageShell, SectionCard, SectionTitle, StatCard } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
-import { caoRequest, ConsoleAgent, ConsoleOverview, ConsoleTasksResponse } from "@/lib/cao";
+import { caoRequest, ConsoleAgent, ConsoleOverview, ConsoleTasksResponse, getCaoErrorHint } from "@/lib/cao";
 import { toStatusLabel } from "@/lib/status";
 
 function BarChartCard({
@@ -161,7 +161,7 @@ export default function DashboardPage() {
       }
 
       if (!overviewResult.ok) {
-        setError("获取控制台统计失败");
+        setError(getCaoErrorHint(overviewResult, "获取控制台统计失败"));
         return;
       }
 

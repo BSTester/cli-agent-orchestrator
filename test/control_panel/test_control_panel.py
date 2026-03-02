@@ -58,8 +58,14 @@ def test_auth_login_and_me(client: TestClient) -> None:
     assert me.json()["authenticated"] is True
 
 
+def test_static_ui_served_without_auth(client: TestClient) -> None:
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+
+
 def test_auth_required_for_proxy_routes(client: TestClient) -> None:
-    response = client.get("/sessions")
+    response = client.get("/api/sessions")
     assert response.status_code == 401
 
 
@@ -74,7 +80,7 @@ def test_proxy_get_request(client: TestClient) -> None:
         mock_response.headers = {"Content-Type": "application/json"}
         mock_request.return_value = mock_response
 
-        response = client.get("/sessions")
+        response = client.get("/api/sessions")
 
         assert response.status_code == 200
         assert response.headers.get("x-request-id")
@@ -94,7 +100,7 @@ def test_proxy_post_request(client: TestClient) -> None:
         mock_response.headers = {"Content-Type": "application/json"}
         mock_request.return_value = mock_response
 
-        response = client.post("/sessions", json={"agent_profile": "test", "provider": "kiro_cli"})
+        response = client.post("/api/sessions", json={"agent_profile": "test", "provider": "kiro_cli"})
 
         assert response.status_code == 201
         mock_request.assert_called_once()
@@ -107,7 +113,7 @@ def test_proxy_handles_cao_server_error(client: TestClient) -> None:
     with patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request:
         mock_request.side_effect = requests.exceptions.ConnectionError("Connection failed")
 
-        response = client.get("/sessions")
+        response = client.get("/api/sessions")
 
         assert response.status_code == 502
         data = response.json()
@@ -125,7 +131,7 @@ def test_proxy_forwards_query_parameters(client: TestClient) -> None:
         mock_response.headers = {}
         mock_request.return_value = mock_response
 
-        client.get("/sessions?limit=10&offset=20")
+        client.get("/api/sessions?limit=10&offset=20")
 
         call_args = mock_request.call_args
         assert "limit=10" in call_args.kwargs["url"]
@@ -772,7 +778,7 @@ def test_proxy_delete_request(client: TestClient) -> None:
         mock_response.headers = {}
         mock_request.return_value = mock_response
 
-        response = client.delete("/sessions/test-session")
+        response = client.delete("/api/sessions/test-session")
 
         assert response.status_code == 204
         mock_request.assert_called_once()

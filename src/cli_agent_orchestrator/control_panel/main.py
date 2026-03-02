@@ -21,6 +21,7 @@ import requests
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from cli_agent_orchestrator.constants import (
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 # Control panel server configuration
 CONTROL_PANEL_HOST = os.getenv("CONTROL_PANEL_HOST", "localhost")
 CONTROL_PANEL_PORT = int(os.getenv("CONTROL_PANEL_PORT", "8000"))
+CONTROL_PANEL_STATIC_DIR = Path(
+    os.getenv("CONTROL_PANEL_STATIC_DIR", str(Path(__file__).parent / "static"))
+)
 
 # CAO server URL (the actual backend)
 CAO_SERVER_URL = os.getenv("CAO_SERVER_URL", API_BASE_URL)
@@ -973,6 +977,12 @@ async def auth_middleware(request: Request, call_next):
     if path == "/health" or path.startswith("/auth/"):
         return await call_next(request)
 
+    if not (
+        path.startswith("/console/")
+        or path.startswith("/api/")
+    ):
+        return await call_next(request)
+
     if not _is_authenticated(request):
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
@@ -1689,7 +1699,7 @@ async def send_message_to_agent(receiver_id: str, payload: InboxMessageRequest) 
         raise HTTPException(status_code=502, detail=f"Failed to send inbox message: {exc}")
 
 
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def proxy_to_cao(request: Request, path: str) -> Response:
     """
     Proxy all requests to the cao-server.
@@ -1748,6 +1758,15 @@ async def proxy_to_cao(request: Request, path: str) -> Response:
             status_code=502,
             detail=f"Failed to reach cao-server: {str(e)}",
         )
+
+
+if CONTROL_PANEL_STATIC_DIR.exists() and CONTROL_PANEL_STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(CONTROL_PANEL_STATIC_DIR), html=True), name="console-ui")
+else:
+    logger.warning(
+        "Control panel static directory not found: %s. Frontend UI will be unavailable.",
+        CONTROL_PANEL_STATIC_DIR,
+    )
 
 
 def main() -> None:
