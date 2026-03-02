@@ -80,7 +80,6 @@ export default function OrganizationPage() {
   const [mainProfile, setMainProfile] = useState("");
   const [mainProvider, setMainProvider] = useState("");
   const [mainTeamAlias, setMainTeamAlias] = useState("");
-  const [homeDirectory, setHomeDirectory] = useState("");
   const [homeSubdirs, setHomeSubdirs] = useState<string[]>([]);
   const [mainTeamWorkdirName, setMainTeamWorkdirName] = useState("");
   const [creatingMain, setCreatingMain] = useState(false);
@@ -181,7 +180,6 @@ export default function OrganizationPage() {
       return;
     }
 
-    setHomeDirectory(result.data.home_directory || "");
     const names = (result.data.directories || []).map((item) => item.name).filter(Boolean);
     setHomeSubdirs(names);
   }, []);
@@ -654,7 +652,7 @@ export default function OrganizationPage() {
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
                 <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                  根目录：{homeDirectory || "~/workspace"}（输入新目录名会自动在 workspace 下创建一级目录）
+                  根目录：~/workspace（输入新目录名会自动在 workspace 下创建一级目录）
                 </div>
                 <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
                   可输入新目录名，也可下拉选择已有一级目录
