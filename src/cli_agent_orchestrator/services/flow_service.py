@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Tuple, cast
 
 import frontmatter  # type: ignore
 from apscheduler.triggers.cron import CronTrigger  # type: ignore
+from sqlalchemy.exc import IntegrityError
 
 from cli_agent_orchestrator.clients.database import create_flow as db_create_flow
 from cli_agent_orchestrator.clients.database import delete_flow as db_delete_flow
@@ -73,6 +74,7 @@ def add_flow(file_path: str) -> Flow:
             "provider", DEFAULT_PROVIDER
         )  # Optional, defaults to DEFAULT_PROVIDER
         script = metadata.get("script", "")  # Optional
+        session_name = str(metadata.get("session_name", "") or "").strip() or None
 
         # Validate cron expression and calculate next run
         try:
@@ -81,15 +83,30 @@ def add_flow(file_path: str) -> Flow:
             raise ValueError(f"Invalid cron expression '{schedule}': {e}")
 
         # Create flow in database
-        flow = db_create_flow(
-            name=name,
-            file_path=str(path),
-            schedule=schedule,
-            agent_profile=agent_profile,
-            provider=provider,
-            script=script,
-            next_run=next_run,
-        )
+        try:
+            flow = db_create_flow(
+                name=name,
+                file_path=str(path),
+                schedule=schedule,
+                agent_profile=agent_profile,
+                provider=provider,
+                script=script,
+                next_run=next_run,
+                session_name=session_name,
+            )
+        except IntegrityError:
+            logger.info("Flow '%s' already exists, recreating", name)
+            db_delete_flow(name)
+            flow = db_create_flow(
+                name=name,
+                file_path=str(path),
+                schedule=schedule,
+                agent_profile=agent_profile,
+                provider=provider,
+                script=script,
+                next_run=next_run,
+                session_name=session_name,
+            )
 
         logger.info(f"Added flow: {name}")
         return flow
@@ -150,7 +167,7 @@ def execute_flow(name: str) -> bool:
 
         # Read flow file
         file_path = Path(flow.file_path)
-        _, prompt_template = _parse_flow_file(file_path)
+        metadata, prompt_template = _parse_flow_file(file_path)
 
         # If no script, always execute with empty output
         if not flow.script:
@@ -201,18 +218,40 @@ def execute_flow(name: str) -> bool:
         rendered_prompt = render_template(prompt_template, output_dict)
 
         # Launch session
-        session_name = generate_session_name()
-        terminal = create_terminal(
-            session_name=session_name,
-            provider=flow.provider,
-            agent_profile=flow.agent_profile,
-            new_session=True,
-        )
+        bound_session_name = str(flow.session_name or "").strip()
+        if not bound_session_name:
+            bound_session_name = str(metadata.get("session_name", "") or "").strip()
+        if bound_session_name:
+            try:
+                terminal = create_terminal(
+                    session_name=bound_session_name,
+                    provider=flow.provider,
+                    agent_profile=flow.agent_profile,
+                    new_session=False,
+                )
+            except ValueError as exc:
+                if "not found" not in str(exc).lower():
+                    raise
+                terminal = create_terminal(
+                    session_name=bound_session_name,
+                    provider=flow.provider,
+                    agent_profile=flow.agent_profile,
+                    new_session=True,
+                )
+            launched_session_name = bound_session_name
+        else:
+            launched_session_name = generate_session_name()
+            terminal = create_terminal(
+                session_name=launched_session_name,
+                provider=flow.provider,
+                agent_profile=flow.agent_profile,
+                new_session=True,
+            )
 
         # Send rendered prompt to terminal
         send_input(terminal.id, rendered_prompt)
 
-        logger.info(f"Flow {name}: launched session {session_name}")
+        logger.info(f"Flow {name}: launched session {launched_session_name}")
         return True
 
     except Exception as e:

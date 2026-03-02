@@ -133,6 +133,42 @@ def _init_organization_db() -> None:
             )
             """
         )
+
+        # Migrate historical flow-team links into flows.session_name as single source.
+        flows_table_row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='flows'"
+        ).fetchone()
+        if flows_table_row:
+            flow_columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(flows)").fetchall()
+            }
+            if "session_name" not in flow_columns:
+                conn.execute("ALTER TABLE flows ADD COLUMN session_name TEXT")
+
+            migration_rows = conn.execute(
+                "SELECT flow_name, leader_id FROM flow_team_links WHERE leader_id IS NOT NULL"
+            ).fetchall()
+            for flow_name, leader_id in migration_rows:
+                if not flow_name or not leader_id:
+                    continue
+                leader_row = conn.execute(
+                    "SELECT tmux_session FROM terminals WHERE id = ?",
+                    (str(leader_id),),
+                ).fetchone()
+                if not leader_row:
+                    continue
+                session_name = str(leader_row[0] or "").strip()
+                if not session_name:
+                    continue
+                conn.execute(
+                    """
+                    UPDATE flows
+                    SET session_name = ?
+                    WHERE name = ? AND (session_name IS NULL OR session_name = '')
+                    """,
+                    (session_name, str(flow_name)),
+                )
         conn.commit()
 
 
@@ -704,6 +740,10 @@ class OrgCreateRequest(BaseModel):
     agent_alias: Optional[str] = None
 
 
+class OrgDisbandRequest(BaseModel):
+    session_name: Optional[str] = None
+
+
 class AgentProfileCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     description: Optional[str] = None
@@ -850,6 +890,29 @@ def _extract_flow_name_from_content(flow_content: str) -> Optional[str]:
     return None
 
 
+def _is_duplicate_flow_name_error(response: Optional[requests.Response]) -> bool:
+    if response is None:
+        return False
+
+    details: List[str] = []
+
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            detail = payload.get("detail")
+            if isinstance(detail, str):
+                details.append(detail)
+            elif detail is not None:
+                details.append(str(detail))
+        else:
+            details.append(str(payload))
+    except ValueError:
+        details.append(response.text or "")
+
+    merged = "\n".join(details)
+    return "UNIQUE constraint failed: flows.name" in merged
+
+
 def _save_flow_content_to_file(
     flow_content: str,
     flow_name: Optional[str],
@@ -889,6 +952,25 @@ def _overwrite_console_flow_file(flow_path: Path, flow_content: str) -> Path:
     return flow_path
 
 
+def _set_flow_execution_session_name(flow_path: Path, session_name: Optional[str]) -> Path:
+    normalized_session_name = (session_name or "").strip()
+    if normalized_session_name:
+        normalized_session_name = _validate_flow_session_name(normalized_session_name)
+
+    with open(flow_path, "r", encoding="utf-8") as handle:
+        post = frontmatter.load(handle)
+
+    metadata = post.metadata if isinstance(post.metadata, dict) else {}
+    if normalized_session_name:
+        metadata["session_name"] = normalized_session_name
+    else:
+        metadata.pop("session_name", None)
+    post.metadata = metadata
+
+    flow_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+    return flow_path
+
+
 def _is_instant_task_status(status_value: Optional[str]) -> bool:
     normalized = (status_value or "").strip().lower()
     if not normalized:
@@ -904,10 +986,50 @@ def _normalize_flow_item(flow_item: Dict[str, Any]) -> Dict[str, Any]:
         "agent_profile": str(flow_item.get("agent_profile", "")),
         "provider": str(flow_item.get("provider", "")),
         "script": str(flow_item.get("script", "")),
+        "session_name": str(flow_item.get("session_name", "") or ""),
         "enabled": bool(flow_item.get("enabled", False)),
         "last_run": flow_item.get("last_run"),
         "next_run": flow_item.get("next_run"),
     }
+
+
+async def _sync_bound_flow_session_name(flow_name: str) -> None:
+    """Sync flow file frontmatter session_name from flow database value before execution."""
+    try:
+        flows_response = await asyncio.to_thread(_request_cao, "GET", "/flows")
+        flow_items = await asyncio.to_thread(_response_json_or_text, flows_response)
+        if not isinstance(flow_items, list):
+            return
+
+        matched_file_path: Optional[str] = None
+        matched_session_name: Optional[str] = None
+        for item in flow_items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("name", "")) != flow_name:
+                continue
+            candidate = str(item.get("file_path", "") or "").strip()
+            if candidate:
+                matched_file_path = candidate
+            session_candidate = str(item.get("session_name", "") or "").strip()
+            if session_candidate:
+                matched_session_name = session_candidate
+            break
+
+        if not matched_file_path or not matched_session_name:
+            return
+
+        await asyncio.to_thread(
+            _set_flow_execution_session_name,
+            Path(matched_file_path),
+            matched_session_name,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to sync bound flow session_name before run for flow=%s: %s",
+            flow_name,
+            exc,
+        )
 
 
 def _cleanup_expired_sessions() -> None:
@@ -1103,7 +1225,34 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
     teams_from_db = _list_teams()
 
-    leaders = [terminal for terminal in terminals if terminal.get("is_main")]
+    main_candidates = [terminal for terminal in terminals if terminal.get("is_main")]
+    leaders_by_session: Dict[str, List[Dict[str, Any]]] = {}
+    for candidate in main_candidates:
+        session_name = str(candidate.get("session_name", "") or "")
+        leaders_by_session.setdefault(session_name, []).append(candidate)
+
+    leaders: List[Dict[str, Any]] = []
+    demoted_main_ids: set[str] = set()
+    for session_name, candidates in leaders_by_session.items():
+        if len(candidates) == 1:
+            leaders.append(candidates[0])
+            continue
+
+        chosen_leader = next(
+            (
+                candidate
+                for candidate in candidates
+                if str(candidate.get("id", "")) in teams_from_db
+            ),
+            candidates[0],
+        )
+        leaders.append(chosen_leader)
+        chosen_id = str(chosen_leader.get("id", ""))
+        for candidate in candidates:
+            candidate_id = str(candidate.get("id", ""))
+            if candidate_id and candidate_id != chosen_id:
+                demoted_main_ids.add(candidate_id)
+
     leader_ids = {str(terminal.get("id", "")) for terminal in leaders}
     for leader_id in teams_from_db:
         if leader_id in leader_ids:
@@ -1117,11 +1266,16 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
         leaders.append(team_leader_copy)
         leader_ids.add(leader_id)
 
-    workers = [
-        terminal
-        for terminal in terminals
-        if str(terminal.get("id", "")) not in leader_ids and not terminal.get("is_main")
-    ]
+    workers = []
+    for terminal in terminals:
+        terminal_id = str(terminal.get("id", ""))
+        if not terminal_id or terminal_id in leader_ids:
+            continue
+        if terminal_id in demoted_main_ids:
+            workers.append(terminal)
+            continue
+        if not terminal.get("is_main"):
+            workers.append(terminal)
     worker_ids = {
         str(worker.get("id", "")) for worker in workers if isinstance(worker.get("id"), str)
     }
@@ -1390,7 +1544,18 @@ async def console_tasks() -> Dict[str, Any]:
         if not isinstance(flow_items, list):
             flow_items = []
 
-        flow_team_links = await asyncio.to_thread(_list_flow_team_links)
+        leader_groups = organization.get("leader_groups", [])
+        leader_by_session: Dict[str, str] = {}
+        for group in leader_groups:
+            if not isinstance(group, dict):
+                continue
+            leader = group.get("leader")
+            if not isinstance(leader, dict):
+                continue
+            leader_id = str(leader.get("id", "") or "")
+            leader_session_name = str(leader.get("session_name", "") or "")
+            if leader_id and leader_session_name:
+                leader_by_session.setdefault(leader_session_name, leader_id)
         flows_by_leader: Dict[str, List[Dict[str, Any]]] = {}
         unassigned_flows: List[Dict[str, Any]] = []
 
@@ -1398,9 +1563,9 @@ async def console_tasks() -> Dict[str, Any]:
             if not isinstance(raw_flow, dict):
                 continue
             flow = _normalize_flow_item(raw_flow)
-            flow_name = flow["name"]
-            leader_id = flow_team_links.get(flow_name)
-            if leader_id:
+            flow_session_name = str(flow.get("session_name", "") or "")
+            leader_id = leader_by_session.get(flow_session_name)
+            if leader_id and flow_session_name:
                 flows_by_leader.setdefault(leader_id, []).append(flow)
             else:
                 unassigned_flows.append(flow)
@@ -1459,6 +1624,14 @@ async def console_tasks() -> Dict[str, Any]:
 async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskRequest) -> Dict[str, Any]:
     file_name = payload.file_name.strip() if payload.file_name else ""
     flow_content = payload.flow_content.strip() if payload.flow_content else ""
+    leader_id = payload.leader_id.strip() if payload.leader_id else None
+
+    if leader_id:
+        if not payload.session_name or not payload.session_name.strip():
+            raise HTTPException(status_code=400, detail="session_name is required when leader_id is provided")
+        normalized_session_name = _validate_flow_session_name(payload.session_name)
+    else:
+        normalized_session_name = None
 
     if file_name:
         flow_path = await asyncio.to_thread(_resolve_console_flow_file, file_name)
@@ -1469,25 +1642,132 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
             _save_flow_content_to_file,
             flow_content,
             payload.flow_name,
-            payload.session_name,
+            normalized_session_name,
         )
     else:
         raise HTTPException(status_code=400, detail="Provide either file_name or flow_content")
 
+    flow_path = await asyncio.to_thread(
+        _set_flow_execution_session_name,
+        flow_path,
+        normalized_session_name,
+    )
+
     body = {"file_path": str(flow_path)}
 
-    try:
-        response = await asyncio.to_thread(_request_cao, "POST", "/flows", None, body)
-        created_flow = await asyncio.to_thread(_response_json_or_text, response)
-        if not isinstance(created_flow, dict):
-            raise HTTPException(status_code=500, detail="Invalid flow creation response")
+    target_flow_name = (payload.flow_name or "").strip() or flow_path.stem
 
+    async def _resolve_existing_flow_name_for_file() -> Optional[str]:
+        try:
+            flows_response = await asyncio.to_thread(_request_cao, "GET", "/flows")
+            flow_items = await asyncio.to_thread(_response_json_or_text, flows_response)
+            if not isinstance(flow_items, list):
+                return None
+
+            flow_path_str = str(flow_path)
+            for item in flow_items:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("file_path", "") or "") != flow_path_str:
+                    continue
+                resolved_name = str(item.get("name", "") or "").strip()
+                if resolved_name:
+                    return resolved_name
+            return None
+        except Exception:
+            return None
+
+    async def _candidate_flow_names_for_recreate() -> List[str]:
+        candidates: List[str] = []
+
+        resolved_existing_name = await _resolve_existing_flow_name_for_file()
+        if resolved_existing_name:
+            candidates.append(resolved_existing_name)
+
+        extracted_from_payload = _extract_flow_name_from_content(flow_content) if flow_content else None
+        if extracted_from_payload:
+            candidates.append(extracted_from_payload)
+
+        try:
+            flow_file_content = await asyncio.to_thread(flow_path.read_text, encoding="utf-8")
+            extracted_from_file = _extract_flow_name_from_content(flow_file_content)
+            if extracted_from_file:
+                candidates.append(extracted_from_file)
+        except Exception:
+            pass
+
+        if target_flow_name:
+            candidates.append(target_flow_name)
+
+        deduplicated: List[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalized = candidate.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduplicated.append(normalized)
+        return deduplicated
+
+    async def _create_flow_once() -> Dict[str, Any]:
+        response = await asyncio.to_thread(_request_cao, "POST", "/flows", None, body)
+        created_flow_response = await asyncio.to_thread(_response_json_or_text, response)
+        if not isinstance(created_flow_response, dict):
+            raise HTTPException(status_code=500, detail="Invalid flow creation response")
+        return created_flow_response
+
+    try:
+        created_flow = await _create_flow_once()
+    except requests.exceptions.HTTPError as exc:
+        if not _is_duplicate_flow_name_error(exc.response):
+            raise HTTPException(status_code=502, detail=f"Failed to create scheduled task: {exc}")
+
+        candidate_flow_names = await _candidate_flow_names_for_recreate()
+        deleted_flow_name: Optional[str] = None
+
+        for candidate_name in candidate_flow_names:
+            logger.info("Flow '%s' already exists, trying recreate via delete '%s'", target_flow_name, candidate_name)
+            try:
+                await asyncio.to_thread(_request_cao, "DELETE", f"/flows/{candidate_name}")
+                deleted_flow_name = candidate_name
+                break
+            except requests.exceptions.HTTPError as delete_exc:
+                status_code = delete_exc.response.status_code if delete_exc.response is not None else None
+                if status_code == 404:
+                    continue
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to recreate scheduled task '{candidate_name}': {delete_exc}",
+                )
+            except requests.exceptions.RequestException as delete_exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to recreate scheduled task '{candidate_name}': {delete_exc}",
+                )
+
+        if not deleted_flow_name:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Failed to recreate scheduled task '{target_flow_name}': "
+                    f"could not locate matching existing flow to delete"
+                ),
+            )
+
+        try:
+            created_flow = await _create_flow_once()
+        except requests.exceptions.RequestException as retry_exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to recreate scheduled task '{deleted_flow_name}': {retry_exc}",
+            )
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to create scheduled task: {exc}")
+
+    try:
         flow_name = str(created_flow.get("name", ""))
         if not flow_name:
             raise HTTPException(status_code=500, detail="Flow name missing in response")
-
-        leader_id = payload.leader_id.strip() if payload.leader_id else None
-        await asyncio.to_thread(_set_flow_team_link, flow_name, leader_id)
         return {
             "ok": True,
             "flow": created_flow,
@@ -1521,6 +1801,7 @@ async def console_get_scheduled_task_file(file_name: str) -> Dict[str, Any]:
 @app.post("/console/tasks/scheduled/{flow_name}/run")
 async def console_run_scheduled_task(flow_name: str) -> Dict[str, Any]:
     try:
+        await _sync_bound_flow_session_name(flow_name)
         response = await asyncio.to_thread(_request_cao, "POST", f"/flows/{flow_name}/run")
         result = await asyncio.to_thread(_response_json_or_text, response)
         return {"ok": True, "result": result}
@@ -1553,7 +1834,6 @@ async def console_delete_scheduled_task(flow_name: str) -> Dict[str, Any]:
     try:
         response = await asyncio.to_thread(_request_cao, "DELETE", f"/flows/{flow_name}")
         result = await asyncio.to_thread(_response_json_or_text, response)
-        await asyncio.to_thread(_remove_flow_team_link, flow_name)
         return {"ok": True, "result": result}
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to delete scheduled task: {exc}")
@@ -1850,6 +2130,54 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"Failed to create organization agent: {exc}")
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to create organization agent: {exc}")
+
+
+@app.post("/console/organization/{leader_id}/disband")
+async def console_disband_team(leader_id: str, payload: Optional[OrgDisbandRequest] = None) -> Dict[str, Any]:
+    normalized_leader_id = leader_id.strip()
+    if not normalized_leader_id:
+        raise HTTPException(status_code=400, detail="leader_id cannot be empty")
+
+    try:
+        leader_response = await asyncio.to_thread(
+            _request_cao,
+            "GET",
+            f"/terminals/{normalized_leader_id}",
+        )
+        leader_terminal = await asyncio.to_thread(_response_json_or_text, leader_response)
+        if not isinstance(leader_terminal, dict):
+            raise HTTPException(status_code=400, detail="Invalid leader terminal")
+
+        leader_session_raw = str(leader_terminal.get("session_name", "") or "").strip()
+        if not leader_session_raw:
+            raise HTTPException(status_code=400, detail="leader has no session")
+        leader_session_name = _validate_flow_session_name(leader_session_raw)
+
+        requested_session_raw = (payload.session_name if payload else None) or ""
+        requested_session_raw = requested_session_raw.strip()
+        if requested_session_raw:
+            requested_session_name = _validate_flow_session_name(requested_session_raw)
+            if requested_session_name != leader_session_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail="leader_id and session_name mismatch",
+                )
+            session_name = requested_session_name
+        else:
+            session_name = leader_session_name
+
+        delete_response = await asyncio.to_thread(_request_cao, "DELETE", f"/sessions/{session_name}")
+        result = await asyncio.to_thread(_response_json_or_text, delete_response)
+        return {
+            "ok": True,
+            "leader_id": normalized_leader_id,
+            "session_name": session_name,
+            "result": result,
+        }
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to disband team: {exc}")
 
 
 @app.post("/console/agents/{terminal_id}/input")

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, InputHTMLAttributes, useCallback, useEffect, useState } from "react";
 
 import ConsoleNav from "@/components/ConsoleNav";
 import {
@@ -28,6 +28,46 @@ import {
 } from "@/lib/cao";
 import { isStatusActive, toStatusLabel } from "@/lib/status";
 
+function SearchableDatalistInput(
+  props: InputHTMLAttributes<HTMLInputElement> & { onClear?: () => void }
+) {
+  const { onClear, value, style, className, ...rest } = props;
+  const hasValue = String(value ?? "").length > 0;
+
+  return (
+    <div style={{ position: "relative", width: "100%" }}>
+      <TextInput
+        {...rest}
+        className={["cao-searchable-datalist", className].filter(Boolean).join(" ")}
+        value={value}
+        style={{ width: "100%", ...(style || {}), paddingRight: 28 }}
+      />
+      {hasValue ? (
+        <button
+          type="button"
+          aria-label="清空"
+          onClick={onClear}
+          style={{
+            position: "absolute",
+            right: 8,
+            top: "50%",
+            transform: "translateY(-50%)",
+            border: "none",
+            background: "transparent",
+            color: "var(--text-dim)",
+            cursor: "pointer",
+            fontSize: 14,
+            lineHeight: 1,
+            padding: 0,
+          }}
+        >
+          ×
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export default function TasksPage() {
   const [data, setData] = useState<ConsoleTasksResponse | null>(null);
   const [flowFiles, setFlowFiles] = useState<ConsoleScheduledTaskFilesResponse["files"]>([]);
@@ -47,6 +87,8 @@ provider: kiro_cli
 Share one interesting world trivia for today.
 `);
   const [leaderId, setLeaderId] = useState("");
+  const [leaderQuery, setLeaderQuery] = useState("");
+  const [taskActionLoading, setTaskActionLoading] = useState<Record<string, boolean>>({});
 
   const [selectedFileName, setSelectedFileName] = useState("");
 
@@ -118,10 +160,20 @@ Share one interesting world trivia for today.
       return;
     }
 
+    const normalizedLeaderQuery = leaderQuery.trim();
+    const selectedLeaderOption = teamOptions.find((item) => item.leaderId === leaderId);
+    if (normalizedLeaderQuery && !leaderId) {
+      setError("团队绑定未生效：请从候选项中明确选择一个团队（不要只输入关键字）");
+      return;
+    }
+    if (leaderId && !selectedLeaderOption) {
+      setError("团队绑定异常：未找到对应团队，请重新选择后再提交");
+      return;
+    }
+
     setCreating(true);
 
-    const selectedLeader = teams.find((team) => team.leader.id === leaderId)?.leader;
-    const sessionName = selectedLeader?.session_name?.trim() || undefined;
+    const sessionName = selectedLeaderOption?.sessionName?.trim() || undefined;
 
     const result = await caoRequest("POST", "/console/tasks/scheduled", {
       body: {
@@ -170,34 +222,57 @@ Share one interesting world trivia for today.
   }
 
   async function runScheduledTask(name: string) {
+    const actionKey = `run:${name}`;
+    setTaskActionLoading((previous) => ({ ...previous, [actionKey]: true }));
     const result = await caoRequest("POST", `/console/tasks/scheduled/${name}/run`);
     if (!result.ok) {
       setError("触发定时任务失败");
+      setTaskActionLoading((previous) => ({ ...previous, [actionKey]: false }));
       return;
     }
     await loadTasks();
+    setTaskActionLoading((previous) => ({ ...previous, [actionKey]: false }));
   }
 
   async function toggleScheduledTask(name: string, enabled: boolean) {
     const action = enabled ? "disable" : "enable";
+    const actionKey = `toggle:${name}`;
+    setTaskActionLoading((previous) => ({ ...previous, [actionKey]: true }));
     const result = await caoRequest("POST", `/console/tasks/scheduled/${name}/${action}`);
     if (!result.ok) {
       setError(enabled ? "暂停任务失败" : "启用任务失败");
+      setTaskActionLoading((previous) => ({ ...previous, [actionKey]: false }));
       return;
     }
     await loadTasks();
+    setTaskActionLoading((previous) => ({ ...previous, [actionKey]: false }));
   }
 
   async function deleteScheduledTask(name: string) {
+    const actionKey = `delete:${name}`;
+    setTaskActionLoading((previous) => ({ ...previous, [actionKey]: true }));
     const result = await caoRequest("DELETE", `/console/tasks/scheduled/${name}`);
     if (!result.ok) {
       setError("删除任务失败");
+      setTaskActionLoading((previous) => ({ ...previous, [actionKey]: false }));
       return;
     }
     await loadTasks();
+    setTaskActionLoading((previous) => ({ ...previous, [actionKey]: false }));
   }
 
   const teams = data?.teams || [];
+  const teamOptions = teams.map((team) => {
+    const leader = team.leader;
+    const teamAlias = (team.team_alias || "").trim();
+    const primary = teamAlias || leader.alias || leader.session_name || leader.id;
+    return {
+      leaderId: leader.id,
+      sessionName: leader.session_name || "",
+      label: `${primary} · ${leader.agent_profile || "unknown"} · ${leader.id}`,
+    };
+  });
+  const selectedLeaderOption = teamOptions.find((item) => item.leaderId === leaderId);
   const teamCount = teams.length;
   const instantTaskCount = teams.reduce((sum, team) => sum + team.instant_tasks.length, 0);
   const scheduledTaskCount =
@@ -246,17 +321,34 @@ Share one interesting world trivia for today.
                 </option>
               ))}
             </SelectInput>
-            <SelectInput
-              value={leaderId}
-              onChange={(event) => setLeaderId(event.target.value)}
-            >
-              <option value="">不绑定团队</option>
-              {teams.map((team) => (
-                <option key={`leader-${team.leader.id}`} value={team.leader.id}>
-                  {team.leader.session_name || team.leader.id}
-                </option>
-              ))}
-            </SelectInput>
+            <div>
+              <SearchableDatalistInput
+                value={leaderQuery}
+                onChange={(event) => {
+                  const query = event.target.value;
+                  const normalizedQuery = query.trim();
+                  setLeaderQuery(query);
+                  const matched = teamOptions.find(
+                    (item) =>
+                      item.label === normalizedQuery ||
+                      item.leaderId === normalizedQuery ||
+                      item.sessionName === normalizedQuery
+                  );
+                  setLeaderId(matched ? matched.leaderId : "");
+                }}
+                onClear={() => {
+                  setLeaderQuery("");
+                  setLeaderId("");
+                }}
+                list="task-team-options"
+                placeholder="搜索并选择绑定团队（可选）"
+              />
+              <datalist id="task-team-options">
+                {teamOptions.map((item) => (
+                  <option key={`team-option-${item.leaderId}`} value={item.label} />
+                ))}
+              </datalist>
+            </div>
             <TextInput
               value={flowName}
               onChange={(event) => setFlowName(event.target.value)}
@@ -268,6 +360,11 @@ Share one interesting world trivia for today.
             {loadingFileContent
               ? "任务文件加载中..."
               : "选择已有文件后会回填到编辑器；提交时将保存到原文件并发起任务。未选择文件时将按名称创建新文件。"}
+          </div>
+          <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
+            {leaderId && selectedLeaderOption
+              ? `当前绑定团队：${selectedLeaderOption.label}`
+              : "当前绑定团队：不绑定"}
           </div>
           <form
             onSubmit={createScheduledTask}
@@ -385,49 +482,58 @@ Share one interesting world trivia for today.
                   {team.scheduled_tasks.length === 0 ? (
                     <div style={{ color: "var(--text-dim)", fontSize: 13 }}>当前无定时任务</div>
                   ) : (
-                    team.scheduled_tasks.map((task) => (
-                      <div
-                        key={task.name}
-                        style={{
-                          border: "1px solid var(--border)",
-                          borderRadius: 8,
-                          padding: 8,
-                          marginBottom: 8,
-                          background: "var(--surface)",
-                        }}
-                      >
-                        <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{task.name}</div>
-                        <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 2, marginBottom: 8 }}>
-                          {task.schedule} · {task.agent_profile}
-                        </div>
-                        <div style={{ display: "flex", marginBottom: 8 }}>
-                          <StatusPill text={task.enabled ? "已启用" : "已暂停"} active={task.enabled} />
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <SecondaryButton
-                            type="button"
-                            onClick={() => runScheduledTask(task.name)}
-                            style={{ padding: "4px 8px", fontSize: 12 }}
+                    team.scheduled_tasks.map((task) => {
+                        const isRunning = Boolean(taskActionLoading[`run:${task.name}`]);
+                        const isToggling = Boolean(taskActionLoading[`toggle:${task.name}`]);
+                        const isDeleting = Boolean(taskActionLoading[`delete:${task.name}`]);
+                        const isBusy = isRunning || isToggling || isDeleting;
+                        return (
+                          <div
+                            key={task.name}
+                            style={{
+                              border: "1px solid var(--border)",
+                              borderRadius: 8,
+                              padding: 8,
+                              marginBottom: 8,
+                              background: "var(--surface)",
+                            }}
                           >
-                            手动触发
-                          </SecondaryButton>
-                          <SecondaryButton
-                            type="button"
-                            onClick={() => toggleScheduledTask(task.name, task.enabled)}
-                            style={{ padding: "4px 8px", fontSize: 12 }}
-                          >
-                            {task.enabled ? "暂停" : "启用"}
-                          </SecondaryButton>
-                          <SecondaryButton
-                            type="button"
-                            onClick={() => deleteScheduledTask(task.name)}
-                            style={{ padding: "4px 8px", fontSize: 12 }}
-                          >
-                            删除
-                          </SecondaryButton>
-                        </div>
-                      </div>
-                    ))
+                            <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{task.name}</div>
+                            <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 2, marginBottom: 8 }}>
+                              {task.schedule} · {task.agent_profile}
+                            </div>
+                            <div style={{ display: "flex", marginBottom: 8 }}>
+                              <StatusPill text={task.enabled ? "已启用" : "已暂停"} active={task.enabled} />
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <SecondaryButton
+                                type="button"
+                                onClick={() => runScheduledTask(task.name)}
+                                disabled={isBusy}
+                                style={{ padding: "4px 8px", fontSize: 12 }}
+                              >
+                                {isRunning ? "触发中..." : "手动触发"}
+                              </SecondaryButton>
+                              <SecondaryButton
+                                type="button"
+                                onClick={() => toggleScheduledTask(task.name, task.enabled)}
+                                disabled={isBusy}
+                                style={{ padding: "4px 8px", fontSize: 12 }}
+                              >
+                                {isToggling ? "处理中..." : task.enabled ? "暂停" : "启用"}
+                              </SecondaryButton>
+                              <SecondaryButton
+                                type="button"
+                                onClick={() => deleteScheduledTask(task.name)}
+                                disabled={isBusy}
+                                style={{ padding: "4px 8px", fontSize: 12 }}
+                              >
+                                {isDeleting ? "删除中..." : "删除"}
+                              </SecondaryButton>
+                            </div>
+                          </div>
+                        );
+                      })
                   )}
                 </div>
               </CardGrid>
@@ -441,24 +547,50 @@ Share one interesting world trivia for today.
               未绑定团队的定时任务
             </div>
             {data.unassigned_scheduled_tasks.map((task) => (
-              <div
-                key={task.name}
-                style={{
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  padding: 8,
-                  marginBottom: 8,
-                  background: "var(--surface2)",
-                }}
-              >
-                <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{task.name}</div>
-                <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 2 }}>
-                  {task.schedule} · {task.agent_profile}
-                </div>
-                <div style={{ display: "flex", marginTop: 6 }}>
-                  <StatusPill text={task.enabled ? "已启用" : "已暂停"} active={task.enabled} />
-                </div>
-              </div>
+              (() => {
+                const isToggling = Boolean(taskActionLoading[`toggle:${task.name}`]);
+                const isDeleting = Boolean(taskActionLoading[`delete:${task.name}`]);
+                const isBusy = isToggling || isDeleting;
+
+                return (
+                  <div
+                    key={task.name}
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      padding: 8,
+                      marginBottom: 8,
+                      background: "var(--surface2)",
+                    }}
+                  >
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{task.name}</div>
+                    <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 2, marginBottom: 8 }}>
+                      {task.schedule} · {task.agent_profile}
+                    </div>
+                    <div style={{ display: "flex", marginBottom: 8 }}>
+                      <StatusPill text={task.enabled ? "已启用" : "已暂停"} active={task.enabled} />
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <SecondaryButton
+                        type="button"
+                        onClick={() => toggleScheduledTask(task.name, task.enabled)}
+                        disabled={isBusy}
+                        style={{ padding: "4px 8px", fontSize: 12 }}
+                      >
+                        {isToggling ? "处理中..." : task.enabled ? "暂停" : "启用"}
+                      </SecondaryButton>
+                      <SecondaryButton
+                        type="button"
+                        onClick={() => deleteScheduledTask(task.name)}
+                        disabled={isBusy}
+                        style={{ padding: "4px 8px", fontSize: 12 }}
+                      >
+                        {isDeleting ? "删除中..." : "删除"}
+                      </SecondaryButton>
+                    </div>
+                  </div>
+                );
+              })()
             ))}
           </SectionCard>
         )}

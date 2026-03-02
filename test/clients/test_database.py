@@ -336,6 +336,7 @@ class TestFlowOperations:
             flow.agent_profile = "developer"
             flow.provider = "kiro_cli"
             flow.script = "echo test"
+            flow.session_name = None
             flow.next_run = datetime.now()
             flow.last_run = None
             flow.enabled = True
@@ -373,6 +374,7 @@ class TestFlowOperations:
         mock_flow.agent_profile = "developer"
         mock_flow.provider = "kiro_cli"
         mock_flow.script = "echo test"
+        mock_flow.session_name = None
         mock_flow.last_run = None
         mock_flow.next_run = datetime.now()
         mock_flow.enabled = True
@@ -401,6 +403,7 @@ class TestFlowOperations:
         mock_flow.agent_profile = "developer"
         mock_flow.provider = "kiro_cli"
         mock_flow.script = "echo test"
+        mock_flow.session_name = None
         mock_flow.last_run = None
         mock_flow.next_run = datetime.now()
         mock_flow.enabled = True
@@ -464,6 +467,7 @@ class TestFlowOperations:
         mock_flow.agent_profile = "developer"
         mock_flow.provider = "kiro_cli"
         mock_flow.script = "echo test"
+        mock_flow.session_name = None
         mock_flow.last_run = None
         mock_flow.next_run = datetime.now()
         mock_flow.enabled = True
@@ -541,9 +545,20 @@ class TestFlowOperations:
 class TestInitDb:
     """Tests for init_db function."""
 
+    @patch("cli_agent_orchestrator.clients.database.engine")
     @patch("cli_agent_orchestrator.clients.database.Base")
-    def test_init_db(self, mock_base):
+    def test_init_db(self, mock_base, mock_engine):
         """Test database initialization."""
+        mock_connection = MagicMock()
+        mock_connection.__enter__ = MagicMock(return_value=mock_connection)
+        mock_connection.__exit__ = MagicMock(return_value=False)
+        mock_connection.exec_driver_sql.return_value.fetchall.return_value = [
+            (0, "name", "TEXT", 0, None, 1),
+            (1, "file_path", "TEXT", 1, None, 0),
+            (2, "session_name", "TEXT", 0, None, 0),
+        ]
+        mock_engine.connect.return_value = mock_connection
+
         init_db()
 
         mock_base.metadata.create_all.assert_called_once()

@@ -754,6 +754,184 @@ def test_console_create_org_agent_propagates_upstream_http_error(client: TestCli
         assert body["detail"] == "Provider not available"
 
 
+def test_console_disband_team_deletes_target_session_only(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+    ):
+        mock_request_cao.side_effect = [MagicMock(), MagicMock(), MagicMock()]
+        mock_json.side_effect = [
+            {
+                "id": "leader1",
+                "agent_profile": "code_supervisor",
+                "session_name": "cao-team1",
+            },
+            [
+                {
+                    "id": "leader1",
+                    "agent_profile": "code_supervisor",
+                    "session_name": "cao-team1",
+                },
+                {
+                    "id": "worker1",
+                    "agent_profile": "developer",
+                    "session_name": "cao-team1",
+                },
+            ],
+            {"success": True},
+        ]
+
+        response = client.post(
+            "/console/organization/leader1/disband",
+            json={"session_name": "cao-team1"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["leader_id"] == "leader1"
+        assert body["session_name"] == "cao-team1"
+        mock_request_cao.assert_any_call("DELETE", "/sessions/cao-team1")
+
+
+def test_console_disband_team_allows_shared_multi_leader_session(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+    ):
+        mock_request_cao.side_effect = [MagicMock(), MagicMock()]
+        mock_json.side_effect = [
+            {
+                "id": "leader1",
+                "agent_profile": "code_supervisor",
+                "session_name": "cao-shared",
+            },
+            {"success": True},
+        ]
+
+        response = client.post(
+            "/console/organization/leader1/disband",
+            json={"session_name": "cao-shared"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert mock_request_cao.call_count == 2
+
+
+def test_console_organization_collapses_same_session_supervisors_into_single_team(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_worker_links", return_value={}),
+        patch("cli_agent_orchestrator.control_panel.main._register_team"),
+        patch("cli_agent_orchestrator.control_panel.main._set_worker_link") as mock_set_worker_link,
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+    ):
+        sessions = MagicMock()
+        sessions.raise_for_status.return_value = None
+        sessions.json.return_value = [{"name": "cao-shared"}]
+
+        terminals = MagicMock()
+        terminals.raise_for_status.return_value = None
+        terminals.json.return_value = [
+            {
+                "id": "leader1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+                "session_name": "cao-shared",
+            },
+            {
+                "id": "leader2",
+                "provider": "kiro_cli",
+                "agent_profile": "ai_editor_supervisor",
+                "session_name": "cao-shared",
+            },
+            {
+                "id": "worker1",
+                "provider": "codex",
+                "agent_profile": "developer",
+                "session_name": "cao-shared",
+            },
+        ]
+
+        leader1_detail = MagicMock()
+        leader1_detail.raise_for_status.return_value = None
+        leader1_detail.json.return_value = {
+            "id": "leader1",
+            "status": "IDLE",
+            "provider": "kiro_cli",
+            "agent_profile": "code_supervisor",
+            "session_name": "cao-shared",
+        }
+
+        leader2_detail = MagicMock()
+        leader2_detail.raise_for_status.return_value = None
+        leader2_detail.json.return_value = {
+            "id": "leader2",
+            "status": "IDLE",
+            "provider": "kiro_cli",
+            "agent_profile": "ai_editor_supervisor",
+            "session_name": "cao-shared",
+        }
+
+        worker_detail = MagicMock()
+        worker_detail.raise_for_status.return_value = None
+        worker_detail.json.return_value = {
+            "id": "worker1",
+            "status": "PROCESSING",
+            "provider": "codex",
+            "agent_profile": "developer",
+            "session_name": "cao-shared",
+        }
+
+        mock_request.side_effect = [
+            sessions,
+            terminals,
+            leader1_detail,
+            leader2_detail,
+            worker_detail,
+        ]
+
+        response = client.get("/console/organization")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["leader_groups"]) == 1
+        assert body["leader_groups"][0]["leader"]["id"] == "leader1"
+        member_ids = [member["id"] for member in body["leader_groups"][0]["members"]]
+        assert "leader2" in member_ids
+        assert "worker1" in member_ids
+        mock_set_worker_link.assert_any_call("leader2", "leader1")
+
+
+def test_console_disband_team_rejects_leader_session_mismatch(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+    ):
+        mock_request_cao.return_value = MagicMock()
+        mock_json.return_value = {
+            "id": "leader1",
+            "agent_profile": "developer",
+            "session_name": "cao-team-real",
+        }
+
+        response = client.post(
+            "/console/organization/leader1/disband",
+            json={"session_name": "cao-team-other"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "leader_id and session_name mismatch"
+
+
 def test_console_agent_profiles(client: TestClient) -> None:
     login(client)
 
@@ -923,7 +1101,11 @@ def test_console_tasks_success(client: TestClient) -> None:
                 "workers": [],
                 "leader_groups": [
                     {
-                        "leader": {"id": "leader1", "agent_profile": "code_supervisor"},
+                        "leader": {
+                            "id": "leader1",
+                            "agent_profile": "code_supervisor",
+                            "session_name": "cao-team1",
+                        },
                         "members": [
                             {
                                 "id": "worker1",
@@ -937,7 +1119,6 @@ def test_console_tasks_success(client: TestClient) -> None:
                 "unassigned_workers": [],
             },
         ),
-        patch("cli_agent_orchestrator.control_panel.main._list_flow_team_links", return_value={"flowA": "leader1"}),
         patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
         patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
     ):
@@ -949,6 +1130,7 @@ def test_console_tasks_success(client: TestClient) -> None:
                 "schedule": "*/5 * * * *",
                 "agent_profile": "developer",
                 "provider": "kiro_cli",
+                "session_name": "cao-team1",
                 "enabled": True,
                 "last_run": None,
                 "next_run": None,
@@ -1014,10 +1196,11 @@ def test_console_create_scheduled_task_success(client: TestClient) -> None:
     with (
         patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
         patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
-        patch("cli_agent_orchestrator.control_panel.main._set_flow_team_link") as mock_set_link,
         patch("cli_agent_orchestrator.control_panel.main._save_flow_content_to_file") as mock_save_file,
+        patch("cli_agent_orchestrator.control_panel.main._set_flow_execution_session_name") as mock_set_session,
     ):
         mock_save_file.return_value = Path("/tmp/console_flows/flowA.md")
+        mock_set_session.return_value = Path("/tmp/console_flows/flowA.md")
         mock_request_cao.return_value = MagicMock()
         mock_json.return_value = {
             "name": "flowA",
@@ -1048,7 +1231,7 @@ def test_console_create_scheduled_task_success(client: TestClient) -> None:
             "flowA",
             "cao-team1",
         )
-        mock_set_link.assert_called_once_with("flowA", "leader1")
+        mock_set_session.assert_called_once_with(Path("/tmp/console_flows/flowA.md"), "cao-team1")
 
 
 def test_console_create_scheduled_task_rejects_invalid_markdown(client: TestClient) -> None:
@@ -1095,9 +1278,10 @@ def test_console_create_scheduled_task_from_existing_file(client: TestClient) ->
         patch("cli_agent_orchestrator.control_panel.main._resolve_console_flow_file") as mock_resolve_file,
         patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
         patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
-        patch("cli_agent_orchestrator.control_panel.main._set_flow_team_link") as mock_set_link,
+        patch("cli_agent_orchestrator.control_panel.main._set_flow_execution_session_name") as mock_set_session,
     ):
         mock_resolve_file.return_value = Path("/tmp/console_flows/existing-flow.md")
+        mock_set_session.return_value = Path("/tmp/console_flows/existing-flow.md")
         mock_request_cao.return_value = MagicMock()
         mock_json.return_value = {
             "name": "existing-flow",
@@ -1112,6 +1296,7 @@ def test_console_create_scheduled_task_from_existing_file(client: TestClient) ->
             "/console/tasks/scheduled",
             json={
                 "file_name": "existing-flow.md",
+                "session_name": "cao-team1",
                 "leader_id": "leader1",
             },
         )
@@ -1121,7 +1306,7 @@ def test_console_create_scheduled_task_from_existing_file(client: TestClient) ->
         assert body["ok"] is True
         assert body["flow"]["name"] == "existing-flow"
         mock_resolve_file.assert_called_once_with("existing-flow.md")
-        mock_set_link.assert_called_once_with("existing-flow", "leader1")
+        mock_set_session.assert_called_once_with(Path("/tmp/console_flows/existing-flow.md"), "cao-team1")
 
 
 def test_console_get_scheduled_task_file_content(client: TestClient, tmp_path: Path) -> None:
@@ -1152,11 +1337,12 @@ def test_console_create_scheduled_task_overwrites_selected_file_content(client: 
         patch("cli_agent_orchestrator.control_panel.main._overwrite_console_flow_file") as mock_overwrite_file,
         patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
         patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
-        patch("cli_agent_orchestrator.control_panel.main._set_flow_team_link") as mock_set_link,
+        patch("cli_agent_orchestrator.control_panel.main._set_flow_execution_session_name") as mock_set_session,
     ):
         selected_path = Path("/tmp/console_flows/editable.md")
         mock_resolve_file.return_value = selected_path
         mock_overwrite_file.return_value = selected_path
+        mock_set_session.return_value = selected_path
         mock_request_cao.return_value = MagicMock()
         mock_json.return_value = {
             "name": "editable",
@@ -1172,6 +1358,7 @@ def test_console_create_scheduled_task_overwrites_selected_file_content(client: 
             json={
                 "file_name": "editable.md",
                 "flow_content": "---\nname: editable\nschedule: '0 8 * * *'\nagent_profile: developer\n---\n\nupdated",
+                "session_name": "cao-team1",
                 "leader_id": "leader1",
             },
         )
@@ -1181,13 +1368,178 @@ def test_console_create_scheduled_task_overwrites_selected_file_content(client: 
         assert body["ok"] is True
         mock_resolve_file.assert_called_once_with("editable.md")
         mock_overwrite_file.assert_called_once()
-        mock_set_link.assert_called_once_with("editable", "leader1")
+        mock_set_session.assert_called_once_with(selected_path, "cao-team1")
+
+
+def test_console_create_scheduled_task_requires_session_when_leader_set(client: TestClient) -> None:
+    login(client)
+
+    response = client.post(
+        "/console/tasks/scheduled",
+        json={
+            "flow_name": "flowA",
+            "flow_content": "---\nname: flowA\nschedule: '*/5 * * * *'\nagent_profile: developer\n---\nhello",
+            "leader_id": "leader1",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "session_name is required when leader_id is provided"
+
+
+def test_console_create_scheduled_task_recreates_on_duplicate_name(client: TestClient) -> None:
+    login(client)
+
+    duplicate_response = MagicMock()
+    duplicate_response.json.return_value = {
+        "detail": "(sqlite3.IntegrityError) UNIQUE constraint failed: flows.name"
+    }
+    duplicate_response.text = "UNIQUE constraint failed: flows.name"
+    duplicate_error = requests.exceptions.HTTPError("500 Server Error")
+    duplicate_error.response = duplicate_response
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch("cli_agent_orchestrator.control_panel.main._save_flow_content_to_file") as mock_save_file,
+        patch("cli_agent_orchestrator.control_panel.main._set_flow_execution_session_name") as mock_set_session,
+    ):
+        mock_save_file.return_value = Path("/tmp/console_flows/morning-trivia.md")
+        mock_set_session.return_value = Path("/tmp/console_flows/morning-trivia.md")
+        mock_request_cao.side_effect = [duplicate_error, MagicMock(), MagicMock(), MagicMock()]
+        mock_json.side_effect = [
+            [],
+            {
+                "name": "morning-trivia",
+                "file_path": "/tmp/console_flows/morning-trivia.md",
+                "schedule": "52 0 * * *",
+                "agent_profile": "ai_editor_supervisor",
+                "provider": "kiro_cli",
+                "enabled": True,
+            },
+        ]
+
+        response = client.post(
+            "/console/tasks/scheduled",
+            json={
+                "flow_name": "morning-trivia",
+                "flow_content": "---\nname: morning-trivia\nschedule: '52 0 * * *'\nagent_profile: ai_editor_supervisor\n---\n\nhello",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert mock_request_cao.call_count == 4
+        assert mock_request_cao.call_args_list[1].args[0:2] == ("GET", "/flows")
+        assert mock_request_cao.call_args_list[2].args[0:2] == ("DELETE", "/flows/morning-trivia")
+        assert mock_request_cao.call_args_list[3].args[0:2] == ("POST", "/flows")
+
+
+def test_console_create_scheduled_task_recreates_using_flow_name_from_file_path(client: TestClient) -> None:
+    login(client)
+
+    duplicate_response = MagicMock()
+    duplicate_response.json.return_value = {
+        "detail": "(sqlite3.IntegrityError) UNIQUE constraint failed: flows.name"
+    }
+    duplicate_response.text = "UNIQUE constraint failed: flows.name"
+    duplicate_error = requests.exceptions.HTTPError("500 Server Error")
+    duplicate_error.response = duplicate_response
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch("cli_agent_orchestrator.control_panel.main._save_flow_content_to_file") as mock_save_file,
+        patch("cli_agent_orchestrator.control_panel.main._set_flow_execution_session_name") as mock_set_session,
+    ):
+        mock_save_file.return_value = Path("/tmp/console_flows/trivia.md")
+        mock_set_session.return_value = Path("/tmp/console_flows/trivia.md")
+        mock_request_cao.side_effect = [duplicate_error, MagicMock(), MagicMock(), MagicMock()]
+        mock_json.side_effect = [
+            [
+                {
+                    "name": "morning-trivia",
+                    "file_path": "/tmp/console_flows/trivia.md",
+                }
+            ],
+            {
+                "name": "morning-trivia",
+                "file_path": "/tmp/console_flows/trivia.md",
+                "schedule": "52 0 * * *",
+                "agent_profile": "ai_editor_supervisor",
+                "provider": "kiro_cli",
+                "enabled": True,
+            },
+        ]
+
+        response = client.post(
+            "/console/tasks/scheduled",
+            json={
+                "flow_name": "trivia",
+                "flow_content": "---\nname: morning-trivia\nschedule: '52 0 * * *'\nagent_profile: ai_editor_supervisor\n---\n\nhello",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert mock_request_cao.call_args_list[1].args[0:2] == ("GET", "/flows")
+        assert mock_request_cao.call_args_list[2].args[0:2] == ("DELETE", "/flows/morning-trivia")
+        assert mock_request_cao.call_args_list[3].args[0:2] == ("POST", "/flows")
+
+
+def test_console_create_scheduled_task_recreates_with_delete_404_fallback_to_frontmatter_name(
+    client: TestClient,
+) -> None:
+    login(client)
+
+    duplicate_response = MagicMock()
+    duplicate_response.json.return_value = {
+        "detail": "(sqlite3.IntegrityError) UNIQUE constraint failed: flows.name"
+    }
+    duplicate_response.text = "UNIQUE constraint failed: flows.name"
+    duplicate_error = requests.exceptions.HTTPError("500 Server Error")
+    duplicate_error.response = duplicate_response
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch("cli_agent_orchestrator.control_panel.main._save_flow_content_to_file") as mock_save_file,
+        patch("cli_agent_orchestrator.control_panel.main._set_flow_execution_session_name") as mock_set_session,
+    ):
+        mock_save_file.return_value = Path("/tmp/console_flows/trivia.md")
+        mock_set_session.return_value = Path("/tmp/console_flows/trivia.md")
+        mock_request_cao.side_effect = [duplicate_error, MagicMock(), MagicMock(), MagicMock()]
+        mock_json.side_effect = [
+            [],
+            {
+                "name": "morning-trivia",
+                "file_path": "/tmp/console_flows/trivia.md",
+                "schedule": "52 0 * * *",
+                "agent_profile": "ai_editor_supervisor",
+                "provider": "kiro_cli",
+                "enabled": True,
+            },
+        ]
+
+        response = client.post(
+            "/console/tasks/scheduled",
+            json={
+                "flow_name": "trivia",
+                "flow_content": "---\nname: morning-trivia\nschedule: '52 0 * * *'\nagent_profile: ai_editor_supervisor\n---\n\nhello",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+    assert mock_request_cao.call_args_list[2].args[0:2] == ("DELETE", "/flows/morning-trivia")
+    assert mock_request_cao.call_args_list[3].args[0:2] == ("POST", "/flows")
 
 
 def test_console_run_enable_disable_scheduled_task_success(client: TestClient) -> None:
     login(client)
 
     with (
+        patch("cli_agent_orchestrator.control_panel.main._sync_bound_flow_session_name") as mock_sync_session,
         patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
         patch("cli_agent_orchestrator.control_panel.main._response_json_or_text", return_value={"success": True}),
     ):
@@ -1200,6 +1552,7 @@ def test_console_run_enable_disable_scheduled_task_success(client: TestClient) -
         assert run_resp.status_code == 200
         assert enable_resp.status_code == 200
         assert disable_resp.status_code == 200
+        mock_sync_session.assert_called_once_with("flowA")
 
 
 def test_console_delete_scheduled_task_success(client: TestClient) -> None:
@@ -1208,7 +1561,6 @@ def test_console_delete_scheduled_task_success(client: TestClient) -> None:
     with (
         patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
         patch("cli_agent_orchestrator.control_panel.main._response_json_or_text", return_value={"success": True}),
-        patch("cli_agent_orchestrator.control_panel.main._remove_flow_team_link") as mock_remove_link,
     ):
         mock_request_cao.return_value = MagicMock()
 
@@ -1216,4 +1568,3 @@ def test_console_delete_scheduled_task_success(client: TestClient) -> None:
 
         assert response.status_code == 200
         assert response.json()["ok"] is True
-        mock_remove_link.assert_called_once_with("flowA")

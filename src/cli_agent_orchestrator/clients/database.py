@@ -63,6 +63,7 @@ class FlowModel(Base):
     agent_profile = Column(String, nullable=False)
     provider = Column(String, nullable=False)
     script = Column(String, nullable=True)
+    session_name = Column(String, nullable=True)
     last_run = Column(DateTime, nullable=True)
     next_run = Column(DateTime, nullable=True)
     enabled = Column(Boolean, default=True)
@@ -77,6 +78,14 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     """Initialize database tables."""
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight schema migration for existing SQLite databases.
+    with engine.connect() as connection:
+        rows = connection.exec_driver_sql("PRAGMA table_info(flows)").fetchall()
+        existing_columns = {str(row[1]) for row in rows}
+        if "session_name" not in existing_columns:
+            connection.exec_driver_sql("ALTER TABLE flows ADD COLUMN session_name VARCHAR")
+            connection.commit()
 
 
 def create_terminal(
@@ -304,6 +313,7 @@ def create_flow(
     provider: str,
     script: str,
     next_run: datetime,
+    session_name: Optional[str] = None,
 ) -> Flow:
     """Create flow record."""
     with SessionLocal() as db:
@@ -315,6 +325,7 @@ def create_flow(
             provider=provider,
             script=script,
             next_run=next_run,
+            session_name=session_name,
         )
         db.add(flow)
         db.commit()
@@ -326,6 +337,7 @@ def create_flow(
             agent_profile=flow.agent_profile,
             provider=flow.provider,
             script=flow.script,
+            session_name=flow.session_name,
             last_run=flow.last_run,
             next_run=flow.next_run,
             enabled=flow.enabled,
@@ -345,6 +357,7 @@ def get_flow(name: str) -> Optional[Flow]:
             agent_profile=flow.agent_profile,
             provider=flow.provider,
             script=flow.script,
+            session_name=flow.session_name,
             last_run=flow.last_run,
             next_run=flow.next_run,
             enabled=flow.enabled,
@@ -363,6 +376,7 @@ def list_flows() -> List[Flow]:
                 agent_profile=f.agent_profile,
                 provider=f.provider,
                 script=f.script,
+                session_name=f.session_name,
                 last_run=f.last_run,
                 next_run=f.next_run,
                 enabled=f.enabled,
@@ -419,6 +433,7 @@ def get_flows_to_run() -> List[Flow]:
                 agent_profile=f.agent_profile,
                 provider=f.provider,
                 script=f.script,
+                session_name=f.session_name,
                 last_run=f.last_run,
                 next_run=f.next_run,
                 enabled=f.enabled,

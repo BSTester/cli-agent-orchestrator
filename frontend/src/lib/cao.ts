@@ -248,6 +248,7 @@ export interface ConsoleTaskScheduledItem {
   agent_profile: string;
   provider: string;
   script?: string;
+  session_name?: string;
   enabled: boolean;
   last_run?: string | null;
   next_run?: string | null;

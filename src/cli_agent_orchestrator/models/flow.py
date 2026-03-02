@@ -17,6 +17,7 @@ class Flow(BaseModel):
     agent_profile: str = Field(..., description="Agent profile to use")
     provider: str = Field(default=DEFAULT_PROVIDER, description="Provider to use")
     script: str = Field("", description="Path to poll script (optional)")
+    session_name: Optional[str] = Field(None, description="Bound target session name")
     last_run: Optional[datetime] = Field(None, description="Last execution time")
     next_run: Optional[datetime] = Field(None, description="Next scheduled execution time")
     enabled: bool = Field(True, description="Whether flow is enabled")
