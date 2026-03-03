@@ -154,6 +154,8 @@ export interface ConsoleOverview {
   status_counts: Record<string, number>;
   profile_counts: Record<string, number>;
   main_agents: ConsoleAgent[];
+  teams?: ConsoleTaskTeam[];
+  team_leaders?: ConsoleAgent[];
 }
 
 export interface ConsoleLeaderGroup {

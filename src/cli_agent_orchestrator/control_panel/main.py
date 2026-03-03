@@ -1478,6 +1478,20 @@ async def console_overview() -> Dict[str, Any]:
         profile_counts = Counter(str(t.get("agent_profile", "unknown")) for t in terminals)
         main_agents = [t for t in terminals if t.get("is_main")]
         uptime_seconds = int((datetime.now(timezone.utc) - _service_started_at).total_seconds())
+        teams: List[Dict[str, Any]] = []
+        team_leaders: List[Dict[str, Any]] = []
+
+        try:
+            tasks_overview = await console_tasks()
+            if isinstance(tasks_overview, dict):
+                teams = list(tasks_overview.get("teams") or [])
+                team_leaders = [
+                    team["leader"]
+                    for team in teams
+                    if isinstance(team, dict) and isinstance(team.get("leader"), dict)
+                ]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to enrich console overview with team data: %s", exc)
 
         return {
             "uptime_seconds": uptime_seconds,
@@ -1488,6 +1502,8 @@ async def console_overview() -> Dict[str, Any]:
             "status_counts": dict(status_counts),
             "profile_counts": dict(profile_counts),
             "main_agents": main_agents,
+            "teams": teams,
+            "team_leaders": team_leaders,
         }
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch CAO data: {exc}")

@@ -193,9 +193,15 @@ export default function DashboardPage() {
 
   const providerRows = Object.entries(overview?.provider_counts || {});
   const statusRows = Object.entries(overview?.status_counts || {});
-  const mainAgents: ConsoleAgent[] = useMemo(() => overview?.main_agents || [], [overview?.main_agents]);
+  const mainAgents: ConsoleAgent[] = useMemo(
+    () => overview?.team_leaders || overview?.main_agents || [],
+    [overview?.main_agents, overview?.team_leaders],
+  );
+  const teams = useMemo(
+    () => tasksOverview?.teams || overview?.teams || [],
+    [overview?.teams, tasksOverview?.teams],
+  );
   const teamNameByLeaderId = useMemo(() => {
-    const teams = tasksOverview?.teams || [];
     const mapping = new Map<string, string>();
     teams.forEach((team) => {
       const leaderId = String(team.leader?.id || "").trim();
@@ -209,10 +215,9 @@ export default function DashboardPage() {
       mapping.set(leaderId, teamName);
     });
     return mapping;
-  }, [tasksOverview?.teams]);
+  }, [teams]);
 
   const leaderTaskRows = useMemo(() => {
-    const teams = tasksOverview?.teams || [];
     const taskMap = new Map<string, number>();
     teams.forEach((team) => {
       const taskCount = team.instant_tasks.length + team.scheduled_tasks.length;
@@ -227,7 +232,7 @@ export default function DashboardPage() {
         leader.id,
       value: taskMap.get(leader.id) || 0,
     }));
-  }, [mainAgents, tasksOverview?.teams, teamNameByLeaderId]);
+  }, [mainAgents, teamNameByLeaderId, teams]);
 
   return (
     <RequireAuth>

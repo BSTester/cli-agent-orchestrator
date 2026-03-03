@@ -2,7 +2,7 @@
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import requests
@@ -142,7 +142,13 @@ def test_proxy_forwards_query_parameters(client: TestClient) -> None:
 def test_console_overview(client: TestClient) -> None:
     login(client)
 
-    with patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request:
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+        patch(
+            "cli_agent_orchestrator.control_panel.main.console_tasks",
+            new_callable=AsyncMock,
+        ) as mock_console_tasks,
+    ):
         sessions = MagicMock()
         sessions.raise_for_status.return_value = None
         sessions.json.return_value = [{"name": "cao-abc"}]
@@ -169,6 +175,18 @@ def test_console_overview(client: TestClient) -> None:
         }
 
         mock_request.side_effect = [sessions, terminals, terminal_detail]
+        mock_console_tasks.return_value = {
+            "teams": [
+                {
+                    "leader": {"id": "leader-1"},
+                    "team_alias": "team-alpha",
+                    "members": [],
+                    "instant_tasks": [],
+                    "scheduled_tasks": [],
+                }
+            ],
+            "unassigned_scheduled_tasks": [],
+        }
 
         response = client.get("/console/overview")
 
@@ -177,6 +195,8 @@ def test_console_overview(client: TestClient) -> None:
         assert data["agents_total"] == 1
         assert data["main_agents_total"] == 1
         assert data["provider_counts"]["kiro_cli"] == 1
+        assert data["teams"][0]["leader"]["id"] == "leader-1"
+        assert data["team_leaders"][0]["id"] == "leader-1"
 
 
 def test_console_agent_input_wrapper(client: TestClient) -> None:
