@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cli_agent_orchestrator.mcp_server import server
 from cli_agent_orchestrator.mcp_server.server import _assign_impl, _handoff_impl
 
 
@@ -158,6 +159,16 @@ class TestHandoffMessageContext:
 
         sent_message = mock_send.call_args[0][1]
         assert sent_message.endswith(original)
+
+
+def test_current_terminal_id_falls_back_to_tmux(monkeypatch):
+    """Fallback should read CAO_TERMINAL_ID from tmux environment when env var is missing."""
+    monkeypatch.delenv("CAO_TERMINAL_ID", raising=False)
+    fake_run = MagicMock()
+    fake_run.return_value = MagicMock(stdout="CAO_TERMINAL_ID=tmux-123\n", returncode=0)
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+
+    assert server._current_terminal_id() == "tmux-123"
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")

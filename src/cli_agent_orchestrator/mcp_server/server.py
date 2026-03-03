@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import subprocess
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -43,6 +44,30 @@ mcp = FastMCP(
     - Ensure you're running within a CAO terminal (CAO_TERMINAL_ID must be set)
     """,
 )
+
+
+def _current_terminal_id() -> str:
+    """Resolve current terminal ID from env or tmux environment."""
+    env_id = os.environ.get("CAO_TERMINAL_ID")
+    if env_id:
+        return env_id
+
+    try:
+        result = subprocess.run(
+            ["tmux", "show-environment", "CAO_TERMINAL_ID"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        output = (result.stdout or "").strip()
+        if output.startswith("CAO_TERMINAL_ID="):
+            candidate = output.split("=", 1)[1].strip()
+            if candidate:
+                return candidate
+    except Exception as exc:
+        logger.debug("Failed to resolve CAO_TERMINAL_ID from tmux: %s", exc)
+
+    raise ValueError("CAO_TERMINAL_ID not set")
 
 
 def _request_with_retry(method: str, url: str, **kwargs: Any) -> requests.Response:
@@ -93,7 +118,11 @@ def _create_terminal(
         )
 
     # Get current terminal ID from environment
-    current_terminal_id = os.environ.get("CAO_TERMINAL_ID")
+    try:
+        current_terminal_id = _current_terminal_id()
+    except ValueError:
+        current_terminal_id = None
+
     if current_terminal_id:
         # Get terminal metadata via API
         response = _request_with_retry("GET", f"{API_BASE_URL}/terminals/{current_terminal_id}")
@@ -197,9 +226,7 @@ def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
         ValueError: If CAO_TERMINAL_ID not set
         Exception: If API call fails
     """
-    sender_id = os.getenv("CAO_TERMINAL_ID")
-    if not sender_id:
-        raise ValueError("CAO_TERMINAL_ID not set - cannot determine sender")
+    sender_id = _current_terminal_id()
 
     if not message.strip():
         raise ValueError("Message cannot be empty")
@@ -267,7 +294,10 @@ async def _handoff_impl(
         # Other providers (Claude Code, Kiro CLI) naturally complete and return
         # to idle without this hint, so the message is left unchanged for them.
         if provider == "codex":
-            supervisor_id = os.environ.get("CAO_TERMINAL_ID", "unknown")
+            try:
+                supervisor_id = _current_terminal_id()
+            except ValueError:
+                supervisor_id = "unknown"
             handoff_message = (
                 f"[CAO Handoff] Supervisor terminal ID: {supervisor_id}. "
                 "This is a blocking handoff — the orchestrator will automatically "

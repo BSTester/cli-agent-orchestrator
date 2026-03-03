@@ -1147,6 +1147,44 @@ def test_console_tasks_success(client: TestClient) -> None:
         assert body["teams"][0]["scheduled_tasks"][0]["name"] == "flowA"
 
 
+def test_console_tasks_handles_flow_fetch_failure(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._get_terminals_from_sessions", return_value=[]),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._build_organization",
+            return_value={
+                "leaders": [],
+                "workers": [],
+                "leader_groups": [
+                    {
+                        "leader": {
+                            "id": "leader1",
+                            "agent_profile": "code_supervisor",
+                            "session_name": "cao-team1",
+                        },
+                        "members": [],
+                    }
+                ],
+                "unassigned_workers": [],
+            },
+        ),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._request_cao",
+            side_effect=requests.exceptions.RequestException("boom"),
+        ),
+    ):
+        response = client.get("/console/tasks")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["teams"]) == 1
+        assert body["teams"][0]["leader"]["id"] == "leader1"
+        assert body["teams"][0]["scheduled_tasks"] == []
+        assert body["unassigned_scheduled_tasks"] == []
+
+
 def test_list_latest_task_titles_reads_terminal_latest_tasks(tmp_path: Path) -> None:
     from cli_agent_orchestrator.control_panel.main import _list_latest_task_titles
 

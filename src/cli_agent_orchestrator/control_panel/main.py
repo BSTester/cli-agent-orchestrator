@@ -1539,9 +1539,13 @@ async def console_tasks() -> Dict[str, Any]:
         terminal_ids = [str(item.get("id", "")) for item in terminals if isinstance(item, dict)]
         latest_task_titles = await asyncio.to_thread(_list_latest_task_titles, terminal_ids)
 
-        flows_response = await asyncio.to_thread(_request_cao, "GET", "/flows")
-        flow_items = await asyncio.to_thread(_response_json_or_text, flows_response)
-        if not isinstance(flow_items, list):
+        try:
+            flows_response = await asyncio.to_thread(_request_cao, "GET", "/flows")
+            flow_items = await asyncio.to_thread(_response_json_or_text, flows_response)
+            if not isinstance(flow_items, list):
+                flow_items = []
+        except requests.exceptions.RequestException as exc:
+            logger.warning("Failed to fetch flows for console tasks: %s", exc)
             flow_items = []
 
         leader_groups = organization.get("leader_groups", [])
