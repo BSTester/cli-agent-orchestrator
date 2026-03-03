@@ -29,12 +29,16 @@ export default function ConsoleNav() {
   return (
     <header
       style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 10,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         padding: "12px 18px",
         borderBottom: "1px solid var(--border)",
         background: "var(--surface)",
+        backdropFilter: "blur(10px)",
       }}
     >
       <div style={{ fontWeight: 700, color: "var(--text-bright)" }}>一人集团公司</div>
