@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 REQUEST_TIMEOUT_SECONDS = 15
 REQUEST_RETRY_ATTEMPTS = 3
 REQUEST_RETRY_BACKOFF_SECONDS = 0.5
+WORK_AGENT_CREATE_RETRY_ATTEMPTS = 3
 PROVIDER_READY_TIMEOUT_SECONDS = 120.0
 PROVIDER_READY_STATUSES = {TerminalStatus.IDLE, TerminalStatus.COMPLETED}
 ASSIGN_POST_READY_STABILIZATION_SECONDS = 2.0
@@ -102,6 +103,33 @@ def _request_with_retry(method: str, url: str, **kwargs: Any) -> requests.Respon
     if last_error is None:
         raise RuntimeError("Request failed without exception details")
     raise last_error
+
+
+def _create_terminal_with_retry(
+    agent_profile: str,
+    working_directory: Optional[str] = None,
+    provider: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Create terminal with bounded retry to avoid infinite loops on failure."""
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, WORK_AGENT_CREATE_RETRY_ATTEMPTS + 1):
+        try:
+            return _create_terminal(agent_profile, working_directory=working_directory, provider=provider)
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Create worker terminal attempt %s/%s failed: %s",
+                attempt,
+                WORK_AGENT_CREATE_RETRY_ATTEMPTS,
+                exc,
+            )
+            if attempt < WORK_AGENT_CREATE_RETRY_ATTEMPTS:
+                time.sleep(REQUEST_RETRY_BACKOFF_SECONDS * attempt)
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Failed to create worker terminal without exception details")
 
 
 def _create_terminal(
@@ -266,7 +294,7 @@ async def _handoff_impl(
     try:
         message = _inject_terminal_id(message)
         # Create terminal
-        terminal_id, provider = _create_terminal(
+        terminal_id, provider = _create_terminal_with_retry(
             agent_profile, working_directory=working_directory, provider=provider
         )
 
@@ -503,7 +531,7 @@ def _assign_impl(
             }
 
         # Create terminal
-        terminal_id, resolved_provider = _create_terminal(
+        terminal_id, resolved_provider = _create_terminal_with_retry(
             agent_profile, working_directory=working_directory, provider=provider
         )
 
