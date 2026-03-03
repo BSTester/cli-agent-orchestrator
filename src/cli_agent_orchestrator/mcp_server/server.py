@@ -682,7 +682,7 @@ async def send_message(
 
 def main():
     """Main entry point for the MCP server."""
-    mcp.run()
+    mcp.run(show_banner=False, log_level="WARNING")
 
 
 if __name__ == "__main__":
