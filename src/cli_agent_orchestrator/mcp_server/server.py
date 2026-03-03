@@ -70,6 +70,19 @@ def _current_terminal_id() -> str:
     raise ValueError("CAO_TERMINAL_ID not set")
 
 
+def _inject_terminal_id(message: str) -> str:
+    """Replace common terminal ID placeholders in outgoing messages."""
+    try:
+        terminal_id = _current_terminal_id()
+    except ValueError:
+        return message
+
+    return (
+        message.replace("${CAO_TERMINAL_ID}", terminal_id)
+        .replace("${process.env.CAO_TERMINAL_ID}", terminal_id)
+    )
+
+
 def _request_with_retry(method: str, url: str, **kwargs: Any) -> requests.Response:
     """Send HTTP request with simple retry for transient connection errors."""
     timeout = kwargs.pop("timeout", REQUEST_TIMEOUT_SECONDS)
@@ -251,6 +264,7 @@ async def _handoff_impl(
     start_time = time.time()
 
     try:
+        message = _inject_terminal_id(message)
         # Create terminal
         terminal_id, provider = _create_terminal(
             agent_profile, working_directory=working_directory, provider=provider
@@ -480,6 +494,7 @@ def _assign_impl(
 ) -> Dict[str, Any]:
     """Implementation of assign logic."""
     try:
+        message = _inject_terminal_id(message)
         if not message.strip():
             return {
                 "success": False,
