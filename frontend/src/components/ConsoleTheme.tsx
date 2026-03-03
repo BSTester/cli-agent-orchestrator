@@ -254,6 +254,8 @@ type CodeEditorInputProps = {
   showToolbar?: boolean;
   enableFormat?: boolean;
   defaultReadOnly?: boolean;
+  showReadOnlyToggle?: boolean;
+  showCopyButton?: boolean;
   style?: CSSProperties;
 };
 
@@ -267,10 +269,24 @@ export function CodeEditorInput({
   showToolbar = false,
   enableFormat = false,
   defaultReadOnly = false,
+  showReadOnlyToggle = true,
+  showCopyButton = false,
   style,
 }: CodeEditorInputProps) {
   const [isReadOnly, setIsReadOnly] = useState(defaultReadOnly);
   const [lineWrap, setLineWrap] = useState(true);
+  const [copyLabel, setCopyLabel] = useState("复制");
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(value || "");
+      setCopyLabel("已复制");
+      setTimeout(() => setCopyLabel("复制"), 1200);
+    } catch {
+      setCopyLabel("复制失败");
+      setTimeout(() => setCopyLabel("复制"), 1200);
+    }
+  }
 
   const resolvedLanguage = useMemo<CodeEditorLanguage>(() => {
     if (language === "auto") {
@@ -377,21 +393,40 @@ export function CodeEditorInput({
             >
               {lineWrap ? "关闭换行" : "自动换行"}
             </button>
-            <button
-              type="button"
-              onClick={() => setIsReadOnly((prev) => !prev)}
-              style={{
-                border: "1px solid var(--border)",
-                background: "var(--surface)",
-                color: "var(--text)",
-                borderRadius: 6,
-                fontSize: 12,
-                padding: "3px 8px",
-                cursor: "pointer",
-              }}
-            >
-              {isReadOnly ? "切换可编辑" : "切换只读"}
-            </button>
+            {showCopyButton && (
+              <button
+                type="button"
+                onClick={handleCopy}
+                style={{
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                {copyLabel}
+              </button>
+            )}
+            {showReadOnlyToggle && (
+              <button
+                type="button"
+                onClick={() => setIsReadOnly((prev) => !prev)}
+                style={{
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                {isReadOnly ? "切换可编辑" : "切换只读"}
+              </button>
+            )}
           </div>
         </div>
       )}

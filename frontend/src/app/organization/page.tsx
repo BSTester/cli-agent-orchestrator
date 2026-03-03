@@ -357,21 +357,23 @@ export default function OrganizationPage() {
     setError("");
     setNotice("");
 
-    if (!currentTarget.sessionName) {
-      setError("解散团队失败：负责人缺少会话信息，无法按会话关闭");
-      await loadOrganization();
-      return;
-    }
-
-    const result = await caoRequest("DELETE", `/sessions/${encodeURIComponent(currentTarget.sessionName)}`);
+    const result = await caoRequest(
+      "POST",
+      `/console/organization/${encodeURIComponent(currentTarget.leaderId)}/disband`,
+      {
+        body: {
+          session_name: currentTarget.sessionName || undefined,
+        },
+      }
+    );
     if (!result.ok) {
       const detail = extractErrorDetail(result.data);
-      setError(detail ? `解散团队失败：${detail}` : "解散团队失败：无法关闭团队会话");
+      setError(detail ? `解散团队失败：${detail}` : "解散团队失败");
       await loadOrganization();
       return;
     }
 
-    setNotice(`已解散团队：${currentTarget.leaderName}（${currentTarget.sessionName}）`);
+    setNotice(`已解散团队：${currentTarget.leaderName}${currentTarget.sessionName ? `（${currentTarget.sessionName}）` : ""}`);
 
     await loadOrganization();
   }
@@ -804,7 +806,7 @@ export default function OrganizationPage() {
         </section>
 
         <SectionCard>
-          <SectionTitle title="集团团队架构（负责人 → 员工）" />
+          <SectionTitle title="集团团队架构" />
           {groups.length === 0 ? (
             <EmptyState text="暂无团队" />
           ) : (
@@ -972,7 +974,7 @@ export default function OrganizationPage() {
                 团队成员数：{disbandTarget.memberIds.length}
               </div>
               <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 14 }}>
-                确认后将按会话一次性关闭当前团队全部终端（等价于 shutdown --session），不会影响其他团队。
+                确认后将按会话一次性关闭当前团队全部终端，不会影响其他团队。
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <SecondaryButton type="button" onClick={cancelDisbandTeam}>

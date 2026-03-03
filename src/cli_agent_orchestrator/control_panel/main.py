@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Literal, Optional
 import requests
 import frontmatter
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -31,6 +31,7 @@ from cli_agent_orchestrator.constants import (
     API_BASE_URL,
     DATABASE_FILE,
     DB_DIR,
+    DEFAULT_PROVIDER,
 )
 from cli_agent_orchestrator.clients.tmux import tmux_client
 
@@ -133,6 +134,28 @@ def _init_organization_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS org_team_runtime (
+                leader_id TEXT PRIMARY KEY,
+                terminal_id TEXT,
+                session_name TEXT,
+                provider TEXT,
+                agent_profile TEXT,
+                working_directory TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS org_terminal_id_aliases (
+                old_terminal_id TEXT PRIMARY KEY,
+                new_terminal_id TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
 
         # Migrate historical flow-team links into flows.session_name as single source.
         flows_table_row = conn.execute(
@@ -216,6 +239,24 @@ def _list_teams() -> set[str]:
     with sqlite3.connect(str(DATABASE_FILE)) as conn:
         rows = conn.execute("SELECT leader_id FROM org_teams").fetchall()
     return {str(leader_id) for (leader_id,) in rows}
+
+
+def _remove_team(leader_id: str) -> None:
+    normalized_leader_id = (leader_id or "").strip()
+    if not normalized_leader_id:
+        return
+
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute("DELETE FROM org_teams WHERE leader_id = ?", (normalized_leader_id,))
+        conn.execute("DELETE FROM org_worker_links WHERE leader_id = ?", (normalized_leader_id,))
+        conn.execute("DELETE FROM org_team_aliases WHERE leader_id = ?", (normalized_leader_id,))
+        conn.execute("DELETE FROM org_team_workdirs WHERE leader_id = ?", (normalized_leader_id,))
+        conn.execute("DELETE FROM org_team_runtime WHERE leader_id = ?", (normalized_leader_id,))
+        conn.execute(
+            "DELETE FROM flow_team_links WHERE leader_id = ?",
+            (normalized_leader_id,),
+        )
+        conn.commit()
 
 
 def _set_flow_team_link(flow_name: str, leader_id: Optional[str]) -> None:
@@ -324,6 +365,263 @@ def _list_team_working_directories() -> Dict[str, str]:
         for leader_id, working_directory in rows
         if leader_id and working_directory
     }
+
+
+def _upsert_team_runtime(
+    leader_id: str,
+    *,
+    terminal_id: Optional[str],
+    session_name: Optional[str],
+    provider: Optional[str],
+    agent_profile: Optional[str],
+    working_directory: Optional[str],
+) -> None:
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute(
+            """
+            INSERT INTO org_team_runtime (
+                leader_id,
+                terminal_id,
+                session_name,
+                provider,
+                agent_profile,
+                working_directory,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(leader_id) DO UPDATE SET
+                terminal_id=excluded.terminal_id,
+                session_name=excluded.session_name,
+                provider=excluded.provider,
+                agent_profile=excluded.agent_profile,
+                working_directory=excluded.working_directory,
+                updated_at=excluded.updated_at
+            """,
+            (
+                leader_id,
+                terminal_id,
+                session_name,
+                provider,
+                agent_profile,
+                working_directory,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def _get_team_runtime(leader_id: str) -> Optional[Dict[str, Optional[str]]]:
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        row = conn.execute(
+            """
+            SELECT leader_id, terminal_id, session_name, provider, agent_profile, working_directory
+            FROM org_team_runtime
+            WHERE leader_id = ?
+            """,
+            (leader_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "leader_id": str(row[0]),
+        "terminal_id": str(row[1]) if row[1] else None,
+        "session_name": str(row[2]) if row[2] else None,
+        "provider": str(row[3]) if row[3] else None,
+        "agent_profile": str(row[4]) if row[4] else None,
+        "working_directory": str(row[5]) if row[5] else None,
+    }
+
+
+def _add_terminal_id_alias(old_terminal_id: str, new_terminal_id: str) -> None:
+    normalized_old = (old_terminal_id or "").strip()
+    normalized_new = (new_terminal_id or "").strip()
+    if not normalized_old or not normalized_new or normalized_old == normalized_new:
+        return
+
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute(
+            """
+            INSERT INTO org_terminal_id_aliases (old_terminal_id, new_terminal_id, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(old_terminal_id) DO UPDATE SET
+                new_terminal_id=excluded.new_terminal_id,
+                updated_at=excluded.updated_at
+            """,
+            (
+                normalized_old,
+                normalized_new,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def _resolve_terminal_id_alias(terminal_id: str) -> str:
+    current = (terminal_id or "").strip()
+    if not current:
+        return current
+
+    visited: set[str] = set()
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        while current and current not in visited:
+            visited.add(current)
+            row = conn.execute(
+                "SELECT new_terminal_id FROM org_terminal_id_aliases WHERE old_terminal_id = ?",
+                (current,),
+            ).fetchone()
+            if not row or not row[0]:
+                break
+            current = str(row[0]).strip()
+    return current
+
+
+def _get_terminal_db_metadata(terminal_id: str) -> Optional[Dict[str, str]]:
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        row = conn.execute(
+            """
+            SELECT id, tmux_session, tmux_window, provider, agent_profile
+            FROM terminals
+            WHERE id = ?
+            """,
+            (terminal_id,),
+        ).fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "id": str(row[0]),
+        "tmux_session": str(row[1] or ""),
+        "tmux_window": str(row[2] or ""),
+        "provider": str(row[3] or ""),
+        "agent_profile": str(row[4] or ""),
+    }
+
+
+def _resolve_team_working_directory_for_assets(leader_id: str) -> Path:
+    team_workdirs = _list_team_working_directories()
+    workdir = (team_workdirs.get(leader_id) or "").strip()
+    if not workdir:
+        runtime = _get_team_runtime(leader_id)
+        workdir = (runtime or {}).get("working_directory") or ""
+        workdir = workdir.strip()
+    if not workdir:
+        raise HTTPException(status_code=404, detail="Team working directory not configured")
+
+    root = Path(workdir).expanduser().resolve()
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(status_code=404, detail="Team working directory not found")
+    return root
+
+
+def _resolve_asset_relative_path(relative_path: str) -> str:
+    normalized = (relative_path or "").strip()
+    if not normalized:
+        return ""
+    if normalized.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    target = Path(normalized)
+    if any(part in {"", ".", ".."} for part in target.parts):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    return target.as_posix()
+
+
+def _resolve_asset_target(root: Path, relative_path: str) -> Path:
+    normalized = _resolve_asset_relative_path(relative_path)
+    target = (root / normalized).resolve() if normalized else root
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path out of team working directory")
+    return target
+
+
+def _rekey_leader_id(old_leader_id: str, new_leader_id: str) -> None:
+    old_id = (old_leader_id or "").strip()
+    new_id = (new_leader_id or "").strip()
+    if not old_id or not new_id or old_id == new_id:
+        return
+
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute("INSERT OR IGNORE INTO org_teams (leader_id, created_at) VALUES (?, ?)", (new_id, datetime.now(timezone.utc).isoformat()))
+        conn.execute("UPDATE org_worker_links SET leader_id = ? WHERE leader_id = ?", (new_id, old_id))
+        conn.execute("UPDATE flow_team_links SET leader_id = ? WHERE leader_id = ?", (new_id, old_id))
+
+        alias_row = conn.execute(
+            "SELECT alias, updated_at FROM org_team_aliases WHERE leader_id = ?",
+            (old_id,),
+        ).fetchone()
+        if alias_row and alias_row[0]:
+            conn.execute(
+                """
+                INSERT INTO org_team_aliases (leader_id, alias, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(leader_id) DO UPDATE SET alias=excluded.alias, updated_at=excluded.updated_at
+                """,
+                (new_id, str(alias_row[0]), datetime.now(timezone.utc).isoformat()),
+            )
+
+        workdir_row = conn.execute(
+            "SELECT working_directory FROM org_team_workdirs WHERE leader_id = ?",
+            (old_id,),
+        ).fetchone()
+        if workdir_row and workdir_row[0]:
+            conn.execute(
+                """
+                INSERT INTO org_team_workdirs (leader_id, working_directory, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(leader_id) DO UPDATE SET working_directory=excluded.working_directory, updated_at=excluded.updated_at
+                """,
+                (new_id, str(workdir_row[0]), datetime.now(timezone.utc).isoformat()),
+            )
+
+        runtime_row = conn.execute(
+            """
+            SELECT terminal_id, session_name, provider, agent_profile, working_directory
+            FROM org_team_runtime
+            WHERE leader_id = ?
+            """,
+            (old_id,),
+        ).fetchone()
+        if runtime_row:
+            conn.execute(
+                """
+                INSERT INTO org_team_runtime (
+                    leader_id,
+                    terminal_id,
+                    session_name,
+                    provider,
+                    agent_profile,
+                    working_directory,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(leader_id) DO UPDATE SET
+                    terminal_id=excluded.terminal_id,
+                    session_name=excluded.session_name,
+                    provider=excluded.provider,
+                    agent_profile=excluded.agent_profile,
+                    working_directory=excluded.working_directory,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    new_id,
+                    runtime_row[0],
+                    runtime_row[1],
+                    runtime_row[2],
+                    runtime_row[3],
+                    runtime_row[4],
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+        conn.execute("DELETE FROM org_teams WHERE leader_id = ?", (old_id,))
+        conn.execute("DELETE FROM org_team_aliases WHERE leader_id = ?", (old_id,))
+        conn.execute("DELETE FROM org_team_workdirs WHERE leader_id = ?", (old_id,))
+        conn.execute("DELETE FROM org_team_runtime WHERE leader_id = ?", (old_id,))
+        conn.commit()
+
+    _add_terminal_id_alias(old_id, new_id)
 
 
 def _home_directory() -> Path:
@@ -1114,7 +1412,8 @@ def _response_json_or_text(response: requests.Response) -> Any:
 
 
 def _get_terminal_tmux_target(terminal_id: str) -> tuple[str, str]:
-    terminal_response = _request_cao("GET", f"/terminals/{terminal_id}")
+    resolved_terminal_id = _resolve_terminal_id_alias(terminal_id)
+    terminal_response = _request_cao("GET", f"/terminals/{resolved_terminal_id}")
     terminal_data = _response_json_or_text(terminal_response)
     if not isinstance(terminal_data, dict):
         raise HTTPException(status_code=502, detail="Invalid terminal metadata from cao-server")
@@ -1144,7 +1443,10 @@ def _get_terminal_tmux_target(terminal_id: str) -> tuple[str, str]:
             logger.warning("Failed to resolve tmux window from session terminal list: %s", exc)
 
     if not tmux_session or not tmux_window:
-        raise HTTPException(status_code=404, detail=f"Terminal {terminal_id} has no tmux target")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Terminal {resolved_terminal_id} has no tmux target",
+        )
 
     return tmux_session, tmux_window
 
@@ -1188,6 +1490,142 @@ def _get_terminals_from_sessions() -> list[Dict[str, Any]]:
     return enriched_terminals
 
 
+def _list_live_sessions() -> set[str]:
+    sessions_response = _request_cao("GET", "/sessions")
+    sessions_data = _response_json_or_text(sessions_response)
+    if not isinstance(sessions_data, list):
+        return set()
+    return {
+        str(item.get("name", "")).strip()
+        for item in sessions_data
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    }
+
+
+def _find_live_leader_terminal(session_name: str) -> Optional[Dict[str, Any]]:
+    session_terminals_response = _request_cao("GET", f"/sessions/{session_name}/terminals")
+    session_terminals_data = _response_json_or_text(session_terminals_response)
+    if not isinstance(session_terminals_data, list):
+        return None
+
+    for terminal in session_terminals_data:
+        if not isinstance(terminal, dict):
+            continue
+        profile = str(terminal.get("agent_profile", "")).lower()
+        if "supervisor" in profile and str(terminal.get("id", "")).strip():
+            return terminal
+    return None
+
+
+def _default_restore_session_name(leader_id: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_.-]", "-", leader_id.strip())
+    normalized = normalized.strip("-.")
+    if not normalized:
+        normalized = uuid.uuid4().hex[:8]
+    return _validate_flow_session_name(f"cao-team-{normalized[:20]}")
+
+
+def _ensure_team_leader_online(leader_id: str) -> Dict[str, Any]:
+    normalized_leader_id = leader_id.strip()
+    if not normalized_leader_id:
+        raise HTTPException(status_code=400, detail="leader_id cannot be empty")
+
+    team_ids = _list_teams()
+    if normalized_leader_id not in team_ids:
+        raise HTTPException(status_code=404, detail=f"Team not found for leader_id: {normalized_leader_id}")
+
+    runtime = _get_team_runtime(normalized_leader_id) or {}
+    runtime_terminal_id = str(runtime.get("terminal_id") or "").strip()
+    runtime_session_name = str(runtime.get("session_name") or "").strip()
+    runtime_provider = str(runtime.get("provider") or "").strip()
+    runtime_profile = str(runtime.get("agent_profile") or "").strip()
+    runtime_workdir = str(runtime.get("working_directory") or "").strip()
+
+    source_terminal_id = runtime_terminal_id or normalized_leader_id
+    source_terminal = _get_terminal_db_metadata(source_terminal_id)
+
+    provider = runtime_provider or (source_terminal or {}).get("provider") or DEFAULT_PROVIDER
+    agent_profile = runtime_profile or (source_terminal or {}).get("agent_profile") or "code_supervisor"
+    session_name = runtime_session_name or (source_terminal or {}).get("tmux_session") or _default_restore_session_name(normalized_leader_id)
+    session_name = _validate_flow_session_name(session_name)
+
+    working_directory = runtime_workdir
+    if not working_directory:
+        team_workdirs = _list_team_working_directories()
+        working_directory = str(team_workdirs.get(normalized_leader_id) or "").strip()
+
+    live_sessions = _list_live_sessions()
+    if session_name in live_sessions:
+        live_terminal = _find_live_leader_terminal(session_name)
+        if live_terminal:
+            live_terminal_id = str(live_terminal.get("id") or "").strip()
+            if live_terminal_id:
+                if normalized_leader_id != live_terminal_id:
+                    _rekey_leader_id(normalized_leader_id, live_terminal_id)
+                    normalized_leader_id = live_terminal_id
+                _upsert_team_runtime(
+                    normalized_leader_id,
+                    terminal_id=live_terminal_id,
+                    session_name=session_name,
+                    provider=str(live_terminal.get("provider") or provider),
+                    agent_profile=str(live_terminal.get("agent_profile") or agent_profile),
+                    working_directory=working_directory or None,
+                )
+                terminal_response = _request_cao("GET", f"/terminals/{live_terminal_id}")
+                terminal_data = _response_json_or_text(terminal_response)
+                return {
+                    "ok": True,
+                    "restored": False,
+                    "leader_id": normalized_leader_id,
+                    "session_name": session_name,
+                    "terminal_id": live_terminal_id,
+                    "leader": terminal_data if isinstance(terminal_data, dict) else live_terminal,
+                }
+
+        _request_cao("DELETE", f"/sessions/{session_name}")
+
+    params: Dict[str, str] = {
+        "agent_profile": agent_profile,
+        "session_name": session_name,
+    }
+    if provider:
+        params["provider"] = provider
+    if working_directory:
+        params["working_directory"] = working_directory
+
+    created_response = _request_cao("POST", "/sessions", params=params)
+    created_leader = _response_json_or_text(created_response)
+    if not isinstance(created_leader, dict):
+        raise HTTPException(status_code=502, detail="Invalid response while restoring team leader")
+
+    new_terminal_id = str(created_leader.get("id") or "").strip()
+    restored_session_name = str(created_leader.get("session_name") or session_name).strip()
+    if not new_terminal_id:
+        raise HTTPException(status_code=502, detail="Missing leader terminal id after restore")
+
+    if normalized_leader_id != new_terminal_id:
+        _rekey_leader_id(normalized_leader_id, new_terminal_id)
+        normalized_leader_id = new_terminal_id
+
+    _upsert_team_runtime(
+        normalized_leader_id,
+        terminal_id=new_terminal_id,
+        session_name=restored_session_name,
+        provider=str(created_leader.get("provider") or provider),
+        agent_profile=str(created_leader.get("agent_profile") or agent_profile),
+        working_directory=working_directory or None,
+    )
+
+    return {
+        "ok": True,
+        "restored": True,
+        "leader_id": normalized_leader_id,
+        "session_name": restored_session_name,
+        "terminal_id": new_terminal_id,
+        "leader": created_leader,
+    }
+
+
 def _resolve_sender_id(receiver_id: str) -> Optional[str]:
     try:
         receiver_response = _request_cao("GET", f"/terminals/{receiver_id}")
@@ -1224,6 +1662,10 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
         terminal["id"]: terminal for terminal in terminals if isinstance(terminal.get("id"), str)
     }
     teams_from_db = _list_teams()
+    team_runtimes = {
+        leader_id: _get_team_runtime(leader_id)
+        for leader_id in teams_from_db
+    }
 
     main_candidates = [terminal for terminal in terminals if terminal.get("is_main")]
     leaders_by_session: Dict[str, List[Dict[str, Any]]] = {}
@@ -1257,13 +1699,30 @@ def _build_organization(terminals: List[Dict[str, Any]]) -> Dict[str, Any]:
     for leader_id in teams_from_db:
         if leader_id in leader_ids:
             continue
-        team_leader = terminals_by_id.get(leader_id)
-        if not team_leader:
+        runtime = team_runtimes.get(leader_id) or {}
+        runtime_terminal_id = str((runtime or {}).get("terminal_id") or "").strip()
+        team_leader = terminals_by_id.get(runtime_terminal_id) or terminals_by_id.get(leader_id)
+
+        if team_leader:
+            team_leader_copy = dict(team_leader)
+            team_leader_copy["is_main"] = True
+            team_leader_copy["team_type"] = "independent_worker_team"
+            leaders.append(team_leader_copy)
+            leader_ids.add(str(team_leader_copy.get("id", "")))
             continue
-        team_leader_copy = dict(team_leader)
-        team_leader_copy["is_main"] = True
-        team_leader_copy["team_type"] = "independent_worker_team"
-        leaders.append(team_leader_copy)
+
+        offline_leader: Dict[str, Any] = {
+            "id": leader_id,
+            "provider": str((runtime or {}).get("provider") or DEFAULT_PROVIDER),
+            "agent_profile": str((runtime or {}).get("agent_profile") or "code_supervisor"),
+            "session_name": str((runtime or {}).get("session_name") or ""),
+            "status": "OFFLINE",
+            "is_main": True,
+            "is_offline": True,
+            "team_type": "offline_team",
+            "last_active": None,
+        }
+        leaders.append(offline_leader)
         leader_ids.add(leader_id)
 
     workers = []
@@ -1545,6 +2004,119 @@ async def console_home_workdirs() -> Dict[str, Any]:
         "home_directory": str(home_dir),
         "directories": directories,
     }
+
+
+@app.get("/console/assets/teams")
+async def console_team_assets() -> Dict[str, Any]:
+    terminals = await asyncio.to_thread(_get_terminals_from_sessions)
+    organization = await asyncio.to_thread(_build_organization, terminals)
+    teams: List[Dict[str, Any]] = []
+
+    for group in organization.get("leader_groups", []):
+        if not isinstance(group, dict):
+            continue
+        leader = group.get("leader")
+        if not isinstance(leader, dict):
+            continue
+        leader_id = str(leader.get("id") or "").strip()
+        if not leader_id:
+            continue
+
+        working_directory = str(group.get("team_working_directory") or "").strip()
+        if not working_directory:
+            runtime = await asyncio.to_thread(_get_team_runtime, leader_id)
+            working_directory = str((runtime or {}).get("working_directory") or "").strip()
+
+        if not working_directory:
+            continue
+
+        team_name = (
+            str(group.get("team_alias") or "").strip()
+            or str(leader.get("alias") or "").strip()
+            or str(leader.get("session_name") or "").strip()
+            or leader_id
+        )
+        teams.append(
+            {
+                "leader_id": leader_id,
+                "team_name": team_name,
+                "working_directory": working_directory,
+                "leader": leader,
+            }
+        )
+
+    return {"teams": teams}
+
+
+@app.get("/console/assets/teams/{leader_id}/tree")
+async def console_team_assets_tree(leader_id: str, path: str = "") -> Dict[str, Any]:
+    root = await asyncio.to_thread(_resolve_team_working_directory_for_assets, leader_id)
+    target = await asyncio.to_thread(_resolve_asset_target, root, path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="Path is not a directory")
+
+    entries: List[Dict[str, Any]] = []
+    for child in sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+        relative = child.relative_to(root).as_posix()
+        stat = child.stat()
+        entries.append(
+            {
+                "name": child.name,
+                "path": relative,
+                "is_dir": child.is_dir(),
+                "size": stat.st_size if child.is_file() else None,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            }
+        )
+
+    normalized_path = _resolve_asset_relative_path(path)
+    return {
+        "leader_id": leader_id,
+        "working_directory": str(root),
+        "path": normalized_path,
+        "entries": entries,
+    }
+
+
+@app.get("/console/assets/teams/{leader_id}/file")
+async def console_team_asset_file(leader_id: str, path: str) -> Dict[str, Any]:
+    root = await asyncio.to_thread(_resolve_team_working_directory_for_assets, leader_id)
+    target = await asyncio.to_thread(_resolve_asset_target, root, path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    max_bytes = 1_000_000
+    if target.stat().st_size > max_bytes:
+        raise HTTPException(status_code=400, detail="File too large to preview online")
+
+    try:
+        content = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="Only UTF-8 text files can be previewed")
+
+    return {
+        "leader_id": leader_id,
+        "working_directory": str(root),
+        "path": target.relative_to(root).as_posix(),
+        "file_path": str(target),
+        "content": content,
+    }
+
+
+@app.get("/console/assets/teams/{leader_id}/download")
+async def console_team_asset_download(leader_id: str, path: str) -> FileResponse:
+    root = await asyncio.to_thread(_resolve_team_working_directory_for_assets, leader_id)
+    target = await asyncio.to_thread(_resolve_asset_target, root, path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    return FileResponse(path=str(target), filename=target.name)
 
 
 @app.get("/console/tasks")
@@ -2071,6 +2643,20 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
                     await asyncio.to_thread(_set_team_alias, leader_id, payload.team_alias)
                 if payload.agent_alias:
                     await asyncio.to_thread(_set_agent_alias, leader_id, payload.agent_alias)
+                await asyncio.to_thread(
+                    _upsert_team_runtime,
+                    leader_id,
+                    terminal_id=leader_id,
+                    session_name=str(created_agent.get("session_name") or "").strip() or None,
+                    provider=str(created_agent.get("provider") or params.get("provider") or "").strip() or None,
+                    agent_profile=str(created_agent.get("agent_profile") or payload.agent_profile).strip() or None,
+                    working_directory=str(
+                        main_team_working_directory
+                        or params.get("working_directory")
+                        or ""
+                    ).strip()
+                    or None,
+                )
             return {
                 "ok": True,
                 "role_type": payload.role_type,
@@ -2125,6 +2711,15 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
                 await asyncio.to_thread(_set_team_alias, created_agent_id, payload.team_alias)
             if payload.agent_alias:
                 await asyncio.to_thread(_set_agent_alias, created_agent_id, payload.agent_alias)
+            await asyncio.to_thread(
+                _upsert_team_runtime,
+                created_agent_id,
+                terminal_id=created_agent_id,
+                session_name=str(created_agent.get("session_name") or "").strip() or None,
+                provider=str(created_agent.get("provider") or params.get("provider") or "").strip() or None,
+                agent_profile=str(created_agent.get("agent_profile") or payload.agent_profile).strip() or None,
+                working_directory=str(params.get("working_directory") or "").strip() or None,
+            )
         return {
             "ok": True,
             "role_type": payload.role_type,
@@ -2158,73 +2753,119 @@ async def console_disband_team(leader_id: str, payload: Optional[OrgDisbandReque
     if not normalized_leader_id:
         raise HTTPException(status_code=400, detail="leader_id cannot be empty")
 
+    candidate_leader_id = _resolve_terminal_id_alias(normalized_leader_id)
+    team_ids = _list_teams()
+    if candidate_leader_id in team_ids:
+        normalized_leader_id = candidate_leader_id
+    elif normalized_leader_id not in team_ids:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    requested_session_raw = (payload.session_name if payload else None) or ""
+    requested_session_raw = requested_session_raw.strip()
+    requested_session_name = _validate_flow_session_name(requested_session_raw) if requested_session_raw else None
+
+    leader_session_name: Optional[str] = None
+
     try:
         leader_response = await asyncio.to_thread(
             _request_cao,
             "GET",
             f"/terminals/{normalized_leader_id}",
         )
-        leader_terminal = await asyncio.to_thread(_response_json_or_text, leader_response)
-        if not isinstance(leader_terminal, dict):
-            raise HTTPException(status_code=400, detail="Invalid leader terminal")
-
-        leader_session_raw = str(leader_terminal.get("session_name", "") or "").strip()
-        if not leader_session_raw:
-            raise HTTPException(status_code=400, detail="leader has no session")
-        leader_session_name = _validate_flow_session_name(leader_session_raw)
-
-        requested_session_raw = (payload.session_name if payload else None) or ""
-        requested_session_raw = requested_session_raw.strip()
-        if requested_session_raw:
-            requested_session_name = _validate_flow_session_name(requested_session_raw)
-            if requested_session_name != leader_session_name:
-                raise HTTPException(
-                    status_code=400,
-                    detail="leader_id and session_name mismatch",
-                )
-            session_name = requested_session_name
-        else:
-            session_name = leader_session_name
-
-        delete_response = await asyncio.to_thread(_request_cao, "DELETE", f"/sessions/{session_name}")
-        result = await asyncio.to_thread(_response_json_or_text, delete_response)
-        return {
-            "ok": True,
-            "leader_id": normalized_leader_id,
-            "session_name": session_name,
-            "result": result,
-        }
-    except HTTPException:
-        raise
+        leader_terminal_data = await asyncio.to_thread(_response_json_or_text, leader_response)
+        if isinstance(leader_terminal_data, dict):
+            leader_session_raw = str(leader_terminal_data.get("session_name", "") or "").strip()
+            if leader_session_raw:
+                leader_session_name = _validate_flow_session_name(leader_session_raw)
     except requests.exceptions.RequestException as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to disband team: {exc}")
+        logger.warning(
+            "Failed to fetch leader terminal %s while disbanding team, fallback to runtime: %s",
+            normalized_leader_id,
+            exc,
+        )
+
+    if not leader_session_name:
+        runtime = await asyncio.to_thread(_get_team_runtime, normalized_leader_id)
+        runtime_session = str((runtime or {}).get("session_name") or "").strip()
+        if runtime_session:
+            leader_session_name = _validate_flow_session_name(runtime_session)
+
+    if requested_session_name and leader_session_name and requested_session_name != leader_session_name:
+        raise HTTPException(
+            status_code=400,
+            detail="leader_id and session_name mismatch",
+        )
+
+    session_name = requested_session_name or leader_session_name
+    result: Dict[str, Any] = {"success": True, "session_deleted": False}
+    if session_name:
+        try:
+            live_sessions = await asyncio.to_thread(_list_live_sessions)
+            if session_name in live_sessions:
+                delete_response = await asyncio.to_thread(_request_cao, "DELETE", f"/sessions/{session_name}")
+                delete_result = await asyncio.to_thread(_response_json_or_text, delete_response)
+                result = {
+                    "success": True,
+                    "session_deleted": True,
+                    "delete_result": delete_result,
+                }
+        except requests.exceptions.RequestException as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to disband team session: {exc}")
+
+    await asyncio.to_thread(_remove_team, normalized_leader_id)
+    return {
+        "ok": True,
+        "leader_id": normalized_leader_id,
+        "session_name": session_name,
+        "result": result,
+    }
+
+
+@app.post("/console/organization/{leader_id}/ensure-online")
+async def console_ensure_team_online(leader_id: str) -> Dict[str, Any]:
+    try:
+        return await asyncio.to_thread(_ensure_team_leader_online, leader_id)
+    except requests.exceptions.HTTPError as exc:
+        upstream = exc.response
+        if upstream is not None:
+            try:
+                body = upstream.json()
+            except ValueError:
+                body = upstream.text
+            detail = body.get("detail") if isinstance(body, dict) else body
+            raise HTTPException(status_code=upstream.status_code, detail=detail or str(exc))
+        raise HTTPException(status_code=502, detail=f"Failed to ensure team online: {exc}")
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to ensure team online: {exc}")
 
 
 @app.post("/console/agents/{terminal_id}/input")
 async def send_input_to_agent(terminal_id: str, payload: AgentMessageRequest) -> Dict[str, Any]:
+    resolved_terminal_id = _resolve_terminal_id_alias(terminal_id)
     try:
         response = await asyncio.to_thread(
             _request_cao,
             "POST",
-            f"/terminals/{terminal_id}/input",
+            f"/terminals/{resolved_terminal_id}/input",
             {"message": payload.message},
         )
         body = await asyncio.to_thread(_response_json_or_text, response)
-        return {"ok": True, "terminal_id": terminal_id, "result": body}
+        return {"ok": True, "terminal_id": resolved_terminal_id, "result": body}
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to send input: {exc}")
 
 
 @app.post("/console/agents/{terminal_id}/tmux/input")
 async def send_input_to_agent_tmux(terminal_id: str, payload: AgentTmuxInputRequest) -> Dict[str, Any]:
+    resolved_terminal_id = _resolve_terminal_id_alias(terminal_id)
     try:
-        tmux_session, tmux_window = await asyncio.to_thread(_get_terminal_tmux_target, terminal_id)
+        tmux_session, tmux_window = await asyncio.to_thread(_get_terminal_tmux_target, resolved_terminal_id)
         await asyncio.to_thread(tmux_client.send_raw_input, tmux_session, tmux_window, payload.message)
         if payload.press_enter:
             await asyncio.to_thread(tmux_client.send_special_key, tmux_session, tmux_window, "C-m")
         return {
             "ok": True,
-            "terminal_id": terminal_id,
+            "terminal_id": resolved_terminal_id,
             "tmux_session": tmux_session,
             "tmux_window": tmux_window,
             "press_enter": payload.press_enter,
@@ -2240,8 +2881,9 @@ async def send_input_to_agent_tmux(terminal_id: str, payload: AgentTmuxInputRequ
 @app.get("/console/agents/{terminal_id}/tmux/output")
 async def get_agent_tmux_output(terminal_id: str, lines: int = 300) -> Dict[str, Any]:
     safe_lines = max(20, min(lines, 1000))
+    resolved_terminal_id = _resolve_terminal_id_alias(terminal_id)
     try:
-        tmux_session, tmux_window = await asyncio.to_thread(_get_terminal_tmux_target, terminal_id)
+        tmux_session, tmux_window = await asyncio.to_thread(_get_terminal_tmux_target, resolved_terminal_id)
         output = await asyncio.to_thread(
             tmux_client.get_history,
             tmux_session,
@@ -2249,7 +2891,7 @@ async def get_agent_tmux_output(terminal_id: str, lines: int = 300) -> Dict[str,
             safe_lines,
         )
         return {
-            "terminal_id": terminal_id,
+            "terminal_id": resolved_terminal_id,
             "tmux_session": tmux_session,
             "tmux_window": tmux_window,
             "lines": safe_lines,
@@ -2271,7 +2913,8 @@ async def stream_agent_tmux_ws(websocket: WebSocket, terminal_id: str) -> None:
         return
 
     try:
-        tmux_session, tmux_window = await asyncio.to_thread(_get_terminal_tmux_target, terminal_id)
+        resolved_terminal_id = _resolve_terminal_id_alias(terminal_id)
+        tmux_session, tmux_window = await asyncio.to_thread(_get_terminal_tmux_target, resolved_terminal_id)
     except Exception:
         await websocket.close(code=4404)
         return

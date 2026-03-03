@@ -142,6 +142,7 @@ export interface ConsoleAgent {
   agent_profile?: string;
   status?: string;
   is_main?: boolean;
+  is_offline?: boolean;
   last_active?: string;
 }
 
@@ -172,6 +173,49 @@ export interface ConsoleOrganization {
   workers: ConsoleAgent[];
   leader_groups: ConsoleLeaderGroup[];
   unassigned_workers: ConsoleAgent[];
+}
+
+export interface ConsoleEnsureOnlineResponse {
+  ok: boolean;
+  restored: boolean;
+  leader_id: string;
+  terminal_id: string;
+  session_name: string;
+  leader: ConsoleAgent;
+}
+
+export interface ConsoleAssetTeam {
+  leader_id: string;
+  team_name: string;
+  working_directory: string;
+  leader: ConsoleAgent;
+}
+
+export interface ConsoleAssetTeamsResponse {
+  teams: ConsoleAssetTeam[];
+}
+
+export interface ConsoleAssetEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size?: number | null;
+  modified_at?: string;
+}
+
+export interface ConsoleAssetTreeResponse {
+  leader_id: string;
+  working_directory: string;
+  path: string;
+  entries: ConsoleAssetEntry[];
+}
+
+export interface ConsoleAssetFileResponse {
+  leader_id: string;
+  working_directory: string;
+  path: string;
+  file_path: string;
+  content: string;
 }
 
 export interface ConsoleHomeDirectoryItem {

@@ -18,13 +18,20 @@ import {
   StatusPill,
 } from "@/components/ConsoleTheme";
 import RequireAuth from "@/components/RequireAuth";
-import { caoRequest, ConsoleAgent, ConsoleOrganization, ConsoleTasksResponse } from "@/lib/cao";
+import {
+  caoRequest,
+  ConsoleAgent,
+  ConsoleEnsureOnlineResponse,
+  ConsoleOrganization,
+  ConsoleTasksResponse,
+} from "@/lib/cao";
 import { isStatusActive, toStatusLabel } from "@/lib/status";
 
 export default function AgentsPage() {
   const [organization, setOrganization] = useState<ConsoleOrganization | null>(null);
   const [error, setError] = useState("");
   const [activeAgent, setActiveAgent] = useState<ConsoleAgent | null>(null);
+  const [openingLeaderId, setOpeningLeaderId] = useState("");
   const [taskTitleByAgent, setTaskTitleByAgent] = useState<Record<string, string>>({});
 
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
@@ -368,6 +375,31 @@ export default function AgentsPage() {
     setActiveAgent(agent);
   }
 
+  async function openLeaderDrawer(leader: ConsoleAgent) {
+    const leaderId = String(leader.id || "").trim();
+    if (!leaderId) {
+      return;
+    }
+
+    setOpeningLeaderId(leaderId);
+    setError("");
+
+    const ensureResult = await caoRequest<ConsoleEnsureOnlineResponse>(
+      "POST",
+      `/console/organization/${encodeURIComponent(leaderId)}/ensure-online`
+    );
+
+    if (!ensureResult.ok || !ensureResult.data?.leader) {
+      setError("恢复负责人会话失败");
+      setOpeningLeaderId("");
+      return;
+    }
+
+    setActiveAgent(ensureResult.data.leader);
+    await loadOrganization();
+    setOpeningLeaderId("");
+  }
+
   return (
     <RequireAuth>
       <ConsoleNav />
@@ -413,14 +445,20 @@ export default function AgentsPage() {
                 </div>
 
                 <div
-                  onClick={() => openAgentDrawer(group.leader)}
+                  onClick={() => {
+                    if (openingLeaderId) {
+                      return;
+                    }
+                    void openLeaderDrawer(group.leader);
+                  }}
                   style={{
                     border: "1px solid var(--border)",
                     borderRadius: 10,
                     padding: 10,
                     marginBottom: 12,
-                    cursor: "pointer",
+                    cursor: openingLeaderId ? "wait" : "pointer",
                     background: "var(--surface2)",
+                    opacity: openingLeaderId && openingLeaderId === group.leader.id ? 0.75 : 1,
                   }}
                 >
                   <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>
@@ -429,6 +467,11 @@ export default function AgentsPage() {
                   <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
                     会话标题：{group.leader.session_name || "-"} · ID: {group.leader.id} · {group.leader.agent_profile} · {group.leader.provider}
                   </div>
+                  {openingLeaderId === group.leader.id ? (
+                    <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 6 }}>
+                      正在恢复负责人会话...
+                    </div>
+                  ) : null}
                   <div style={{ display: "flex", marginTop: 6 }}>
                     <StatusPill
                       text={toStatusLabel(group.leader.status)}

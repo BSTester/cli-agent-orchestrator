@@ -843,6 +843,90 @@ def test_console_disband_team_allows_shared_multi_leader_session(client: TestCli
         assert mock_request_cao.call_count == 2
 
 
+def test_console_disband_team_removes_team_persistence(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch("cli_agent_orchestrator.control_panel.main._remove_team") as mock_remove_team,
+    ):
+        mock_request_cao.side_effect = [MagicMock(), MagicMock()]
+        mock_json.side_effect = [
+            {
+                "id": "leader1",
+                "agent_profile": "code_supervisor",
+                "session_name": "cao-team1",
+            },
+            {"success": True},
+        ]
+
+        response = client.post(
+            "/console/organization/leader1/disband",
+            json={"session_name": "cao-team1"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        mock_remove_team.assert_called_once_with("leader1")
+
+
+def test_console_disband_team_offline_uses_runtime_session_and_removes_team(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader-offline"}),
+        patch("cli_agent_orchestrator.control_panel.main._resolve_terminal_id_alias", return_value="leader-offline"),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text"),
+        patch("cli_agent_orchestrator.control_panel.main._get_team_runtime", return_value={"session_name": "cao-offline"}),
+        patch("cli_agent_orchestrator.control_panel.main._list_live_sessions", return_value=set()),
+        patch("cli_agent_orchestrator.control_panel.main._remove_team") as mock_remove_team,
+    ):
+        not_found_response = requests.Response()
+        not_found_response.status_code = 404
+        http_error = requests.exceptions.HTTPError("404 Not Found")
+        http_error.response = not_found_response
+        mock_request_cao.side_effect = [http_error]
+
+        response = client.post("/console/organization/leader-offline/disband")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["session_name"] == "cao-offline"
+        assert body["result"]["session_deleted"] is False
+        mock_remove_team.assert_called_once_with("leader-offline")
+
+
+def test_console_disband_team_ignores_leader_terminal_500_and_still_removes_team(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader-offline"}),
+        patch("cli_agent_orchestrator.control_panel.main._resolve_terminal_id_alias", return_value="leader-offline"),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._get_team_runtime", return_value={"session_name": "cao-offline"}),
+        patch("cli_agent_orchestrator.control_panel.main._list_live_sessions", return_value=set()),
+        patch("cli_agent_orchestrator.control_panel.main._remove_team") as mock_remove_team,
+    ):
+        upstream_500 = requests.Response()
+        upstream_500.status_code = 500
+        http_error = requests.exceptions.HTTPError("500 Internal Server Error")
+        http_error.response = upstream_500
+        mock_request_cao.side_effect = [http_error]
+
+        response = client.post("/console/organization/leader-offline/disband")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["leader_id"] == "leader-offline"
+        assert body["session_name"] == "cao-offline"
+        assert body["result"]["session_deleted"] is False
+        mock_remove_team.assert_called_once_with("leader-offline")
+
+
 def test_console_organization_collapses_same_session_supervisors_into_single_team(client: TestClient) -> None:
     login(client)
 
@@ -950,6 +1034,146 @@ def test_console_disband_team_rejects_leader_session_mismatch(client: TestClient
 
         assert response.status_code == 400
         assert response.json()["detail"] == "leader_id and session_name mismatch"
+
+
+def test_console_ensure_team_online_restores_leader_and_rekeys(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader1"}),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_team_runtime",
+            return_value={
+                "leader_id": "leader1",
+                "terminal_id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+                "working_directory": "/home/test/team-a",
+            },
+        ),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_terminal_db_metadata",
+            return_value={
+                "id": "leader1",
+                "tmux_session": "cao-team1",
+                "tmux_window": "code-supervisor",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+            },
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._list_team_working_directories", return_value={}),
+        patch("cli_agent_orchestrator.control_panel.main._list_live_sessions", return_value=set()),
+        patch("cli_agent_orchestrator.control_panel.main._rekey_leader_id") as mock_rekey,
+        patch("cli_agent_orchestrator.control_panel.main._upsert_team_runtime") as mock_runtime,
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+    ):
+        mock_request_cao.return_value = MagicMock()
+        mock_json.return_value = {
+            "id": "leader2",
+            "session_name": "cao-team1",
+            "provider": "kiro_cli",
+            "agent_profile": "code_supervisor",
+        }
+
+        response = client.post("/console/organization/leader1/ensure-online")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["restored"] is True
+        assert body["leader_id"] == "leader2"
+        assert body["terminal_id"] == "leader2"
+        mock_rekey.assert_called_once_with("leader1", "leader2")
+        mock_runtime.assert_called_once()
+
+
+def test_console_assets_team_listing(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._get_terminals_from_sessions", return_value=[]),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._build_organization",
+            return_value={
+                "leaders": [],
+                "workers": [],
+                "unassigned_workers": [],
+                "leader_groups": [
+                    {
+                        "leader": {
+                            "id": "leader1",
+                            "session_name": "cao-team1",
+                            "agent_profile": "code_supervisor",
+                            "provider": "kiro_cli",
+                        },
+                        "team_alias": "团队A",
+                        "team_working_directory": "/tmp/team-a",
+                        "members": [],
+                    }
+                ],
+            },
+        ),
+    ):
+        response = client.get("/console/assets/teams")
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["teams"]) == 1
+        assert body["teams"][0]["leader_id"] == "leader1"
+        assert body["teams"][0]["working_directory"] == "/tmp/team-a"
+
+
+def test_console_assets_tree_and_file_preview(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    team_root = tmp_path / "team-a"
+    docs_dir = team_root / "docs"
+    docs_dir.mkdir(parents=True)
+    readme = docs_dir / "README.md"
+    readme.write_text("hello team asset", encoding="utf-8")
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main._resolve_team_working_directory_for_assets",
+        return_value=team_root,
+    ):
+        tree_response = client.get("/console/assets/teams/leader1/tree", params={"path": "docs"})
+        assert tree_response.status_code == 200
+        tree_body = tree_response.json()
+        assert tree_body["path"] == "docs"
+        assert len(tree_body["entries"]) == 1
+        assert tree_body["entries"][0]["name"] == "README.md"
+        assert tree_body["entries"][0]["is_dir"] is False
+
+        file_response = client.get(
+            "/console/assets/teams/leader1/file",
+            params={"path": "docs/README.md"},
+        )
+        assert file_response.status_code == 200
+        file_body = file_response.json()
+        assert file_body["path"] == "docs/README.md"
+        assert file_body["content"] == "hello team asset"
+
+
+def test_console_assets_download_file(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    team_root = tmp_path / "team-a"
+    team_root.mkdir(parents=True)
+    binary_file = team_root / "artifact.bin"
+    binary_file.write_bytes(b"\x00\x01\x02")
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main._resolve_team_working_directory_for_assets",
+        return_value=team_root,
+    ):
+        response = client.get(
+            "/console/assets/teams/leader1/download",
+            params={"path": "artifact.bin"},
+        )
+
+        assert response.status_code == 200
+        assert response.content == b"\x00\x01\x02"
 
 
 def test_console_agent_profiles(client: TestClient) -> None:

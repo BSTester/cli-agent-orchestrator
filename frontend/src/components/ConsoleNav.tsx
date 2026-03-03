@@ -10,6 +10,7 @@ const navItems = [
   { href: "/dashboard", label: "集团总览" },
   { href: "/organization", label: "组织管理" },
   { href: "/agents", label: "会话管理" },
+  { href: "/assets", label: "资产管理" },
   { href: "/tasks", label: "任务管理" },
 ];
 
