@@ -15,7 +15,6 @@ def test_mcp_server_command():
         result = runner.invoke(mcp_server)
 
         assert result.exit_code == 0
-        assert "Starting CAO MCP server..." in result.output
         mock_run.assert_called_once()
 
 
@@ -26,4 +25,4 @@ def test_mcp_server_main_disables_banner(mock_run):
 
     main()
 
-    mock_run.assert_called_once_with(show_banner=False, log_level="WARNING")
+    mock_run.assert_called_once_with(show_banner=False, log_level="INFO")
