@@ -17,3 +17,13 @@ def test_mcp_server_command():
         assert result.exit_code == 0
         assert "Starting CAO MCP server..." in result.output
         mock_run.assert_called_once()
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.mcp.run")
+def test_mcp_server_main_disables_banner(mock_run):
+    """Ensure main disables banner output for stdio transport."""
+    from cli_agent_orchestrator.mcp_server.server import main
+
+    main()
+
+    mock_run.assert_called_once_with(show_banner=False, log_level="WARNING")
