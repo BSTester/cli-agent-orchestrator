@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cli_agent_orchestrator.mcp_server import server
 from cli_agent_orchestrator.mcp_server.server import _assign_impl, _handoff_impl
 
 
@@ -160,6 +161,46 @@ class TestHandoffMessageContext:
         assert sent_message.endswith(original)
 
 
+def test_current_terminal_id_falls_back_to_tmux(monkeypatch):
+    """Fallback should read CAO_TERMINAL_ID from tmux environment when env var is missing."""
+    monkeypatch.delenv("CAO_TERMINAL_ID", raising=False)
+    fake_run = MagicMock()
+    fake_run.return_value = MagicMock(stdout="CAO_TERMINAL_ID=tmux-123\n", returncode=0)
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+
+    assert server._current_terminal_id() == "tmux-123"
+
+
+@patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
+@patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
+def test_handoff_expands_terminal_placeholder(mock_create, mock_wait, mock_send):
+    mock_create.return_value = ("dev-terminal-9", "codex")
+    mock_wait.side_effect = [True, True]
+    mock_send.return_value = None
+
+    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "my-term"}):
+        with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"output": "done"}
+            mock_response.raise_for_status.return_value = None
+            mock_requests.request.return_value = mock_response
+
+            asyncio.get_event_loop().run_until_complete(
+                server._handoff_impl(
+                    "developer",
+                    "Return to ${CAO_TERMINAL_ID}",
+                    timeout=600,
+                    working_directory=None,
+                    provider="codex",
+                )
+            )
+
+    sent_message = mock_send.call_args[0][1]
+    assert "my-term" in sent_message
+    assert "${CAO_TERMINAL_ID}" not in sent_message
+
+
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
 @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
@@ -182,6 +223,30 @@ def test_assign_fails_when_message_is_blank():
     assert result["success"] is False
     assert result["terminal_id"] is None
     assert "message cannot be empty" in result["message"]
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
+@patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
+@patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
+def test_assign_replaces_terminal_placeholder(
+    mock_create,
+    mock_send,
+    mock_send_inbox,
+    mock_wait,
+    mock_sleep,
+):
+    mock_create.return_value = ("dev-terminal-10", "kiro_cli")
+    mock_wait.return_value = True
+    mock_send_inbox.return_value = {"success": True}
+
+    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "abc999"}):
+        result = _assign_impl("developer", "Notify ${CAO_TERMINAL_ID}")
+
+    assert result["success"] is True
+    send_args = mock_send_inbox.call_args[0]
+    assert send_args[1] == "Notify abc999"
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
