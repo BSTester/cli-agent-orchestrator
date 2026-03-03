@@ -20,9 +20,9 @@ def test_mcp_server_command():
 
 @patch("cli_agent_orchestrator.mcp_server.server.mcp.run")
 def test_mcp_server_main_disables_banner(mock_run):
-    """Ensure main disables banner output for stdio transport."""
+    """Ensure main enables banner output for stdio transport."""
     from cli_agent_orchestrator.mcp_server.server import main
 
     main()
 
-    mock_run.assert_called_once_with(show_banner=False, log_level="INFO")
+    mock_run.assert_called_once_with(show_banner=True, log_level="INFO")
