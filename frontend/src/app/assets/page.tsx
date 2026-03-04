@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import ConsoleNav from "@/components/ConsoleNav";
 import {
@@ -78,6 +80,7 @@ export default function AssetsPage() {
   const [selectedFilePath, setSelectedFilePath] = useState("");
   const [selectedFileContent, setSelectedFileContent] = useState("");
   const [showPreviewDrawer, setShowPreviewDrawer] = useState(false);
+  const [previewMode, setPreviewMode] = useState<"rendered" | "source">("source");
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
   const [deletingPath, setDeletingPath] = useState("");
@@ -131,8 +134,13 @@ export default function AssetsPage() {
       return;
     }
 
-    setSelectedFilePath(result.data.path || path);
+    const resolvedPath = result.data.path || path;
+    const ext = resolvedPath.split(".").pop()?.toLowerCase();
+    const defaultMode =
+      ext === "md" || ext === "markdown" || ext === "html" || ext === "htm" ? "rendered" : "source";
+    setSelectedFilePath(resolvedPath);
     setSelectedFileContent(result.data.content || "");
+    setPreviewMode(defaultMode);
     setShowPreviewDrawer(true);
     setLoadingFile(false);
     setError("");
@@ -229,6 +237,16 @@ export default function AssetsPage() {
       return false;
     }
     return TEXT_PREVIEW_EXTENSIONS.has(extension);
+  }
+
+  function isMarkdownFile(filePath: string): boolean {
+    const ext = filePath.split(".").pop()?.toLowerCase();
+    return ext === "md" || ext === "markdown";
+  }
+
+  function isHtmlFile(filePath: string): boolean {
+    const ext = filePath.split(".").pop()?.toLowerCase();
+    return ext === "html" || ext === "htm";
   }
 
   function toDownloadUrl(team: ConsoleAssetTeam, path: string): string {
@@ -688,6 +706,17 @@ export default function AssetsPage() {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
+                  {(isMarkdownFile(selectedFilePath) || isHtmlFile(selectedFilePath)) && (
+                    <SecondaryButton
+                      type="button"
+                      onClick={() =>
+                        setPreviewMode((previous) => (previous === "rendered" ? "source" : "rendered"))
+                      }
+                      style={{ padding: "6px 10px" }}
+                    >
+                      {previewMode === "rendered" ? "查看源码" : "渲染预览"}
+                    </SecondaryButton>
+                  )}
                   {selectedTeam ? (
                     <PrimaryButton
                       type="button"
@@ -708,17 +737,47 @@ export default function AssetsPage() {
               </div>
 
               <div style={{ flex: 1, padding: 12, minHeight: 0, overflow: "hidden" }}>
-                <CodeEditorInput
-                  value={loadingFile ? "文件加载中..." : selectedFileContent}
-                  onChange={() => {}}
-                  language="auto"
-                  fileName={selectedFilePath}
-                  showToolbar
-                  defaultReadOnly
-                  showReadOnlyToggle={false}
-                  showCopyButton
-                  style={{ width: "100%", height: "100%", minHeight: "100%" }}
-                />
+                {loadingFile ? (
+                  <div style={{ color: "var(--text-dim)", fontSize: 13 }}>文件加载中...</div>
+                ) : previewMode === "rendered" && isMarkdownFile(selectedFilePath) ? (
+                  <div
+                    style={{
+                      height: "100%",
+                      overflowY: "auto",
+                      color: "var(--text)",
+                      fontSize: 14,
+                      lineHeight: 1.7,
+                    }}
+                    className="markdown-body"
+                  >
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedFileContent}</ReactMarkdown>
+                  </div>
+                ) : previewMode === "rendered" && isHtmlFile(selectedFilePath) ? (
+                  <iframe
+                    srcDoc={selectedFileContent}
+                    sandbox="allow-scripts"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      border: "none",
+                      borderRadius: 6,
+                      background: "#fff",
+                    }}
+                    title={selectedFilePath}
+                  />
+                ) : (
+                  <CodeEditorInput
+                    value={selectedFileContent}
+                    onChange={() => {}}
+                    language="auto"
+                    fileName={selectedFilePath}
+                    showToolbar
+                    defaultReadOnly
+                    showReadOnlyToggle={false}
+                    showCopyButton
+                    style={{ width: "100%", height: "100%", minHeight: "100%" }}
+                  />
+                )}
               </div>
             </div>
           </div>

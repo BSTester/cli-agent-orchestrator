@@ -49,4 +49,5 @@ _bmad
 .cursor
 .github
 .kilocodemodes
-.runtime
+.runtime.next
+.next/
