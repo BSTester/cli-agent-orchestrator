@@ -272,6 +272,87 @@ def _create_terminal(
     return terminal["id"], resolved_provider
 
 
+def _find_existing_assign_terminal(
+    agent_profile: str, provider: Optional[str] = None
+) -> Tuple[Optional[str], Optional[str]]:
+    """Find an existing terminal in the current session for assign."""
+    resolved_provider = provider
+
+    if resolved_provider is not None and resolved_provider.strip() == "":
+        resolved_provider = None
+
+    if resolved_provider and resolved_provider not in PROVIDERS:
+        raise ValueError(
+            f"Invalid provider '{resolved_provider}'. Available providers: {', '.join(PROVIDERS)}"
+        )
+
+    try:
+        current_terminal_id = _current_terminal_id()
+    except ValueError:
+        return None, resolved_provider
+
+    try:
+        metadata_resp = _request_with_retry("GET", f"{API_BASE_URL}/terminals/{current_terminal_id}")
+        terminal_metadata = metadata_resp.json()
+        session_name = terminal_metadata["session_name"]
+        inherited_provider = terminal_metadata["provider"]
+    except Exception as exc:
+        logger.warning("Failed to load supervisor terminal metadata, skip reuse: %s", exc)
+        return None, resolved_provider
+
+    if resolved_provider is None:
+        try:
+            profile = load_agent_profile(agent_profile)
+            if profile.provider is not None:
+                resolved_provider = profile.provider.value
+        except Exception:
+            pass
+
+    if resolved_provider is None:
+        resolved_provider = inherited_provider
+
+    try:
+        list_response = _request_with_retry(
+            "GET",
+            f"{API_BASE_URL}/sessions/{session_name}/terminals",
+            retry_attempts=1,
+        )
+        for terminal_info in list_response.json():
+            if terminal_info.get("id") == current_terminal_id:
+                continue
+            if terminal_info.get("agent_profile") != agent_profile:
+                continue
+            if terminal_info.get("provider") != resolved_provider:
+                continue
+
+            candidate_id = terminal_info.get("id")
+            if not candidate_id:
+                continue
+
+            try:
+                status_resp = _request_with_retry(
+                    "GET",
+                    f"{API_BASE_URL}/terminals/{candidate_id}",
+                    retry_attempts=1,
+                )
+                if status_resp.json().get("status") == TerminalStatus.ERROR.value:
+                    continue
+            except Exception:
+                logger.debug("Status check failed for terminal %s; attempting reuse", candidate_id)
+
+            logger.info(
+                "Reusing existing terminal %s for agent_profile=%s provider=%s",
+                candidate_id,
+                agent_profile,
+                resolved_provider,
+            )
+            return candidate_id, terminal_info.get("provider", resolved_provider)
+    except Exception as exc:
+        logger.warning("Failed to query existing terminals for reuse: %s", exc)
+
+    return None, resolved_provider
+
+
 def _send_direct_input(terminal_id: str, message: str) -> None:
     """Send input directly to a terminal (bypasses inbox).
 
@@ -564,30 +645,40 @@ def _assign_impl(
                 "message": "Assignment failed: message cannot be empty",
             }
 
-        # Create terminal
-        terminal_id, resolved_provider = _create_terminal_with_retry(
-            agent_profile, working_directory=working_directory, provider=provider
+        terminal_id: Optional[str] = None
+        resolved_provider: Optional[str] = None
+
+        existing_terminal_id, resolved_provider = _find_existing_assign_terminal(
+            agent_profile, provider=provider
         )
 
-        if not wait_until_terminal_status(
-            terminal_id,
-            PROVIDER_READY_STATUSES,
-            timeout=PROVIDER_READY_TIMEOUT_SECONDS,
-        ):
-            return {
-                "success": False,
-                "terminal_id": terminal_id,
-                "message": (
-                    f"Assignment failed: terminal {terminal_id} did not become ready within "
-                    f"{int(PROVIDER_READY_TIMEOUT_SECONDS)} seconds"
-                ),
-            }
+        if existing_terminal_id:
+            terminal_id = existing_terminal_id
+        else:
+            terminal_id, resolved_provider = _create_terminal_with_retry(
+                agent_profile, working_directory=working_directory, provider=provider
+            )
 
-        # Newly created worker terminals may report ready slightly before the
-        # interactive prompt fully stabilizes. Add a short delay to match
-        # handoff behavior and avoid first-assignment input being ignored.
-        time.sleep(ASSIGN_POST_READY_STABILIZATION_SECONDS)
+            if not wait_until_terminal_status(
+                terminal_id,
+                PROVIDER_READY_STATUSES,
+                timeout=PROVIDER_READY_TIMEOUT_SECONDS,
+            ):
+                return {
+                    "success": False,
+                    "terminal_id": terminal_id,
+                    "message": (
+                        f"Assignment failed: terminal {terminal_id} did not become ready within "
+                        f"{int(PROVIDER_READY_TIMEOUT_SECONDS)} seconds"
+                    ),
+                }
 
+            # Newly created worker terminals may report ready slightly before the
+            # interactive prompt fully stabilizes. Add a short delay to match
+            # handoff behavior and avoid first-assignment input being ignored.
+            time.sleep(ASSIGN_POST_READY_STABILIZATION_SECONDS)
+
+        # Create terminal
         try:
             _send_to_inbox(terminal_id, message)
         except Exception as exc:

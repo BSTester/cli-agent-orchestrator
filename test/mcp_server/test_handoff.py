@@ -339,3 +339,40 @@ def test_assign_fallbacks_to_direct_input_if_inbox_send_fails(
     assert result["success"] is True
     mock_send.assert_called_once_with("dev-terminal-10", "Do work")
     mock_send_inbox.assert_called_once_with("dev-terminal-10", "Do work")
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server._create_terminal_with_retry")
+@patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
+def test_assign_reuses_existing_terminal_when_available(
+    mock_send_inbox, mock_create, mock_sleep
+):
+    """Assign should reuse an existing worker with the same profile in session."""
+    mock_send_inbox.return_value = {"success": True}
+    mock_create.side_effect = AssertionError("Should not create a new terminal")
+
+    metadata_resp = MagicMock()
+    metadata_resp.json.return_value = {"session_name": "session-1", "provider": "codex"}
+
+    list_resp = MagicMock()
+    list_resp.json.return_value = [
+        {"id": "worker-1111", "agent_profile": "designer", "provider": "codex"},
+        {"id": "leader-0000", "agent_profile": "supervisor", "provider": "codex"},
+    ]
+
+    status_resp = MagicMock()
+    status_resp.json.return_value = {"status": "processing"}
+
+    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "leader-0000"}):
+        with patch(
+            "cli_agent_orchestrator.mcp_server.server._request_with_retry",
+            side_effect=[metadata_resp, list_resp, status_resp],
+        ):
+            result = _assign_impl("designer", "Draft a landing page")
+
+    assert result["success"] is True
+    assert result["terminal_id"] == "worker-1111"
+    assert "codex" in result["message"]
+    mock_send_inbox.assert_called_once_with("worker-1111", "Draft a landing page")
+    mock_create.assert_not_called()
+    mock_sleep.assert_not_called()
