@@ -254,6 +254,30 @@ def test_assign_replaces_terminal_placeholder(
 @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
 @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
+def test_assign_replaces_double_brace_terminal_placeholder(
+    mock_create,
+    mock_send,
+    mock_send_inbox,
+    mock_wait,
+    mock_sleep,
+):
+    mock_create.return_value = ("dev-terminal-11", "kiro_cli")
+    mock_wait.return_value = True
+    mock_send_inbox.return_value = {"success": True}
+
+    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "xyz123"}):
+        result = _assign_impl("developer", "Ping {{CAO_TERMINAL_ID}}")
+
+    assert result["success"] is True
+    send_args = mock_send_inbox.call_args[0]
+    assert send_args[1] == "Ping xyz123"
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
+@patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
+@patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
 def test_assign_waits_stabilization_before_sending(
     mock_create,
     mock_send,

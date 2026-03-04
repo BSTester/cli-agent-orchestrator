@@ -1,4 +1,5 @@
 import pytest
+import requests
 
 from cli_agent_orchestrator.mcp_server import server
 
@@ -39,3 +40,20 @@ def test_create_terminal_with_retry_stops_after_limit(monkeypatch):
         server._create_terminal_with_retry("dev")
 
     assert len(attempts) == server.WORK_AGENT_CREATE_RETRY_ATTEMPTS
+
+
+def test_create_terminal_with_retry_no_retry_on_http_error(monkeypatch):
+    """HTTP errors should not trigger duplicate worker creation retries."""
+    attempts: list[None] = []
+
+    def http_error(agent_profile: str, working_directory=None, provider=None):
+        attempts.append(None)
+        raise requests.HTTPError("500 server error")
+
+    monkeypatch.setattr(server, "_create_terminal", http_error)
+    monkeypatch.setattr(server.time, "sleep", lambda *_: None)
+
+    with pytest.raises(requests.HTTPError):
+        server._create_terminal_with_retry("dev")
+
+    assert len(attempts) == 1

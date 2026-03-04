@@ -78,25 +78,35 @@ def _inject_terminal_id(message: str) -> str:
     except ValueError:
         return message
 
-    return (
-        message.replace("${CAO_TERMINAL_ID}", terminal_id)
-        .replace("${process.env.CAO_TERMINAL_ID}", terminal_id)
-    )
+    replacements = [
+        "${CAO_TERMINAL_ID}",
+        "${process.env.CAO_TERMINAL_ID}",
+        "{{CAO_TERMINAL_ID}}",
+        "{{ CAO_TERMINAL_ID }}",
+        "{{process.env.CAO_TERMINAL_ID}}",
+    ]
+
+    for placeholder in replacements:
+        message = message.replace(placeholder, terminal_id)
+
+    return message
 
 
-def _request_with_retry(method: str, url: str, **kwargs: Any) -> requests.Response:
+def _request_with_retry(
+    method: str, url: str, retry_attempts: int = REQUEST_RETRY_ATTEMPTS, **kwargs: Any
+) -> requests.Response:
     """Send HTTP request with simple retry for transient connection errors."""
     timeout = kwargs.pop("timeout", REQUEST_TIMEOUT_SECONDS)
     last_error: Optional[Exception] = None
 
-    for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
+    for attempt in range(1, retry_attempts + 1):
         try:
             response = requests.request(method=method, url=url, timeout=timeout, **kwargs)
             response.raise_for_status()
             return response
         except requests.exceptions.RequestException as exc:
             last_error = exc
-            if attempt == REQUEST_RETRY_ATTEMPTS:
+            if attempt == retry_attempts:
                 break
             time.sleep(REQUEST_RETRY_BACKOFF_SECONDS * attempt)
 
@@ -116,6 +126,17 @@ def _create_terminal_with_retry(
     for attempt in range(1, WORK_AGENT_CREATE_RETRY_ATTEMPTS + 1):
         try:
             return _create_terminal(agent_profile, working_directory=working_directory, provider=provider)
+        except requests.HTTPError as exc:
+            # If the API returned an HTTP error (e.g., provider init timeout),
+            # do not retry to avoid spawning multiple duplicate workers.
+            last_error = exc
+            logger.warning(
+                "Create worker terminal attempt %s/%s failed with HTTP error (no retry): %s",
+                attempt,
+                WORK_AGENT_CREATE_RETRY_ATTEMPTS,
+                exc,
+            )
+            break
         except Exception as exc:
             last_error = exc
             logger.warning(
@@ -152,6 +173,9 @@ def _create_terminal(
     """
     inherited_provider = DEFAULT_PROVIDER
     resolved_provider = provider
+
+    if resolved_provider is not None and resolved_provider.strip() == "":
+        resolved_provider = None
 
     if resolved_provider and resolved_provider not in PROVIDERS:
         raise ValueError(
@@ -197,6 +221,35 @@ def _create_terminal(
         if resolved_provider is None:
             resolved_provider = inherited_provider
 
+        # Try to reuse an existing idle terminal with the same profile/provider to avoid
+        # spawning duplicates when a worker already exists.
+        try:
+            list_response = _request_with_retry(
+                "GET",
+                f"{API_BASE_URL}/sessions/{session_name}/terminals",
+                retry_attempts=1,
+            )
+            for terminal_info in list_response.json():
+                if (
+                    terminal_info.get("agent_profile") == agent_profile
+                    and terminal_info.get("provider") == resolved_provider
+                ):
+                    status_resp = _request_with_retry(
+                        "GET",
+                        f"{API_BASE_URL}/terminals/{terminal_info['id']}",
+                        retry_attempts=1,
+                    )
+                    if status_resp.json().get("status") == TerminalStatus.IDLE.value:
+                        logger.info(
+                            "Reusing idle terminal %s for agent_profile=%s provider=%s",
+                            terminal_info["id"],
+                            agent_profile,
+                            resolved_provider,
+                        )
+                        return terminal_info["id"], resolved_provider
+        except Exception as exc:
+            logger.warning("Failed to reuse idle terminal, will create new one: %s", exc)
+
         # Create new terminal in existing session - always pass working_directory
         params = {"provider": resolved_provider, "agent_profile": agent_profile}
         if working_directory:
@@ -206,6 +259,7 @@ def _create_terminal(
             "POST",
             f"{API_BASE_URL}/sessions/{session_name}/terminals",
             params=params,
+            retry_attempts=1,
         )
         terminal = response.json()
     else:
@@ -229,7 +283,9 @@ def _create_terminal(
         if working_directory:
             params["working_directory"] = working_directory
 
-        response = _request_with_retry("POST", f"{API_BASE_URL}/sessions", params=params)
+        response = _request_with_retry(
+            "POST", f"{API_BASE_URL}/sessions", params=params, retry_attempts=1
+        )
         terminal = response.json()
 
     if resolved_provider is None:
