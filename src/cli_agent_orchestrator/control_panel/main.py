@@ -2119,6 +2119,25 @@ async def console_team_asset_download(leader_id: str, path: str) -> FileResponse
     return FileResponse(path=str(target), filename=target.name)
 
 
+@app.delete("/console/assets/teams/{leader_id}/entry")
+async def console_team_asset_delete(leader_id: str, path: str) -> Dict[str, Any]:
+    root = await asyncio.to_thread(_resolve_team_working_directory_for_assets, leader_id)
+    target = await asyncio.to_thread(_resolve_asset_target, root, path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    try:
+        if target.is_dir():
+            import shutil
+            await asyncio.to_thread(shutil.rmtree, str(target))
+        else:
+            await asyncio.to_thread(target.unlink)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"删除失败: {exc.strerror}") from exc
+
+    return {"ok": True, "path": path}
+
+
 @app.get("/console/tasks")
 async def console_tasks() -> Dict[str, Any]:
     try:

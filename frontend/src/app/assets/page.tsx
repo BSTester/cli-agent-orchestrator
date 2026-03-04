@@ -80,6 +80,7 @@ export default function AssetsPage() {
   const [showPreviewDrawer, setShowPreviewDrawer] = useState(false);
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
+  const [deletingPath, setDeletingPath] = useState("");
 
   const loadTeams = useCallback(async () => {
     const result = await caoRequest<ConsoleAssetTeamsResponse>("GET", "/console/assets/teams");
@@ -136,6 +137,56 @@ export default function AssetsPage() {
     setLoadingFile(false);
     setError("");
   }, []);
+
+  const deleteEntry = useCallback(
+    async (team: ConsoleAssetTeam, entry: ConsoleAssetEntry) => {
+      const label = entry.is_dir ? "文件夹" : "文件";
+      if (!window.confirm(`确定要删除${label} "${entry.name}" 吗？此操作不可撤销。`)) {
+        return;
+      }
+      setDeletingPath(entry.path);
+      const result = await caoRequest<{ ok: boolean }>(
+        "DELETE",
+        `/console/assets/teams/${encodeURIComponent(team.leader_id)}/entry`,
+        { query: { path: entry.path } }
+      );
+      setDeletingPath("");
+      if (!result.ok) {
+        setError(`删除失败：${entry.path}`);
+        return;
+      }
+      setError("");
+      // Refresh the current directory tree view
+      void loadTree(team, currentPath);
+      // Also invalidate cached subtree if it was a directory
+      if (entry.is_dir) {
+        setTreeByPath((previous) => {
+          const next = { ...previous };
+          for (const key of Object.keys(next)) {
+            if (key === entry.path || key.startsWith(entry.path + "/")) {
+              delete next[key];
+            }
+          }
+          return next;
+        });
+        setExpandedDirsByPath((previous) => {
+          const teamKey = team.leader_id;
+          const nextExpanded = new Set(previous[teamKey] || []);
+          for (const p of [...nextExpanded]) {
+            if (p === entry.path || p.startsWith(entry.path + "/")) {
+              nextExpanded.delete(p);
+            }
+          }
+          return { ...previous, [teamKey]: nextExpanded };
+        });
+      }
+      if (selectedEntryPath === entry.path) {
+        setSelectedEntryPath("");
+        setSelectedEntry(null);
+      }
+    },
+    [currentPath, loadTree, selectedEntryPath]
+  );
 
   useEffect(() => {
     void loadTeams();
@@ -542,6 +593,25 @@ export default function AssetsPage() {
                                   下载
                                 </SecondaryButton>
                               )}
+                              <SecondaryButton
+                                type="button"
+                                disabled={deletingPath === entry.path}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (!selectedTeam) {
+                                    return;
+                                  }
+                                  void deleteEntry(selectedTeam, entry);
+                                }}
+                                style={{
+                                  padding: "4px 8px",
+                                  fontSize: 12,
+                                  whiteSpace: "nowrap",
+                                  color: "var(--danger, #e05c5c)",
+                                }}
+                              >
+                                {deletingPath === entry.path ? "删除中..." : "删除"}
+                              </SecondaryButton>
                             </div>
                           </div>
                         );
