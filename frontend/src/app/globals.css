@@ -29,6 +29,31 @@ html, body {
   font-size: 14px;
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--surface2);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--surface2);
+  border-radius: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+  border: 2px solid var(--surface2);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
 .xterm .xterm-helper-textarea {
   caret-color: transparent !important;
   color: transparent !important;
