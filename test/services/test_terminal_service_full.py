@@ -15,6 +15,7 @@ from cli_agent_orchestrator.services.terminal_service import (
     get_output,
     get_terminal,
     get_working_directory,
+    mark_terminal_off_duty,
     send_input,
 )
 
@@ -259,6 +260,25 @@ class TestGetTerminal:
 
         assert result["id"] == "test1234"
         assert result["status"] == TerminalStatus.IDLE.value
+
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_get_terminal_off_duty(self, mock_get_metadata, mock_provider_manager):
+        terminal_id = "offduty1"
+        mock_get_metadata.return_value = {
+            "id": terminal_id,
+            "tmux_window": "developer-abcd",
+            "provider": "kiro_cli",
+            "tmux_session": "cao-session",
+            "agent_profile": "developer",
+            "last_active": datetime.now(),
+        }
+
+        mark_terminal_off_duty(terminal_id)
+        result = get_terminal(terminal_id)
+
+        assert result["status"] == TerminalStatus.OFF_DUTY.value
+        mock_provider_manager.get_provider.assert_not_called()
 
     @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
     def test_get_terminal_not_found(self, mock_get_metadata):

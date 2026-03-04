@@ -4,6 +4,7 @@ const STATUS_LABELS: Record<string, string> = {
   completed: "已完成",
   waiting_user_answer: "等待用户输入",
   error: "异常",
+  off_duty: "下班",
 };
 
 const INACTIVE_STATUS = new Set([
@@ -14,6 +15,7 @@ const INACTIVE_STATUS = new Set([
   "failed",
   "stopped",
   "exited",
+  "off_duty",
 ]);
 
 export function toStatusLabel(status: string | undefined): string {

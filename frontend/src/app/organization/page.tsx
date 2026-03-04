@@ -122,6 +122,10 @@ export default function OrganizationPage() {
   const [mainTeamAlias, setMainTeamAlias] = useState("");
   const [homeSubdirs, setHomeSubdirs] = useState<string[]>([]);
   const [mainTeamWorkdirName, setMainTeamWorkdirName] = useState("");
+  const [editingLeaderTarget, setEditingLeaderTarget] = useState<{
+    leaderId: string;
+    fallbackWorkingDirectory?: string;
+  } | null>(null);
   const [creatingMain, setCreatingMain] = useState(false);
 
   const [workerProfile, setWorkerProfile] = useState("");
@@ -137,8 +141,10 @@ export default function OrganizationPage() {
   const [newAgentPrompt, setNewAgentPrompt] = useState(defaultProfileTemplate);
   const [loadingProfileFile, setLoadingProfileFile] = useState(false);
   const [creatingProfile, setCreatingProfile] = useState(false);
+  const [deletingProfile, setDeletingProfile] = useState(false);
   const [showProfileCard, setShowProfileCard] = useState(false);
   const [showTeamCard, setShowTeamCard] = useState(false);
+  const [deleteProfileTarget, setDeleteProfileTarget] = useState<{ profileName: string } | null>(null);
   const [offboardTarget, setOffboardTarget] = useState<{ agentId: string; sessionName: string; terminalId: string } | null>(null);
   const [disbandTarget, setDisbandTarget] = useState<{
     leaderId: string;
@@ -468,6 +474,75 @@ export default function OrganizationPage() {
     setNotice("新增岗位并安装完成");
   }
 
+  async function deleteSelectedProfileFile() {
+    const selectedProfileFile = profileFiles.find(
+      (fileItem) => fileItem.file_name === selectedProfileFileName.trim()
+    );
+    if (!selectedProfileFile) {
+      setError("请先选择一个已存在的岗位文件");
+      return;
+    }
+
+    const profileName = (selectedProfileFile.file_name || "").replace(/\.md$/i, "");
+    if (!profileName) {
+      setError("岗位文件名称无效");
+      return;
+    }
+
+    setDeleteProfileTarget({ profileName });
+  }
+
+  function cancelDeleteProfile() {
+    setDeleteProfileTarget(null);
+    setNotice("已取消删除岗位操作");
+    setError("");
+  }
+
+  async function confirmDeleteProfile() {
+    if (!deleteProfileTarget) {
+      return;
+    }
+
+    const profileName = deleteProfileTarget.profileName;
+    setDeleteProfileTarget(null);
+
+    setDeletingProfile(true);
+    setError("");
+
+    const result = await caoRequest<InstallAgentProfileResponse>(
+      "DELETE",
+      `/console/agent-profiles/${encodeURIComponent(profileName)}`
+    );
+
+    if (!result.ok) {
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `删除岗位失败：${detail}` : "删除岗位失败");
+      setDeletingProfile(false);
+      return;
+    }
+
+    setDeletingProfile(false);
+    setProfileFiles((previous) =>
+      previous.filter((fileItem) => fileItem.profile !== profileName)
+    );
+    setProfileOptions((previous) => previous.filter((item) => item !== profileName));
+    setMainProfile((previous) => (previous === profileName ? "" : previous));
+    setWorkerProfile((previous) => (previous === profileName ? "" : previous));
+    setMainProvider("");
+    setWorkerProvider("");
+    setMainTeamAlias("");
+    setWorkerAlias("");
+    setWorkerLeaderId("");
+    setWorkerLeaderQuery("");
+    setEditingLeaderTarget(null);
+    setSelectedProfileFileName("");
+    setNewAgentName("");
+    setNewAgentPrompt(defaultProfileTemplate);
+    await loadProfileFiles();
+    await loadProfileOptions();
+    setNotice(`岗位 ${profileName} 已删除并执行卸载`);
+  }
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadOrganization();
@@ -489,6 +564,53 @@ export default function OrganizationPage() {
     event.preventDefault();
     setCreatingMain(true);
     setError("");
+
+    if (editingLeaderTarget) {
+      const body: {
+        agent_profile: string;
+        provider?: string;
+        team_alias?: string;
+        team_workdir_mode?: "existing" | "new";
+        team_workdir_name?: string;
+        working_directory?: string;
+      } = {
+        agent_profile: mainProfile.trim(),
+      };
+
+      if (mainProvider) {
+        body.provider = mainProvider;
+      }
+      body.team_alias = mainTeamAlias;
+
+      const workdirName = mainTeamWorkdirName.trim();
+      if (workdirName) {
+        body.team_workdir_name = workdirName;
+        body.team_workdir_mode = homeSubdirs.includes(workdirName) ? "existing" : "new";
+      } else if (editingLeaderTarget.fallbackWorkingDirectory) {
+        body.working_directory = editingLeaderTarget.fallbackWorkingDirectory;
+      }
+
+      const result = await caoRequest(
+        "PUT",
+        `/console/organization/${encodeURIComponent(editingLeaderTarget.leaderId)}/leader`,
+        { body }
+      );
+      if (!result.ok) {
+        const detail = extractErrorDetail(result.data);
+        setError(detail ? `编辑负责人失败：${detail}` : "编辑负责人失败");
+        setCreatingMain(false);
+        return;
+      }
+
+      setCreatingMain(false);
+      setEditingLeaderTarget(null);
+      setMainTeamAlias("");
+      setMainTeamWorkdirName("");
+      setNotice("负责人信息已更新并重启会话");
+      await loadOrganization();
+      await loadHomeWorkdirOptions();
+      return;
+    }
 
     const body: {
       role_type: "main";
@@ -528,6 +650,59 @@ export default function OrganizationPage() {
     setMainTeamWorkdirName("");
     await loadOrganization();
     await loadHomeWorkdirOptions();
+  }
+
+  function resolveTeamWorkdirInput(teamWorkingDirectory?: string): {
+    workdirName: string;
+    fallbackWorkingDirectory?: string;
+  } {
+    const normalized = String(teamWorkingDirectory || "").trim();
+    if (!normalized) {
+      return { workdirName: "" };
+    }
+
+    const match = normalized.match(/^\/home\/[^/]+\/workspace\/([^/]+)$/);
+    if (match?.[1]) {
+      return {
+        workdirName: match[1],
+        fallbackWorkingDirectory: normalized,
+      };
+    }
+
+    return {
+      workdirName: "",
+      fallbackWorkingDirectory: normalized,
+    };
+  }
+
+  function requestEditLeader(group: (typeof groups)[number]) {
+    const leaderId = String(group.leader.id || "").trim();
+    if (!leaderId) {
+      setError("编辑负责人失败：未找到负责人ID");
+      return;
+    }
+
+    const workdirInput = resolveTeamWorkdirInput(group.team_working_directory);
+    setMainProfile(String(group.leader.agent_profile || "").trim());
+    setMainProvider(String(group.leader.provider || "").trim());
+    setMainTeamAlias(String(group.team_alias || "").trim());
+    setMainTeamWorkdirName(workdirInput.workdirName);
+    setEditingLeaderTarget({
+      leaderId,
+      fallbackWorkingDirectory: workdirInput.fallbackWorkingDirectory,
+    });
+    setShowTeamCard(true);
+    setShowProfileCard(false);
+    setNotice("");
+    setError("");
+  }
+
+  function cancelEditLeader() {
+    setEditingLeaderTarget(null);
+    setMainTeamAlias("");
+    setMainTeamWorkdirName("");
+    setNotice("已取消编辑负责人");
+    setError("");
   }
 
   async function createWorkerAgent(event: FormEvent<HTMLFormElement>) {
@@ -677,10 +852,22 @@ export default function OrganizationPage() {
                 maxHeight={520}
                 style={{ width: "100%", minHeight: 240, marginBottom: 10 }}
               />
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  {isEditingProfileFile ? (
+                    <SecondaryButton
+                      type="button"
+                      onClick={deleteSelectedProfileFile}
+                      disabled={creatingProfile || loadingProfileFile || deletingProfile}
+                      style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
+                    >
+                      {deletingProfile ? "删除中..." : "删除岗位"}
+                    </SecondaryButton>
+                  ) : null}
+                </div>
                 <PrimaryButton
                   type="submit"
-                  disabled={creatingProfile || loadingProfileFile}
+                  disabled={creatingProfile || loadingProfileFile || deletingProfile}
                 >
                   {creatingProfile
                     ? "保存中..."
@@ -715,7 +902,9 @@ export default function OrganizationPage() {
             </div>
             {showTeamCard ? (
               <>
-                <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增负责人</div>
+                <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
+                  {editingLeaderTarget ? "编辑负责人" : "新增负责人"}
+                </div>
                 <form onSubmit={createMainAgent} style={{ display: "grid", gap: 10 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <SearchableDatalistInput
@@ -763,13 +952,25 @@ export default function OrganizationPage() {
                     <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
                       可输入新目录名，也可下拉选择已有一级目录
                     </div>
-                    <PrimaryButton
-                      type="submit"
-                      disabled={creatingMain}
-                      style={{ width: "fit-content", justifySelf: "end" }}
-                    >
-                      {creatingMain ? "组建中..." : "启动团队"}
-                    </PrimaryButton>
+                    <div style={{ display: "flex", justifySelf: "end", gap: 8 }}>
+                      {editingLeaderTarget ? (
+                        <SecondaryButton
+                          type="button"
+                          onClick={cancelEditLeader}
+                          disabled={creatingMain}
+                          style={{ width: "fit-content" }}
+                        >
+                          取消编辑
+                        </SecondaryButton>
+                      ) : null}
+                      <PrimaryButton
+                        type="submit"
+                        disabled={creatingMain}
+                        style={{ width: "fit-content" }}
+                      >
+                        {creatingMain ? "处理中..." : editingLeaderTarget ? "编辑团队" : "启动团队"}
+                      </PrimaryButton>
+                    </div>
                   </div>
 
                   <datalist id="main-team-workdir-options">
@@ -863,7 +1064,7 @@ export default function OrganizationPage() {
                       {group.team_alias || group.leader.id}
                     </span>
                     <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
-                      负责人：{group.leader.alias || group.leader.id} · {group.leader.agent_profile} · {toStatusLabel(group.leader.status)}
+                      负责人：{group.leader.alias || group.leader.id} · {group.leader.agent_profile} · {group.leader.provider || "-"} · {toStatusLabel(group.leader.status)}
                     </span>
                     {group.team_working_directory ? (
                       <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
@@ -871,13 +1072,22 @@ export default function OrganizationPage() {
                       </span>
                     ) : null}
                   </div>
-                  <SecondaryButton
-                    type="button"
-                    onClick={() => requestDisbandTeam(group.leader, group.members)}
-                    style={{ padding: "4px 8px", fontSize: 12 }}
-                  >
-                    解散团队
-                  </SecondaryButton>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <SecondaryButton
+                      type="button"
+                      onClick={() => requestEditLeader(group)}
+                      style={{ padding: "4px 8px", fontSize: 12 }}
+                    >
+                      编辑
+                    </SecondaryButton>
+                    <SecondaryButton
+                      type="button"
+                      onClick={() => requestDisbandTeam(group.leader, group.members)}
+                      style={{ padding: "4px 8px", fontSize: 12 }}
+                    >
+                      解散团队
+                    </SecondaryButton>
+                  </div>
                 </div>
                 {group.members.length === 0 ? (
                   <EmptyState text="暂无直属 Worker" />
@@ -1027,6 +1237,54 @@ export default function OrganizationPage() {
                 </SecondaryButton>
                 <PrimaryButton type="button" onClick={() => void confirmDisbandTeam()}>
                   确认解散
+                </PrimaryButton>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {deleteProfileTarget && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 52,
+              background: "rgba(0,0,0,0.45)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+            }}
+            onClick={cancelDeleteProfile}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="删除岗位确认"
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "min(560px, 100%)",
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                padding: 14,
+              }}
+            >
+              <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
+                确认删除岗位
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 12 }}>
+                岗位：{deleteProfileTarget.profileName}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 14 }}>
+                确认后将执行卸载并删除本地岗位配置文件，同时清理各 agent 终端的岗位配置。
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <SecondaryButton type="button" onClick={cancelDeleteProfile}>
+                  取消
+                </SecondaryButton>
+                <PrimaryButton type="button" onClick={() => void confirmDeleteProfile()}>
+                  确认删除
                 </PrimaryButton>
               </div>
             </div>

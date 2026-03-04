@@ -237,6 +237,7 @@ class TestExitTerminalEndpoint:
             assert response.json() == {"success": True}
             mock_svc.send_input.assert_called_once_with("abcd1234", "/exit")
             mock_svc.send_special_key.assert_not_called()
+            mock_svc.mark_terminal_off_duty.assert_called_once_with("abcd1234")
 
     def test_exit_terminal_special_key(self, client):
         """Tmux key sequences (e.g., C-d) should use send_special_key."""
@@ -255,6 +256,7 @@ class TestExitTerminalEndpoint:
             assert response.json() == {"success": True}
             mock_svc.send_special_key.assert_called_once_with("abcd1234", "C-d")
             mock_svc.send_input.assert_not_called()
+            mock_svc.mark_terminal_off_duty.assert_called_once_with("abcd1234")
 
     def test_exit_terminal_meta_key(self, client):
         """Meta key sequences (M-x) should also use send_special_key."""

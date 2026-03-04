@@ -118,11 +118,15 @@ class TestHandoffMessageContext:
     @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
-    def test_codex_handoff_context_fallback_when_no_env(self, mock_create, mock_wait, mock_send):
+    @patch("cli_agent_orchestrator.mcp_server.server._current_terminal_id")
+    def test_codex_handoff_context_fallback_when_no_env(
+        self, mock_current_terminal_id, mock_create, mock_wait, mock_send
+    ):
         """When CAO_TERMINAL_ID is not set, supervisor ID should be 'unknown'."""
         mock_create.return_value = ("dev-terminal-5", "codex")
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
+        mock_current_terminal_id.side_effect = ValueError("CAO_TERMINAL_ID not set")
 
         with patch.dict(os.environ, {}, clear=True):
             with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
@@ -291,7 +295,7 @@ def test_assign_waits_stabilization_before_sending(
     result = _assign_impl("developer", "Do work")
 
     assert result["success"] is True
-    mock_sleep.assert_called_once_with(2.0)
+    mock_sleep.assert_any_call(2.0)
     mock_send_inbox.assert_called_once_with("dev-terminal-8", "Do work")
     mock_send.assert_not_called()
 
@@ -376,3 +380,33 @@ def test_assign_reuses_existing_terminal_when_available(
     mock_send_inbox.assert_called_once_with("worker-1111", "Draft a landing page")
     mock_create.assert_not_called()
     mock_sleep.assert_not_called()
+
+
+@patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
+def test_send_message_no_auto_cleanup(mock_send_to_inbox):
+    mock_send_to_inbox.return_value = {"success": True, "message_id": 102}
+    result = server._send_message_impl("worker-1", "please continue")
+
+    assert result["success"] is True
+    assert "auto_cleanup" not in result
+    mock_send_to_inbox.assert_called_once_with("worker-1", "please continue")
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server._request_with_retry")
+def test_fetch_stable_handoff_output_waits_for_non_transient_text(
+    mock_request_with_retry,
+    mock_sleep,
+):
+    transient_resp = MagicMock()
+    transient_resp.json.return_value = {"output": "Generating..."}
+
+    final_resp = MagicMock()
+    final_resp.json.return_value = {"output": "Implementation completed successfully"}
+
+    mock_request_with_retry.side_effect = [transient_resp, final_resp]
+
+    output = server._fetch_stable_handoff_output("worker-1", timeout_seconds=120)
+
+    assert output == "Implementation completed successfully"
+    assert mock_request_with_retry.call_count == 2

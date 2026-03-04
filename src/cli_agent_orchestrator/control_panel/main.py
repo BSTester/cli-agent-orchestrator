@@ -1042,6 +1042,15 @@ class OrgDisbandRequest(BaseModel):
     session_name: Optional[str] = None
 
 
+class OrgLeaderUpdateRequest(BaseModel):
+    agent_profile: str = Field(min_length=1)
+    provider: Optional[str] = None
+    team_alias: Optional[str] = None
+    team_workdir_mode: Optional[Literal["existing", "new"]] = None
+    team_workdir_name: Optional[str] = None
+    working_directory: Optional[str] = None
+
+
 class AgentProfileCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     description: Optional[str] = None
@@ -1273,7 +1282,16 @@ def _is_instant_task_status(status_value: Optional[str]) -> bool:
     normalized = (status_value or "").strip().lower()
     if not normalized:
         return False
-    return normalized not in {"idle", "completed", "unknown", "stopped", "exited", "failed"}
+    return normalized not in {
+        "idle",
+        "completed",
+        "unknown",
+        "stopped",
+        "exited",
+        "failed",
+        "off_duty",
+        "offline",
+    }
 
 
 def _normalize_flow_item(flow_item: Dict[str, Any]) -> Dict[str, Any]:
@@ -2583,6 +2601,43 @@ async def console_install_agent_profile(profile_name: str) -> Dict[str, Any]:
     }
 
 
+@app.delete("/console/agent-profiles/{profile_name}")
+async def console_delete_agent_profile(profile_name: str) -> Dict[str, Any]:
+    normalized_profile = _validate_profile_name(profile_name)
+    profile_path = _profile_file_path(normalized_profile)
+    exists = await asyncio.to_thread(profile_path.exists)
+    if not exists:
+        raise HTTPException(status_code=404, detail="Agent profile not found")
+
+    try:
+        uninstall_process = await asyncio.to_thread(
+            subprocess.run,
+            ["uv", "run", "cao", "uninstall", normalized_profile],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to execute uninstall command: {exc}")
+
+    # Even if uninstall fails, we still remove local profile file to satisfy
+    # explicit delete request from organization management UI.
+    # The uninstall command may already remove this file, so deletion here must
+    # be idempotent and should not fail when file is already gone.
+    await asyncio.to_thread(lambda: profile_path.unlink(missing_ok=True))
+
+    return {
+        "ok": uninstall_process.returncode == 0,
+        "profile": normalized_profile,
+        "command": f"uv run cao uninstall {normalized_profile}",
+        "return_code": uninstall_process.returncode,
+        "stdout": uninstall_process.stdout,
+        "stderr": uninstall_process.stderr,
+        "file_deleted": True,
+    }
+
+
 @app.post("/console/organization/link")
 async def console_link_worker(payload: OrgLinkRequest) -> Dict[str, Any]:
     worker_id = payload.worker_id.strip()
@@ -2852,6 +2907,326 @@ async def console_disband_team(leader_id: str, payload: Optional[OrgDisbandReque
         "leader_id": normalized_leader_id,
         "session_name": session_name,
         "result": result,
+    }
+
+
+@app.put("/console/organization/{leader_id}/leader")
+async def console_update_team_leader(
+    leader_id: str,
+    payload: OrgLeaderUpdateRequest,
+) -> Dict[str, Any]:
+    normalized_leader_id = leader_id.strip()
+    if not normalized_leader_id:
+        raise HTTPException(status_code=400, detail="leader_id cannot be empty")
+
+    candidate_leader_id = _resolve_terminal_id_alias(normalized_leader_id)
+    team_ids = _list_teams()
+    if candidate_leader_id in team_ids:
+        normalized_leader_id = candidate_leader_id
+    elif normalized_leader_id not in team_ids:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    mode = payload.team_workdir_mode
+    dir_name = payload.team_workdir_name
+    explicit_working_directory = (payload.working_directory or "").strip()
+    if mode and not dir_name:
+        raise HTTPException(status_code=400, detail="team_workdir_name is required when team_workdir_mode is set")
+    if dir_name and not mode:
+        raise HTTPException(status_code=400, detail="team_workdir_mode is required when team_workdir_name is set")
+
+    requested_working_directory: Optional[str] = None
+    if mode == "existing":
+        requested_working_directory = await asyncio.to_thread(
+            _resolve_home_level1_directory,
+            dir_name or "",
+            must_exist=True,
+            create_if_missing=False,
+        )
+    elif mode == "new":
+        requested_working_directory = await asyncio.to_thread(
+            _resolve_home_level1_directory,
+            dir_name or "",
+            must_exist=True,
+            create_if_missing=True,
+        )
+    elif explicit_working_directory:
+        requested_working_directory = explicit_working_directory
+
+    runtime = await asyncio.to_thread(_get_team_runtime, normalized_leader_id)
+
+    current_leader_terminal: Optional[Dict[str, Any]] = None
+    old_terminal_id: Optional[str] = None
+    old_session_name: Optional[str] = None
+    old_provider: Optional[str] = None
+
+    try:
+        current_leader_response = await asyncio.to_thread(
+            _request_cao,
+            "GET",
+            f"/terminals/{normalized_leader_id}",
+        )
+        current_leader_terminal_data = await asyncio.to_thread(
+            _response_json_or_text,
+            current_leader_response,
+        )
+        if isinstance(current_leader_terminal_data, dict):
+            current_leader_terminal = current_leader_terminal_data
+            old_terminal_id = str(current_leader_terminal.get("id") or "").strip() or None
+            old_session_name = (
+                str(current_leader_terminal.get("session_name") or "").strip() or None
+            )
+            old_provider = str(current_leader_terminal.get("provider") or "").strip() or None
+    except requests.exceptions.RequestException:
+        current_leader_terminal = None
+
+    if not old_terminal_id:
+        old_terminal_id = str((runtime or {}).get("terminal_id") or "").strip() or None
+    if not old_session_name:
+        old_session_name = str((runtime or {}).get("session_name") or "").strip() or None
+
+    if not old_session_name:
+        raise HTTPException(status_code=400, detail="leader has no session")
+
+    new_provider = (payload.provider or "").strip() or old_provider or str((runtime or {}).get("provider") or "").strip() or DEFAULT_PROVIDER
+    new_profile = payload.agent_profile.strip()
+    existing_working_directory = str((runtime or {}).get("working_directory") or "").strip() or None
+    if not existing_working_directory:
+        team_workdirs = await asyncio.to_thread(_list_team_working_directories)
+        existing_working_directory = str(team_workdirs.get(normalized_leader_id) or "").strip() or None
+    if not existing_working_directory and current_leader_terminal:
+        existing_working_directory = str(current_leader_terminal.get("working_directory") or "").strip() or None
+    new_working_directory = requested_working_directory or existing_working_directory
+
+    if old_terminal_id:
+        try:
+            await asyncio.to_thread(_request_cao, "DELETE", f"/terminals/{old_terminal_id}")
+        except requests.exceptions.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code != 404:
+                raise HTTPException(status_code=502, detail=f"Failed to remove old leader terminal: {exc}")
+        except requests.exceptions.RequestException as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to remove old leader terminal: {exc}")
+
+    params: Dict[str, str] = {
+        "agent_profile": new_profile,
+    }
+    if new_provider:
+        params["provider"] = new_provider
+    if new_working_directory:
+        params["working_directory"] = new_working_directory
+
+    live_sessions = await asyncio.to_thread(_list_live_sessions)
+    try:
+        if old_session_name in live_sessions:
+            created_response = await asyncio.to_thread(
+                _request_cao,
+                "POST",
+                f"/sessions/{old_session_name}/terminals",
+                params,
+            )
+        else:
+            create_session_params = dict(params)
+            create_session_params["session_name"] = old_session_name
+            created_response = await asyncio.to_thread(
+                _request_cao,
+                "POST",
+                "/sessions",
+                create_session_params,
+            )
+        created_leader = await asyncio.to_thread(_response_json_or_text, created_response)
+    except requests.exceptions.HTTPError as exc:
+        upstream = exc.response
+        if upstream is not None:
+            try:
+                upstream_body = upstream.json()
+            except ValueError:
+                upstream_body = upstream.text
+            detail = upstream_body.get("detail") if isinstance(upstream_body, dict) else upstream_body
+            raise HTTPException(status_code=upstream.status_code, detail=detail or str(exc))
+        raise HTTPException(status_code=502, detail=f"Failed to restart team leader: {exc}")
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to restart team leader: {exc}")
+
+    if not isinstance(created_leader, dict):
+        raise HTTPException(status_code=502, detail="Invalid response while restarting team leader")
+
+    new_terminal_id = str(created_leader.get("id") or "").strip()
+    if not new_terminal_id:
+        raise HTTPException(status_code=502, detail="Missing leader terminal id after restart")
+
+    canonical_leader_id = normalized_leader_id
+    if normalized_leader_id != new_terminal_id:
+        await asyncio.to_thread(_rekey_leader_id, normalized_leader_id, new_terminal_id)
+        canonical_leader_id = new_terminal_id
+
+    if payload.team_alias is not None:
+        alias_value = payload.team_alias.strip()
+        if alias_value:
+            await asyncio.to_thread(_set_team_alias, canonical_leader_id, alias_value)
+
+    if new_working_directory:
+        await asyncio.to_thread(_set_team_working_directory, canonical_leader_id, new_working_directory)
+
+    await asyncio.to_thread(
+        _upsert_team_runtime,
+        canonical_leader_id,
+        terminal_id=new_terminal_id,
+        session_name=str(created_leader.get("session_name") or old_session_name or "").strip() or None,
+        provider=str(created_leader.get("provider") or new_provider or "").strip() or None,
+        agent_profile=str(created_leader.get("agent_profile") or new_profile).strip() or None,
+        working_directory=new_working_directory,
+    )
+
+    return {
+        "ok": True,
+        "leader_id": canonical_leader_id,
+        "previous_leader_id": normalized_leader_id,
+        "session_name": str(created_leader.get("session_name") or old_session_name or "").strip() or None,
+        "leader": created_leader,
+    }
+
+
+@app.post("/console/organization/{leader_id}/clock-out")
+async def console_clock_out_team(leader_id: str) -> Dict[str, Any]:
+    normalized_leader_id = leader_id.strip()
+    if not normalized_leader_id:
+        raise HTTPException(status_code=400, detail="leader_id cannot be empty")
+
+    candidate_leader_id = _resolve_terminal_id_alias(normalized_leader_id)
+    team_ids = _list_teams()
+    if candidate_leader_id in team_ids:
+        normalized_leader_id = candidate_leader_id
+    elif normalized_leader_id not in team_ids:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    terminals = await asyncio.to_thread(_get_terminals_from_sessions)
+    organization = await asyncio.to_thread(_build_organization, terminals)
+
+    target_group: Optional[Dict[str, Any]] = None
+    for group in organization.get("leader_groups", []):
+        if not isinstance(group, dict):
+            continue
+        leader = group.get("leader")
+        if not isinstance(leader, dict):
+            continue
+        group_leader_id = str(leader.get("id") or "").strip()
+        if group_leader_id == normalized_leader_id:
+            target_group = group
+            break
+
+    if target_group is None:
+        runtime = await asyncio.to_thread(_get_team_runtime, normalized_leader_id)
+        runtime_session_name = str((runtime or {}).get("session_name") or "").strip() or None
+        await asyncio.to_thread(
+            _upsert_team_runtime,
+            normalized_leader_id,
+            terminal_id=None,
+            session_name=runtime_session_name,
+            provider=str((runtime or {}).get("provider") or "").strip() or None,
+            agent_profile=str((runtime or {}).get("agent_profile") or "").strip() or None,
+            working_directory=str((runtime or {}).get("working_directory") or "").strip() or None,
+        )
+        return {
+            "ok": True,
+            "leader_id": normalized_leader_id,
+            "session_name": runtime_session_name,
+            "workers_removed": 0,
+            "leader_terminal_exited": False,
+            "result": {
+                "workers_removed": [],
+                "workers_not_found": [],
+                "leader_terminal_id": None,
+                "leader_terminal_not_found": True,
+            },
+        }
+
+    leader = target_group.get("leader") if isinstance(target_group.get("leader"), dict) else {}
+    members = target_group.get("members") if isinstance(target_group.get("members"), list) else []
+
+    worker_ids: List[str] = []
+    for member in members:
+        if not isinstance(member, dict):
+            continue
+        worker_id = str(member.get("id") or "").strip()
+        if worker_id:
+            worker_ids.append(worker_id)
+
+    removed_worker_ids: List[str] = []
+    missing_worker_ids: List[str] = []
+
+    for worker_id in worker_ids:
+        try:
+            await asyncio.to_thread(_request_cao, "DELETE", f"/terminals/{worker_id}")
+            removed_worker_ids.append(worker_id)
+        except requests.exceptions.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code == 404:
+                missing_worker_ids.append(worker_id)
+            else:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to clock out worker terminal {worker_id}: {exc}",
+                )
+        except requests.exceptions.RequestException as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to clock out worker terminal {worker_id}: {exc}",
+            )
+        finally:
+            await asyncio.to_thread(_remove_worker_link, worker_id)
+
+    leader_terminal_id = str(leader.get("id") or "").strip() or None
+    leader_is_offline = bool(leader.get("is_offline"))
+    leader_terminal_exited = False
+    leader_terminal_not_found = False
+
+    if leader_terminal_id and not leader_is_offline:
+        try:
+            await asyncio.to_thread(_request_cao, "DELETE", f"/terminals/{leader_terminal_id}")
+            leader_terminal_exited = True
+        except requests.exceptions.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code == 404:
+                leader_terminal_not_found = True
+            else:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to clock out leader terminal {leader_terminal_id}: {exc}",
+                )
+        except requests.exceptions.RequestException as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to clock out leader terminal {leader_terminal_id}: {exc}",
+            )
+
+    runtime = await asyncio.to_thread(_get_team_runtime, normalized_leader_id)
+    session_name = str(leader.get("session_name") or "").strip() or str((runtime or {}).get("session_name") or "").strip() or None
+    provider = str(leader.get("provider") or "").strip() or str((runtime or {}).get("provider") or "").strip() or None
+    agent_profile = str(leader.get("agent_profile") or "").strip() or str((runtime or {}).get("agent_profile") or "").strip() or None
+    working_directory = str((runtime or {}).get("working_directory") or "").strip() or None
+
+    await asyncio.to_thread(
+        _upsert_team_runtime,
+        normalized_leader_id,
+        terminal_id=None,
+        session_name=session_name,
+        provider=provider,
+        agent_profile=agent_profile,
+        working_directory=working_directory,
+    )
+
+    return {
+        "ok": True,
+        "leader_id": normalized_leader_id,
+        "session_name": session_name,
+        "workers_removed": len(removed_worker_ids),
+        "leader_terminal_exited": leader_terminal_exited,
+        "result": {
+            "workers_removed": removed_worker_ids,
+            "workers_not_found": missing_worker_ids,
+            "leader_terminal_id": leader_terminal_id,
+            "leader_terminal_not_found": leader_terminal_not_found,
+        },
     }
 
 

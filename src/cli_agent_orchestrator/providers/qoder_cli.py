@@ -145,4 +145,5 @@ class QoderCliProvider(SimpleTuiProvider):
             start_command=start_command,
             idle_prompt_pattern=r"[>❯›]\s",
             idle_prompt_pattern_log=r"[>❯›]\s",
+            exit_command="/quit",
         )

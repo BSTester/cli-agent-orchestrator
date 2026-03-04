@@ -18,6 +18,7 @@ Terminal Workflow:
 """
 
 import logging
+import threading
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
@@ -41,6 +42,9 @@ from cli_agent_orchestrator.utils.terminal import (
 )
 
 logger = logging.getLogger(__name__)
+
+_off_duty_terminals: set[str] = set()
+_off_duty_lock = threading.Lock()
 
 
 class OutputMode(str, Enum):
@@ -195,11 +199,17 @@ def get_terminal(terminal_id: str) -> Dict:
         if not metadata:
             raise ValueError(f"Terminal '{terminal_id}' not found")
 
-        # Get status from provider
-        provider = provider_manager.get_provider(terminal_id)
-        if provider is None:
-            raise ValueError(f"Provider not found for terminal {terminal_id}")
-        status = provider.get_status().value
+        with _off_duty_lock:
+            is_off_duty = terminal_id in _off_duty_terminals
+
+        if is_off_duty:
+            status = TerminalStatus.OFF_DUTY.value
+        else:
+            # Get status from provider
+            provider = provider_manager.get_provider(terminal_id)
+            if provider is None:
+                raise ValueError(f"Provider not found for terminal {terminal_id}")
+            status = provider.get_status().value
 
         return {
             "id": metadata["id"],
@@ -256,6 +266,9 @@ def send_input(terminal_id: str, message: str) -> bool:
         metadata = get_terminal_metadata(terminal_id)
         if not metadata:
             raise ValueError(f"Terminal '{terminal_id}' not found")
+
+        with _off_duty_lock:
+            _off_duty_terminals.discard(terminal_id)
 
         # Check how many Enter keys the provider needs after paste
         provider = provider_manager.get_provider(terminal_id)
@@ -340,6 +353,9 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
 def delete_terminal(terminal_id: str) -> bool:
     """Delete terminal."""
     try:
+        with _off_duty_lock:
+            _off_duty_terminals.discard(terminal_id)
+
         # Get metadata before deletion
         metadata = get_terminal_metadata(terminal_id)
 
@@ -359,3 +375,9 @@ def delete_terminal(terminal_id: str) -> bool:
     except Exception as e:
         logger.error(f"Failed to delete terminal {terminal_id}: {e}")
         raise
+
+
+def mark_terminal_off_duty(terminal_id: str) -> None:
+    """Mark terminal as off duty after explicit exit command."""
+    with _off_duty_lock:
+        _off_duty_terminals.add(terminal_id)

@@ -26,6 +26,8 @@ WORK_AGENT_CREATE_RETRY_ATTEMPTS = 3
 PROVIDER_READY_TIMEOUT_SECONDS = 120.0
 PROVIDER_READY_STATUSES = {TerminalStatus.IDLE, TerminalStatus.COMPLETED}
 ASSIGN_POST_READY_STABILIZATION_SECONDS = 2.0
+HANDOFF_OUTPUT_SETTLE_POLLING_SECONDS = 1.0
+HANDOFF_OUTPUT_SETTLE_MAX_SECONDS = 30.0
 
 # Environment variable to enable/disable working_directory parameter
 ENABLE_WORKING_DIRECTORY = os.getenv("CAO_ENABLE_WORKING_DIRECTORY", "false").lower() == "true"
@@ -395,6 +397,61 @@ def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
     return response.json()
 
 
+def _send_message_impl(receiver_id: str, message: str) -> Dict[str, Any]:
+    """Implementation of send_message."""
+    return _send_to_inbox(receiver_id, message)
+
+
+def _looks_like_incomplete_handoff_output(output: str) -> bool:
+    """Heuristic check for transient rendering/progress output.
+
+    Some providers may transiently render UI/status text (e.g. "Generating...")
+    while terminal status already appears completed.
+    """
+    normalized = output.strip().lower()
+    if not normalized:
+        return True
+
+    transient_markers = (
+        "generating...",
+        "generating",
+        "thinking...",
+        "thinking",
+        "processing...",
+        "processing",
+        "analyzing...",
+        "analyzing",
+        "working...",
+        "working",
+        "esc to interrupt",
+    )
+    return any(marker in normalized for marker in transient_markers)
+
+
+def _fetch_stable_handoff_output(terminal_id: str, timeout_seconds: int) -> str:
+    """Fetch handoff output and wait briefly for non-transient content."""
+    settle_window = max(3.0, min(HANDOFF_OUTPUT_SETTLE_MAX_SECONDS, timeout_seconds / 4))
+    deadline = time.time() + settle_window
+    last_output = ""
+
+    while True:
+        response = _request_with_retry(
+            "GET", f"{API_BASE_URL}/terminals/{terminal_id}/output", params={"mode": "last"}
+        )
+        output_data = response.json()
+        output = str(output_data.get("output", "")).strip()
+        if output:
+            last_output = output
+
+        if output and not _looks_like_incomplete_handoff_output(output):
+            return output
+
+        if time.time() >= deadline:
+            return last_output
+
+        time.sleep(HANDOFF_OUTPUT_SETTLE_POLLING_SECONDS)
+
+
 # Implementation functions
 async def _handoff_impl(
     agent_profile: str,
@@ -480,12 +537,9 @@ async def _handoff_impl(
                 terminal_id=terminal_id,
             )
 
-        # Get the response
-        response = _request_with_retry(
-            "GET", f"{API_BASE_URL}/terminals/{terminal_id}/output", params={"mode": "last"}
-        )
-        output_data = response.json()
-        output = output_data["output"]
+        # Get response with short stabilization polling to avoid returning
+        # transient CLI rendering status (e.g. "Generating...")
+        output = _fetch_stable_handoff_output(terminal_id, timeout)
 
         # Send provider-specific exit command to cleanup terminal
         _request_with_retry("POST", f"{API_BASE_URL}/terminals/{terminal_id}/exit")
@@ -800,7 +854,7 @@ async def send_message(
         Dict with success status and message details
     """
     try:
-        return _send_to_inbox(receiver_id, message)
+        return _send_message_impl(receiver_id, message)
     except Exception as e:
         return {"success": False, "error": str(e)}
 

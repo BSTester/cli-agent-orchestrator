@@ -32,6 +32,13 @@ export default function AgentsPage() {
   const [error, setError] = useState("");
   const [activeAgent, setActiveAgent] = useState<ConsoleAgent | null>(null);
   const [openingLeaderId, setOpeningLeaderId] = useState("");
+  const [clockingOutLeaderId, setClockingOutLeaderId] = useState("");
+  const [clockOutTarget, setClockOutTarget] = useState<{
+    leaderId: string;
+    teamName: string;
+    sessionName: string;
+    workerCount: number;
+  } | null>(null);
   const [taskTitleByAgent, setTaskTitleByAgent] = useState<Record<string, string>>({});
 
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
@@ -366,6 +373,31 @@ export default function AgentsPage() {
     return organization.leaders_total + organization.workers_total;
   }, [organization]);
 
+  function extractErrorDetail(payload: unknown): string {
+    if (!payload || typeof payload !== "object") {
+      return "";
+    }
+
+    const detail = (payload as { detail?: unknown }).detail;
+    if (typeof detail === "string") {
+      return detail;
+    }
+    if (detail && typeof detail === "object") {
+      const nestedMessage = (detail as { message?: unknown }).message;
+      if (typeof nestedMessage === "string") {
+        return nestedMessage;
+      }
+      return JSON.stringify(detail);
+    }
+
+    const message = (payload as { message?: unknown }).message;
+    if (typeof message === "string") {
+      return message;
+    }
+
+    return "";
+  }
+
   function closeAgentDrawer() {
     disconnectTerminal();
     setActiveAgent(null);
@@ -398,6 +430,59 @@ export default function AgentsPage() {
     setActiveAgent(ensureResult.data.leader);
     await loadOrganization();
     setOpeningLeaderId("");
+  }
+
+  function requestClockOut(group: (typeof leaderGroups)[number]) {
+    const leaderId = String(group.leader.id || "").trim();
+    if (!leaderId) {
+      setError("下班失败：负责人ID为空");
+      return;
+    }
+
+    setClockOutTarget({
+      leaderId,
+      teamName: String(group.team_alias || group.leader.session_name || group.leader.id || "-").trim(),
+      sessionName: String(group.leader.session_name || "").trim(),
+      workerCount: group.members.length,
+    });
+    setError("");
+  }
+
+  function cancelClockOut() {
+    if (clockingOutLeaderId) {
+      return;
+    }
+    setClockOutTarget(null);
+  }
+
+  async function confirmClockOut() {
+    if (!clockOutTarget || clockingOutLeaderId) {
+      return;
+    }
+
+    const currentTarget = clockOutTarget;
+    setClockingOutLeaderId(currentTarget.leaderId);
+    setError("");
+
+    const result = await caoRequest<{ ok: boolean }>(
+      "POST",
+      `/console/organization/${encodeURIComponent(currentTarget.leaderId)}/clock-out`
+    );
+
+    if (!result.ok) {
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `下班失败：${detail}` : "下班失败");
+      setClockingOutLeaderId("");
+      return;
+    }
+
+    if (activeAgent?.id && activeAgent.id === currentTarget.leaderId) {
+      closeAgentDrawer();
+    }
+
+    setClockOutTarget(null);
+    await loadOrganization();
+    setClockingOutLeaderId("");
   }
 
   return (
@@ -440,8 +525,29 @@ export default function AgentsPage() {
 
             return (
               <SectionCard key={group.leader.id}>
-                <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>
-                  会话：{group.team_alias || group.leader.session_name || group.leader.id}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 10,
+                  }}
+                >
+                  <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>
+                    会话：{group.team_alias || group.leader.session_name || group.leader.id}
+                  </div>
+                  <SecondaryButton
+                    type="button"
+                    onClick={() => requestClockOut(group)}
+                    style={{ padding: "4px 8px", fontSize: 12 }}
+                    disabled={
+                      Boolean(openingLeaderId) ||
+                      Boolean(clockingOutLeaderId)
+                    }
+                  >
+                    {clockingOutLeaderId === group.leader.id ? "下班中..." : "下班"}
+                  </SecondaryButton>
                 </div>
 
                 <div
@@ -704,6 +810,64 @@ export default function AgentsPage() {
                     }}
                   />
                 </section>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {clockOutTarget && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 41,
+              background: "rgba(0,0,0,0.45)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+            }}
+            onClick={cancelClockOut}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="下班确认"
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "min(560px, 100%)",
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                padding: 14,
+              }}
+            >
+              <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
+                确认团队下班
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 4 }}>
+                会话：{clockOutTarget.teamName}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 4 }}>
+                负责人：{clockOutTarget.leaderId}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 12 }}>
+                Worker 数：{clockOutTarget.workerCount}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 14 }}>
+                确认后将退出全部 Worker 终端，并退出负责人终端（保留会话）；负责人状态将变为下线。
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <SecondaryButton type="button" onClick={cancelClockOut} disabled={Boolean(clockingOutLeaderId)}>
+                  取消
+                </SecondaryButton>
+                <SecondaryButton
+                  type="button"
+                  onClick={() => void confirmClockOut()}
+                  disabled={Boolean(clockingOutLeaderId)}
+                >
+                  {clockingOutLeaderId ? "处理中..." : "确认下班"}
+                </SecondaryButton>
               </div>
             </div>
           </div>

@@ -12,6 +12,11 @@ def test_qoder_cli_start_command_uses_yolo() -> None:
     assert provider._start_command == "qodercli --yolo"
 
 
+def test_qoder_cli_exit_command_is_quit() -> None:
+    provider = QoderCliProvider("t1", "s1", "w1")
+    assert provider.exit_cli() == "/quit"
+
+
 @patch("cli_agent_orchestrator.providers.qoder_cli.load_agent_profile")
 def test_qoder_cli_start_command_with_agent_profile(mock_load_profile) -> None:
     mock_profile = MagicMock()

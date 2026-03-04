@@ -22,6 +22,63 @@ def login(client: TestClient) -> None:
     assert response.status_code == 200
 
 
+def test_console_delete_agent_profile_success(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    profile_path = tmp_path / "sample_agent.md"
+    profile_path.write_text("---\nname: sample_agent\n---\n\nhello", encoding="utf-8")
+
+    process = MagicMock()
+    process.returncode = 0
+    process.stdout = "ok"
+    process.stderr = ""
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._validate_profile_name", return_value="sample_agent"),
+        patch("cli_agent_orchestrator.control_panel.main._profile_file_path", return_value=profile_path),
+        patch("cli_agent_orchestrator.control_panel.main.subprocess.run", return_value=process),
+    ):
+        response = client.delete("/console/agent-profiles/sample_agent")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["profile"] == "sample_agent"
+    assert payload["file_deleted"] is True
+    assert payload["return_code"] == 0
+    assert profile_path.exists() is False
+
+
+def test_console_delete_agent_profile_file_already_removed(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    profile_path = tmp_path / "sample_agent.md"
+    profile_path.write_text("---\nname: sample_agent\n---\n\nhello", encoding="utf-8")
+
+    process = MagicMock()
+    process.returncode = 0
+    process.stdout = "ok"
+    process.stderr = ""
+
+    def fake_uninstall(*_args, **_kwargs):
+        if profile_path.exists():
+            profile_path.unlink()
+        return process
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._validate_profile_name", return_value="sample_agent"),
+        patch("cli_agent_orchestrator.control_panel.main._profile_file_path", return_value=profile_path),
+        patch("cli_agent_orchestrator.control_panel.main.subprocess.run", side_effect=fake_uninstall),
+    ):
+        response = client.delete("/console/agent-profiles/sample_agent")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["profile"] == "sample_agent"
+    assert payload["file_deleted"] is True
+
+
 def test_health_endpoint_success(client: TestClient) -> None:
     """Test health endpoint when cao-server is reachable."""
     with patch("cli_agent_orchestrator.control_panel.main.requests.get") as mock_get:
@@ -774,6 +831,140 @@ def test_console_create_org_agent_propagates_upstream_http_error(client: TestCli
         assert body["detail"] == "Provider not available"
 
 
+def test_console_update_team_leader_restarts_terminal_and_rekeys(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader1"}),
+        patch("cli_agent_orchestrator.control_panel.main._resolve_terminal_id_alias", return_value="leader1"),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_team_runtime",
+            return_value={
+                "leader_id": "leader1",
+                "terminal_id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+                "working_directory": "/home/penn/workspace/team-a",
+            },
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch(
+            "cli_agent_orchestrator.control_panel.main._resolve_home_level1_directory",
+            return_value="/home/penn/workspace/team-a",
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._list_live_sessions", return_value={"cao-team1"}),
+        patch("cli_agent_orchestrator.control_panel.main._rekey_leader_id") as mock_rekey,
+        patch("cli_agent_orchestrator.control_panel.main._set_team_alias") as mock_set_team_alias,
+        patch("cli_agent_orchestrator.control_panel.main._set_team_working_directory") as mock_set_team_workdir,
+        patch("cli_agent_orchestrator.control_panel.main._upsert_team_runtime") as mock_runtime,
+    ):
+        mock_request_cao.side_effect = [MagicMock(), MagicMock(), MagicMock()]
+        mock_json.side_effect = [
+            {
+                "id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+            },
+            {
+                "id": "leader2",
+                "session_name": "cao-team1",
+                "provider": "codex",
+                "agent_profile": "reviewer",
+            },
+        ]
+
+        response = client.put(
+            "/console/organization/leader1/leader",
+            json={
+                "agent_profile": "reviewer",
+                "provider": "codex",
+                "team_alias": "新团队",
+                "team_workdir_mode": "existing",
+                "team_workdir_name": "team-a",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["leader_id"] == "leader2"
+        assert body["previous_leader_id"] == "leader1"
+        mock_request_cao.assert_any_call("DELETE", "/terminals/leader1")
+        mock_request_cao.assert_any_call(
+            "POST",
+            "/sessions/cao-team1/terminals",
+            {"agent_profile": "reviewer", "provider": "codex", "working_directory": "/home/penn/workspace/team-a"},
+        )
+        mock_rekey.assert_called_once_with("leader1", "leader2")
+        mock_set_team_alias.assert_called_once_with("leader2", "新团队")
+        mock_set_team_workdir.assert_called_once_with("leader2", "/home/penn/workspace/team-a")
+        mock_runtime.assert_called_once()
+
+
+def test_console_update_team_leader_recreates_session_when_missing(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader1"}),
+        patch("cli_agent_orchestrator.control_panel.main._resolve_terminal_id_alias", return_value="leader1"),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_team_runtime",
+            return_value={
+                "leader_id": "leader1",
+                "terminal_id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+                "working_directory": "/home/penn/workspace/team-a",
+            },
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch("cli_agent_orchestrator.control_panel.main._list_live_sessions", return_value=set()),
+        patch("cli_agent_orchestrator.control_panel.main._upsert_team_runtime") as mock_runtime,
+    ):
+        mock_request_cao.side_effect = [MagicMock(), MagicMock(), MagicMock()]
+        mock_json.side_effect = [
+            {
+                "id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+            },
+            {
+                "id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+            },
+        ]
+
+        response = client.put(
+            "/console/organization/leader1/leader",
+            json={
+                "agent_profile": "code_supervisor",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        mock_request_cao.assert_any_call("DELETE", "/terminals/leader1")
+        mock_request_cao.assert_any_call(
+            "POST",
+            "/sessions",
+            {
+                "agent_profile": "code_supervisor",
+                "provider": "kiro_cli",
+                "working_directory": "/home/penn/workspace/team-a",
+                "session_name": "cao-team1",
+            },
+        )
+        mock_runtime.assert_called_once()
+
+
 def test_console_disband_team_deletes_target_session_only(client: TestClient) -> None:
     login(client)
 
@@ -925,6 +1116,129 @@ def test_console_disband_team_ignores_leader_terminal_500_and_still_removes_team
         assert body["session_name"] == "cao-offline"
         assert body["result"]["session_deleted"] is False
         mock_remove_team.assert_called_once_with("leader-offline")
+
+
+def test_console_clock_out_team_removes_workers_and_exits_leader(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader1"}),
+        patch("cli_agent_orchestrator.control_panel.main._resolve_terminal_id_alias", return_value="leader1"),
+        patch("cli_agent_orchestrator.control_panel.main._get_terminals_from_sessions", return_value=[]),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._build_organization",
+            return_value={
+                "leader_groups": [
+                    {
+                        "leader": {
+                            "id": "leader1",
+                            "session_name": "cao-team1",
+                            "provider": "kiro_cli",
+                            "agent_profile": "code_supervisor",
+                            "is_offline": False,
+                        },
+                        "members": [
+                            {"id": "worker1"},
+                            {"id": "worker2"},
+                        ],
+                    }
+                ]
+            },
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_team_runtime",
+            return_value={
+                "leader_id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+                "working_directory": "/home/penn/workspace/team-a",
+            },
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._upsert_team_runtime") as mock_runtime,
+        patch("cli_agent_orchestrator.control_panel.main._remove_worker_link") as mock_remove_worker_link,
+    ):
+        mock_request_cao.side_effect = [MagicMock(), MagicMock(), MagicMock()]
+
+        response = client.post("/console/organization/leader1/clock-out")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["leader_id"] == "leader1"
+        assert body["session_name"] == "cao-team1"
+        assert body["workers_removed"] == 2
+        assert body["leader_terminal_exited"] is True
+        mock_request_cao.assert_any_call("DELETE", "/terminals/worker1")
+        mock_request_cao.assert_any_call("DELETE", "/terminals/worker2")
+        mock_request_cao.assert_any_call("DELETE", "/terminals/leader1")
+        mock_remove_worker_link.assert_any_call("worker1")
+        mock_remove_worker_link.assert_any_call("worker2")
+        mock_runtime.assert_called_once_with(
+            "leader1",
+            terminal_id=None,
+            session_name="cao-team1",
+            provider="kiro_cli",
+            agent_profile="code_supervisor",
+            working_directory="/home/penn/workspace/team-a",
+        )
+
+
+def test_console_clock_out_team_ignores_missing_worker_terminal(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader1"}),
+        patch("cli_agent_orchestrator.control_panel.main._resolve_terminal_id_alias", return_value="leader1"),
+        patch("cli_agent_orchestrator.control_panel.main._get_terminals_from_sessions", return_value=[]),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._build_organization",
+            return_value={
+                "leader_groups": [
+                    {
+                        "leader": {
+                            "id": "leader1",
+                            "session_name": "cao-team1",
+                            "provider": "kiro_cli",
+                            "agent_profile": "code_supervisor",
+                            "is_offline": True,
+                        },
+                        "members": [{"id": "worker1"}],
+                    }
+                ]
+            },
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_team_runtime",
+            return_value={
+                "leader_id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "code_supervisor",
+                "working_directory": "/home/penn/workspace/team-a",
+            },
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._upsert_team_runtime") as mock_runtime,
+        patch("cli_agent_orchestrator.control_panel.main._remove_worker_link") as mock_remove_worker_link,
+    ):
+        not_found_response = requests.Response()
+        not_found_response.status_code = 404
+        not_found_error = requests.exceptions.HTTPError("404 Not Found")
+        not_found_error.response = not_found_response
+        mock_request_cao.side_effect = [not_found_error]
+
+        response = client.post("/console/organization/leader1/clock-out")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["workers_removed"] == 0
+        assert body["leader_terminal_exited"] is False
+        assert body["result"]["workers_not_found"] == ["worker1"]
+        mock_remove_worker_link.assert_called_once_with("worker1")
+        mock_runtime.assert_called_once()
 
 
 def test_console_organization_collapses_same_session_supervisors_into_single_team(client: TestClient) -> None:

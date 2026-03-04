@@ -1,7 +1,9 @@
 """Unit tests for SimpleTui startup auto-accept behavior."""
 
+import time
 from unittest.mock import MagicMock, patch
 
+from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.simple_tui import SimpleTuiProvider
 
 
@@ -60,3 +62,34 @@ def test_has_idle_prompt_detects_real_prompt_line():
 
     idle_output = "\n> \n"
     assert provider._has_idle_prompt(idle_output) is True
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_get_status_uses_grace_period_after_input(mock_tmux):
+    provider = SimpleTuiProvider(
+        terminal_id="t1",
+        session_name="s1",
+        window_name="w1",
+        start_command="dummy",
+    )
+
+    mock_tmux.get_history.return_value = "> \n"
+    provider.mark_input_received()
+    provider._input_received_at = time.time()
+
+    assert provider.get_status() == TerminalStatus.PROCESSING
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_get_status_processing_when_generating_marker_present(mock_tmux):
+    provider = SimpleTuiProvider(
+        terminal_id="t1",
+        session_name="s1",
+        window_name="w1",
+        start_command="dummy",
+    )
+
+    mock_tmux.get_history.return_value = "Generating...\n> \n"
+    provider.mark_input_received()
+
+    assert provider.get_status() == TerminalStatus.PROCESSING

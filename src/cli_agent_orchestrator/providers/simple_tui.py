@@ -64,6 +64,7 @@ class SimpleTuiProvider(BaseProvider):
                 r"working",
                 r"analyzing",
                 r"processing",
+                r"generating",
                 r"esc to interrupt",
             ]
         )
@@ -81,6 +82,9 @@ class SimpleTuiProvider(BaseProvider):
         self._exit_command = exit_command
         self._initialized = False
         self._input_received = False
+        self._input_received_at: Optional[float] = None
+        self._saw_processing_after_input = False
+        self._completion_grace_seconds = 8.0
 
     def _clean_output(self, output: str) -> str:
         return re.sub(ANSI_CODE_PATTERN, "", output)
@@ -142,6 +146,8 @@ class SimpleTuiProvider(BaseProvider):
 
         self._initialized = True
         self._input_received = False
+        self._input_received_at = None
+        self._saw_processing_after_input = False
         return True
 
     def get_status(self, tail_lines: Optional[int] = None) -> TerminalStatus:
@@ -158,16 +164,23 @@ class SimpleTuiProvider(BaseProvider):
         if self._matches_any(self._error_patterns, tail_output):
             return TerminalStatus.ERROR
 
-        if self._matches_any(self._processing_patterns, tail_output) and not self._has_idle_prompt(
-            clean_output
-        ):
+        if self._matches_any(self._processing_patterns, tail_output):
+            if self._input_received:
+                self._saw_processing_after_input = True
             return TerminalStatus.PROCESSING
 
         if not self._has_idle_prompt(clean_output):
+            if self._input_received:
+                self._saw_processing_after_input = True
             return TerminalStatus.PROCESSING
 
         if not self._input_received:
             return TerminalStatus.IDLE
+
+        if self._input_received_at is not None:
+            elapsed = time.time() - self._input_received_at
+            if elapsed < self._completion_grace_seconds and not self._saw_processing_after_input:
+                return TerminalStatus.PROCESSING
 
         # With unknown provider-specific transcript formats, consider returning to idle
         # after a user message as task completion for orchestration workflows.
@@ -213,3 +226,5 @@ class SimpleTuiProvider(BaseProvider):
 
     def mark_input_received(self) -> None:
         self._input_received = True
+        self._input_received_at = time.time()
+        self._saw_processing_after_input = False

@@ -411,6 +411,7 @@ async def exit_terminal(terminal_id: TerminalId) -> Dict:
             terminal_service.send_special_key(terminal_id, exit_command)
         else:
             terminal_service.send_input(terminal_id, exit_command)
+        terminal_service.mark_terminal_off_duty(terminal_id)
         return {"success": True}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
