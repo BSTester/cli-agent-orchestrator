@@ -130,11 +130,15 @@ def test_create_terminal_treats_empty_provider_as_none(mock_load_profile, mock_r
     working_dir_response.raise_for_status.return_value = None
     working_dir_response.json.return_value = {"working_directory": "/home/runner/workspace"}
 
+    list_response = MagicMock()
+    list_response.raise_for_status.return_value = None
+    list_response.json.return_value = []
+
     create_response = MagicMock()
     create_response.raise_for_status.return_value = None
     create_response.json.return_value = {"id": "term7777"}
 
-    mock_request.side_effect = [metadata_response, working_dir_response, create_response]
+    mock_request.side_effect = [metadata_response, working_dir_response, list_response, create_response]
 
     with patch.dict(os.environ, {"CAO_TERMINAL_ID": "abc12345"}):
         terminal_id, provider = _create_terminal("developer", provider=" ")
@@ -142,3 +146,52 @@ def test_create_terminal_treats_empty_provider_as_none(mock_load_profile, mock_r
     assert terminal_id == "term7777"
     assert provider == ProviderType.CLAUDE_CODE.value
     assert mock_request.call_args.kwargs["params"]["provider"] == ProviderType.CLAUDE_CODE.value
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.requests.request")
+@patch("cli_agent_orchestrator.mcp_server.server.load_agent_profile")
+def test_create_terminal_reuses_idle_existing_worker(mock_load_profile, mock_request):
+    profile = type("Profile", (), {"provider": ProviderType.KIRO_CLI})()
+    mock_load_profile.return_value = profile
+
+    metadata_response = MagicMock()
+    metadata_response.raise_for_status.return_value = None
+    metadata_response.json.return_value = {
+        "provider": "kiro_cli",
+        "session_name": "cao-test-session",
+    }
+
+    working_dir_response = MagicMock()
+    working_dir_response.raise_for_status.return_value = None
+    working_dir_response.json.return_value = {"working_directory": "/home/runner/workspace"}
+
+    list_response = MagicMock()
+    list_response.raise_for_status.return_value = None
+    list_response.json.return_value = [
+        {
+            "id": "idle1234",
+            "provider": "kiro_cli",
+            "agent_profile": "developer",
+            "tmux_session": "cao-test-session",
+            "tmux_window": "dev-1",
+        }
+    ]
+
+    status_response = MagicMock()
+    status_response.raise_for_status.return_value = None
+    status_response.json.return_value = {"status": "idle"}
+
+    mock_request.side_effect = [
+        metadata_response,
+        working_dir_response,
+        list_response,
+        status_response,
+    ]
+
+    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "abc12345"}):
+        terminal_id, provider = _create_terminal("developer")
+
+    assert terminal_id == "idle1234"
+    assert provider == ProviderType.KIRO_CLI.value
+    # Ensure we never issued a POST create call
+    assert mock_request.call_args_list[-1].kwargs["url"].endswith("/idle1234")

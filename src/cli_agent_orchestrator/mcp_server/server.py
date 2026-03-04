@@ -221,6 +221,35 @@ def _create_terminal(
         if resolved_provider is None:
             resolved_provider = inherited_provider
 
+        # Try to reuse an existing idle terminal with the same profile/provider to avoid
+        # spawning duplicates when a worker already exists.
+        try:
+            list_response = _request_with_retry(
+                "GET",
+                f"{API_BASE_URL}/sessions/{session_name}/terminals",
+                retry_attempts=1,
+            )
+            for terminal_info in list_response.json():
+                if (
+                    terminal_info.get("agent_profile") == agent_profile
+                    and terminal_info.get("provider") == resolved_provider
+                ):
+                    status_resp = _request_with_retry(
+                        "GET",
+                        f"{API_BASE_URL}/terminals/{terminal_info['id']}",
+                        retry_attempts=1,
+                    )
+                    if status_resp.json().get("status") == TerminalStatus.IDLE.value:
+                        logger.info(
+                            "Reusing idle terminal %s for agent_profile=%s provider=%s",
+                            terminal_info["id"],
+                            agent_profile,
+                            resolved_provider,
+                        )
+                        return terminal_info["id"], resolved_provider
+        except Exception as exc:
+            logger.warning("Failed to reuse idle terminal, will create new one: %s", exc)
+
         # Create new terminal in existing session - always pass working_directory
         params = {"provider": resolved_provider, "agent_profile": agent_profile}
         if working_directory:
