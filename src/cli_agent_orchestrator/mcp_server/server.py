@@ -120,37 +120,8 @@ def _create_terminal_with_retry(
     working_directory: Optional[str] = None,
     provider: Optional[str] = None,
 ) -> Tuple[str, str]:
-    """Create terminal with bounded retry to avoid infinite loops on failure."""
-    last_error: Optional[Exception] = None
-
-    for attempt in range(1, WORK_AGENT_CREATE_RETRY_ATTEMPTS + 1):
-        try:
-            return _create_terminal(agent_profile, working_directory=working_directory, provider=provider)
-        except requests.HTTPError as exc:
-            # If the API returned an HTTP error (e.g., provider init timeout),
-            # do not retry to avoid spawning multiple duplicate workers.
-            last_error = exc
-            logger.warning(
-                "Create worker terminal attempt %s/%s failed with HTTP error (no retry): %s",
-                attempt,
-                WORK_AGENT_CREATE_RETRY_ATTEMPTS,
-                exc,
-            )
-            break
-        except Exception as exc:
-            last_error = exc
-            logger.warning(
-                "Create worker terminal attempt %s/%s failed: %s",
-                attempt,
-                WORK_AGENT_CREATE_RETRY_ATTEMPTS,
-                exc,
-            )
-            if attempt < WORK_AGENT_CREATE_RETRY_ATTEMPTS:
-                time.sleep(REQUEST_RETRY_BACKOFF_SECONDS * attempt)
-
-    if last_error:
-        raise last_error
-    raise RuntimeError("Failed to create worker terminal without exception details")
+    """Create terminal without retry to avoid duplicate workers."""
+    return _create_terminal(agent_profile, working_directory=working_directory, provider=provider)
 
 
 def _create_terminal(
@@ -251,7 +222,11 @@ def _create_terminal(
             logger.warning("Failed to reuse idle terminal, will create new one: %s", exc)
 
         # Create new terminal in existing session - always pass working_directory
-        params = {"provider": resolved_provider, "agent_profile": agent_profile}
+        params: Dict[str, Any] = {"agent_profile": agent_profile}
+        if resolved_provider is not None and (
+            provider is not None or resolved_provider != DEFAULT_PROVIDER
+        ):
+            params["provider"] = resolved_provider
         if working_directory:
             params["working_directory"] = working_directory
 
@@ -275,11 +250,14 @@ def _create_terminal(
         if resolved_provider is None:
             resolved_provider = DEFAULT_PROVIDER
 
-        params = {
-            "provider": resolved_provider,
+        params: Dict[str, Any] = {
             "agent_profile": agent_profile,
             "session_name": session_name,
         }
+        if resolved_provider is not None and (
+            provider is not None or resolved_provider != DEFAULT_PROVIDER
+        ):
+            params["provider"] = resolved_provider
         if working_directory:
             params["working_directory"] = working_directory
 
@@ -289,7 +267,7 @@ def _create_terminal(
         terminal = response.json()
 
     if resolved_provider is None:
-        resolved_provider = DEFAULT_PROVIDER
+        resolved_provider = terminal.get("provider", DEFAULT_PROVIDER)
 
     return terminal["id"], resolved_provider
 

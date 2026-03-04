@@ -21,7 +21,11 @@ def test_create_terminal_uses_explicit_provider_override(mock_request):
     create_response.raise_for_status.return_value = None
     create_response.json.return_value = {"id": "term1234"}
 
-    mock_request.side_effect = [metadata_response, create_response]
+    list_response = MagicMock()
+    list_response.raise_for_status.return_value = None
+    list_response.json.return_value = []
+
+    mock_request.side_effect = [metadata_response, list_response, create_response]
 
     with patch.dict(os.environ, {"CAO_TERMINAL_ID": "abc12345"}):
         terminal_id, provider = _create_terminal(
@@ -52,14 +56,18 @@ def test_create_terminal_uses_single_attempt_for_creation(mock_request):
     create_response.raise_for_status.return_value = None
     create_response.json.return_value = {"id": "term2345"}
 
-    mock_request.side_effect = [metadata_response, working_dir_response, create_response]
+    list_response = MagicMock()
+    list_response.raise_for_status.return_value = None
+    list_response.json.return_value = []
+
+    mock_request.side_effect = [metadata_response, working_dir_response, list_response, create_response]
 
     with patch.dict(os.environ, {"CAO_TERMINAL_ID": "abc12345"}):
         terminal_id, provider = _create_terminal("developer")
 
     assert terminal_id == "term2345"
     assert provider == "kiro_cli"
-    assert mock_request.call_args_list[2].kwargs.get("retry_attempts") == 1
+    assert mock_request.call_args_list[3].kwargs.get("retry_attempts") == 1
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.requests.request")
@@ -79,7 +87,11 @@ def test_create_terminal_uses_profile_provider_when_no_override(mock_load_profil
     create_response.raise_for_status.return_value = None
     create_response.json.return_value = {"id": "term5678"}
 
-    mock_request.side_effect = [metadata_response, create_response]
+    list_response = MagicMock()
+    list_response.raise_for_status.return_value = None
+    list_response.json.return_value = []
+
+    mock_request.side_effect = [metadata_response, list_response, create_response]
 
     with patch.dict(os.environ, {"CAO_TERMINAL_ID": "abc12345"}):
         terminal_id, provider = _create_terminal("developer", working_directory="/tmp/project")
@@ -110,7 +122,7 @@ def test_create_terminal_falls_back_to_default_provider_in_new_session(
 
     assert terminal_id == "term9012"
     assert provider == DEFAULT_PROVIDER
-    assert mock_request.call_args.kwargs["params"]["provider"] == DEFAULT_PROVIDER
+    assert "provider" not in mock_request.call_args.kwargs["params"]
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.requests.request")
