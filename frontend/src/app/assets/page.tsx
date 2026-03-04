@@ -202,6 +202,21 @@ export default function AssetsPage() {
     void loadTeams();
   }, [loadTeams]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    if (showPreviewDrawer) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showPreviewDrawer]);
+
   const pathSegments = useMemo(() => {
     if (!currentPath) {
       return [] as string[];
@@ -757,7 +772,16 @@ export default function AssetsPage() {
                 </div>
               </div>
 
-              <div style={{ flex: 1, padding: 12, minHeight: 0, overflow: "hidden" }}>
+              <div
+                style={{
+                  flex: 1,
+                  padding: 12,
+                  minHeight: 0,
+                  overflow: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
                 {loadingFile ? (
                   <div style={{ color: "var(--text-dim)", fontSize: 13 }}>文件加载中...</div>
                 ) : previewMode === "rendered" && isMarkdownFile(selectedFilePath) ? (
@@ -787,17 +811,19 @@ export default function AssetsPage() {
                     title={selectedFilePath}
                   />
                 ) : (
-                  <CodeEditorInput
-                    value={selectedFileContent}
-                    onChange={() => {}}
-                    language="auto"
-                    fileName={selectedFilePath}
-                    showToolbar
-                    defaultReadOnly
-                    showReadOnlyToggle={false}
-                    fullHeight
-                    style={{ width: "100%", height: "100%", minHeight: 0 }}
-                  />
+                  <div style={{ flex: 1, minHeight: 0 }}>
+                    <CodeEditorInput
+                      value={selectedFileContent}
+                      onChange={() => {}}
+                      language="auto"
+                      fileName={selectedFilePath}
+                      showToolbar
+                      defaultReadOnly
+                      showReadOnlyToggle={false}
+                      fullHeight
+                      style={{ width: "100%", height: "100%", minHeight: 0 }}
+                    />
+                  </div>
                 )}
               </div>
             </div>
