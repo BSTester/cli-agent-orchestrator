@@ -143,6 +143,23 @@ class TestWaitUntilStatus:
 
         assert result is True
 
+    def test_wait_until_status_accepts_multiple_targets(self):
+        """Test status wait with multiple acceptable targets."""
+        mock_provider = MagicMock()
+        mock_provider.get_status.side_effect = [
+            TerminalStatus.PROCESSING,
+            TerminalStatus.WAITING_USER_ANSWER,
+        ]
+
+        result = wait_until_status(
+            mock_provider,
+            {TerminalStatus.IDLE, TerminalStatus.WAITING_USER_ANSWER},
+            timeout=1.0,
+            polling_interval=0.05,
+        )
+
+        assert result is True
+
 
 class TestWaitUntilTerminalStatus:
     """Tests for wait_until_terminal_status function."""

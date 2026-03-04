@@ -540,6 +540,23 @@ class TmuxClient:
             logger.error(f"Failed to get windows for session {session_name}: {e}")
             return []
 
+    def kill_window(self, session_name: str, window_name: str) -> bool:
+        """Kill a specific tmux window."""
+        try:
+            session = self.server.sessions.get(session_name=session_name)
+            if not session:
+                return False
+
+            window = session.windows.get(window_name=window_name)
+            if window:
+                window.kill_window()
+                logger.info(f"Killed window '{window_name}' in session '{session_name}'")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to kill window {window_name} in session {session_name}: {e}")
+            return False
+
     def kill_session(self, session_name: str) -> bool:
         """Kill tmux session."""
         try:
