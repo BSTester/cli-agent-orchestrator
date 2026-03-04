@@ -448,6 +448,7 @@ export function CodeEditorInput({
         extensions={extensions}
         onKeyDown={onKeyDown}
         theme="dark"
+        height={fullHeight ? "100%" : undefined}
         style={{
           minHeight: 120,
           height: fullHeight ? "100%" : undefined,
