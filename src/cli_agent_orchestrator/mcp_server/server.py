@@ -126,6 +126,17 @@ def _create_terminal_with_retry(
     for attempt in range(1, WORK_AGENT_CREATE_RETRY_ATTEMPTS + 1):
         try:
             return _create_terminal(agent_profile, working_directory=working_directory, provider=provider)
+        except requests.HTTPError as exc:
+            # If the API returned an HTTP error (e.g., provider init timeout),
+            # do not retry to avoid spawning multiple duplicate workers.
+            last_error = exc
+            logger.warning(
+                "Create worker terminal attempt %s/%s failed with HTTP error (no retry): %s",
+                attempt,
+                WORK_AGENT_CREATE_RETRY_ATTEMPTS,
+                exc,
+            )
+            break
         except Exception as exc:
             last_error = exc
             logger.warning(
