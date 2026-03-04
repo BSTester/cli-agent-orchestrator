@@ -100,6 +100,8 @@ def create_terminal(
         ValueError: If session already exists (new_session=True) or not found (new_session=False)
         TimeoutError: If provider initialization times out
     """
+    terminal_id = None
+    window_name = None
     try:
         resolved_provider = _resolve_provider(agent_profile, provider)
 
@@ -170,11 +172,19 @@ def create_terminal(
             provider_manager.cleanup_provider(terminal_id)
         except Exception:
             pass  # Ignore cleanup errors
-        if new_session and session_name:
-            try:
-                tmux_client.kill_session(session_name)
-            except:
-                pass  # Ignore cleanup errors
+        try:
+            if session_name:
+                if new_session:
+                    tmux_client.kill_session(session_name)
+                elif window_name:
+                    tmux_client.kill_window(session_name, window_name)
+        except Exception:
+            pass  # Ignore cleanup errors
+        try:
+            if terminal_id:
+                db_delete_terminal(terminal_id)
+        except Exception:
+            pass  # Ignore cleanup errors
         raise
 
 

@@ -61,18 +61,22 @@ def wait_for_shell(
 
 def wait_until_status(
     provider_instance: "BaseProvider",
-    target_status: TerminalStatus,
+    target_status: Union[TerminalStatus, set[TerminalStatus]],
     timeout: float = 30.0,
     polling_interval: float = 1.0,
 ) -> bool:
     """Wait until provider reaches target status or timeout."""
     start_time = time.time()
+    targets = {target_status} if isinstance(target_status, TerminalStatus) else set(target_status)
+    target_label = target_status if isinstance(target_status, TerminalStatus) else targets
 
     while time.time() - start_time < timeout:
         status = provider_instance.get_status()
-        logger.info(f"Waiting for {target_status}, current status: {status}")
-        if status == target_status:
+        logger.info(f"Waiting for {target_label}, current status: {status}")
+        if status in targets:
             return True
+        if status == TerminalStatus.ERROR:
+            return False
         time.sleep(polling_interval)
 
     return False

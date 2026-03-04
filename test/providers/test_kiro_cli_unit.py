@@ -119,6 +119,16 @@ class TestKiroCliProviderStatusDetection:
         assert status == TerminalStatus.WAITING_USER_ANSWER
 
     @patch("cli_agent_orchestrator.providers.kiro_cli.tmux_client")
+    def test_get_status_waiting_without_idle_prompt(self, mock_tmux):
+        """Permission prompt should still report WAITING_USER_ANSWER without idle prompt."""
+        mock_tmux.get_history.return_value = "Allow this action? [y/n/t]:"
+
+        provider = KiroCliProvider("test1234", "test-session", "window-0", "developer")
+        status = provider.get_status()
+
+        assert status == TerminalStatus.WAITING_USER_ANSWER
+
+    @patch("cli_agent_orchestrator.providers.kiro_cli.tmux_client")
     def test_get_status_error(self, mock_tmux):
         """Test ERROR status detection."""
         mock_tmux.get_history.return_value = load_fixture("kiro_cli_error_output.txt")

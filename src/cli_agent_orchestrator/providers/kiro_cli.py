@@ -123,7 +123,9 @@ class KiroCliProvider(BaseProvider):
         tmux_client.send_keys(self.session_name, self.window_name, command)
 
         # Step 3: Wait for Kiro CLI to fully initialize and show the agent prompt
-        if not wait_until_status(self, TerminalStatus.IDLE, timeout=30.0):
+        if not wait_until_status(
+            self, {TerminalStatus.IDLE, TerminalStatus.WAITING_USER_ANSWER}, timeout=30.0
+        ):
             raise TimeoutError("Kiro CLI initialization timed out after 30 seconds")
 
         self._initialized = True
@@ -162,10 +164,6 @@ class KiroCliProvider(BaseProvider):
         # If not found, the agent is still processing a response
         has_idle_prompt = re.search(self._idle_prompt_pattern, clean_output)
 
-        if not has_idle_prompt:
-            return TerminalStatus.PROCESSING
-
-        # Check 2: Look for known error messages in the output
         if any(indicator.lower() in clean_output.lower() for indicator in ERROR_INDICATORS):
             return TerminalStatus.ERROR
 
@@ -180,8 +178,11 @@ class KiroCliProvider(BaseProvider):
             idle_lines = sum(
                 1 for line in lines_after if re.search(self._idle_prompt_pattern, line)
             )
-            if idle_lines <= 1:
+            if idle_lines <= 1 or not has_idle_prompt:
                 return TerminalStatus.WAITING_USER_ANSWER
+
+        if not has_idle_prompt:
+            return TerminalStatus.PROCESSING
 
         # Check 4: Look for completed response (green arrow indicates agent output)
         # Must verify that an idle prompt appears AFTER the response
