@@ -1502,19 +1502,32 @@ def _list_live_sessions() -> set[str]:
     }
 
 
-def _find_live_leader_terminal(session_name: str) -> Optional[Dict[str, Any]]:
+def _find_live_leader_terminal(
+    session_name: str, expected_leader_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     session_terminals_response = _request_cao("GET", f"/sessions/{session_name}/terminals")
     session_terminals_data = _response_json_or_text(session_terminals_response)
     if not isinstance(session_terminals_data, list):
         return None
 
+    fallback_main: Optional[Dict[str, Any]] = None
+    fallback_any: Optional[Dict[str, Any]] = None
     for terminal in session_terminals_data:
         if not isinstance(terminal, dict):
             continue
+        terminal_id = str(terminal.get("id", "")).strip()
+        if not terminal_id:
+            continue
         profile = str(terminal.get("agent_profile", "")).lower()
-        if "supervisor" in profile and str(terminal.get("id", "")).strip():
+        if expected_leader_id and terminal_id == expected_leader_id:
             return terminal
-    return None
+        if "supervisor" in profile:
+            return terminal
+        if terminal.get("is_main") and not fallback_main:
+            fallback_main = terminal
+        if not fallback_any:
+            fallback_any = terminal
+    return fallback_main or fallback_any
 
 
 def _default_restore_session_name(leader_id: str) -> str:
@@ -1556,7 +1569,9 @@ def _ensure_team_leader_online(leader_id: str) -> Dict[str, Any]:
 
     live_sessions = _list_live_sessions()
     if session_name in live_sessions:
-        live_terminal = _find_live_leader_terminal(session_name)
+        live_terminal = _find_live_leader_terminal(
+            session_name, runtime_terminal_id or normalized_leader_id
+        )
         if live_terminal:
             live_terminal_id = str(live_terminal.get("id") or "").strip()
             if live_terminal_id:
