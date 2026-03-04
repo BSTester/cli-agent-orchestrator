@@ -628,7 +628,13 @@ export default function OrganizationPage() {
               <SectionTitle title="新增/编辑岗位" />
               <SecondaryButton
                 type="button"
-                onClick={() => setShowProfileCard((previous) => !previous)}
+                onClick={() =>
+                  setShowProfileCard((previous) => {
+                    const next = !previous;
+                    setShowTeamCard(next);
+                    return next;
+                  })
+                }
                 style={{ padding: "6px 10px" }}
                 aria-expanded={showProfileCard}
               >
@@ -693,7 +699,13 @@ export default function OrganizationPage() {
               <SectionTitle title="团队编制管理" />
               <SecondaryButton
                 type="button"
-                onClick={() => setShowTeamCard((previous) => !previous)}
+                onClick={() =>
+                  setShowTeamCard((previous) => {
+                    const next = !previous;
+                    setShowProfileCard(next);
+                    return next;
+                  })
+                }
                 style={{ padding: "6px 10px" }}
                 aria-expanded={showTeamCard}
               >
