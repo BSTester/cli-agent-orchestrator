@@ -1089,6 +1089,69 @@ def test_console_ensure_team_online_restores_leader_and_rekeys(client: TestClien
         mock_runtime.assert_called_once()
 
 
+def test_console_ensure_team_online_reuses_live_terminal(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader1"}),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_team_runtime",
+            return_value={
+                "leader_id": "leader1",
+                "terminal_id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "developer",
+                "working_directory": "/home/test/team-a",
+            },
+        ),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_terminal_db_metadata",
+            return_value={
+                "id": "leader1",
+                "tmux_session": "cao-team1",
+                "tmux_window": "developer",
+                "provider": "kiro_cli",
+                "agent_profile": "developer",
+            },
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._list_team_working_directories", return_value={}),
+        patch("cli_agent_orchestrator.control_panel.main._list_live_sessions", return_value={"cao-team1"}),
+        patch("cli_agent_orchestrator.control_panel.main._rekey_leader_id") as mock_rekey,
+        patch("cli_agent_orchestrator.control_panel.main._upsert_team_runtime") as mock_runtime,
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+    ):
+        mock_request_cao.side_effect = [MagicMock(), MagicMock()]
+        mock_json.side_effect = [
+            [
+                {
+                    "id": "leader1",
+                    "agent_profile": "developer",
+                    "session_name": "cao-team1",
+                    "is_main": True,
+                }
+            ],
+            {
+                "id": "leader1",
+                "session_name": "cao-team1",
+                "provider": "kiro_cli",
+                "agent_profile": "developer",
+            },
+        ]
+
+        response = client.post("/console/organization/leader1/ensure-online")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["restored"] is False
+        assert body["leader_id"] == "leader1"
+        assert body["terminal_id"] == "leader1"
+        mock_rekey.assert_not_called()
+        mock_runtime.assert_called_once()
+
+
 def test_console_assets_team_listing(client: TestClient) -> None:
     login(client)
 
