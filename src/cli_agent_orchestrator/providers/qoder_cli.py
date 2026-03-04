@@ -19,7 +19,8 @@ def _build_qoder_mcp_setup_command(agent_profile: Optional[str], terminal_id: st
 
     Qoder CLI does not provide a direct per-session `--mcp-config` flag, so we
     register MCP servers through the `mcp` management command before launching
-    interactive mode.
+    interactive mode. To ensure configuration is refreshed, existing same-name
+    servers are removed first and then re-added with project scope.
     """
     if not agent_profile:
         return None
@@ -66,15 +67,20 @@ def _build_qoder_mcp_setup_command(agent_profile: Optional[str], terminal_id: st
             "--transport",
             transport,
             "--scope",
-            "user",
+            "project",
         ]
         for env_key, env_val in env.items():
             add_parts.extend(["--env", f"{env_key}={env_val}"])
 
-        server_name_quoted = shlex.quote(str(server_name))
-        setup_commands.append(
-            f"qodercli mcp get {server_name_quoted} --scope user >/dev/null 2>&1 || {shlex.join(add_parts)}"
-        )
+        remove_parts = [
+            "qodercli",
+            "mcp",
+            "remove",
+            str(server_name),
+            "--scope",
+            "project",
+        ]
+        setup_commands.append(f"{shlex.join(remove_parts)} >/dev/null 2>&1 || true && {shlex.join(add_parts)}")
 
     if not setup_commands:
         return None

@@ -29,10 +29,10 @@ def test_qoder_cli_start_command_with_agent_profile(mock_load_profile) -> None:
 
     provider = QoderCliProvider("term123", "s1", "w1", "code_supervisor")
 
-    assert "qodercli mcp get cao-mcp-server --scope user" in provider._start_command
+    assert "qodercli mcp remove cao-mcp-server --scope project" in provider._start_command
     assert "qodercli mcp add cao-mcp-server" in provider._start_command
     assert "--transport stdio" in provider._start_command
-    assert "--scope user" in provider._start_command
+    assert "--scope project" in provider._start_command
     assert "--env CAO_TERMINAL_ID=term123" in provider._start_command
     assert " && qodercli --yolo" in provider._start_command
     assert "--agents" in provider._start_command

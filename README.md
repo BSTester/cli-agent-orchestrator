@@ -204,6 +204,8 @@ cao launch --agents code_supervisor --yolo
 cao launch --agents code_supervisor --working-directory /home/you/project-a
 ```
 
+> **Qoder CLI 说明：** 使用 `--provider qoder_cli` 启动时，CAO 会自动重装同名 MCP 服务（先删除再添加），并使用 `qodercli mcp ... --scope project`。
+
 监督者会按需协调并派发任务给工作 Agent（developer、reviewer 等），应用上述编排模式。
 
 ### 4. 启动 Web 控制台（可选）
