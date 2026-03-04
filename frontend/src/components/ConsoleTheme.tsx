@@ -257,6 +257,7 @@ type CodeEditorInputProps = {
   showReadOnlyToggle?: boolean;
   showCopyButton?: boolean;
   style?: CSSProperties;
+  fullHeight?: boolean;
 };
 
 export function CodeEditorInput({
@@ -272,6 +273,7 @@ export function CodeEditorInput({
   showReadOnlyToggle = true,
   showCopyButton = false,
   style,
+  fullHeight = false,
 }: CodeEditorInputProps) {
   const [isReadOnly, setIsReadOnly] = useState(defaultReadOnly);
   const [lineWrap, setLineWrap] = useState(true);
@@ -342,6 +344,9 @@ export function CodeEditorInput({
         borderRadius: 8,
         border: "1px solid var(--border)",
         background: "var(--surface)",
+        display: fullHeight ? "flex" : undefined,
+        flexDirection: fullHeight ? "column" : undefined,
+        height: fullHeight ? "100%" : undefined,
         ...style,
       }}
     >
@@ -445,6 +450,8 @@ export function CodeEditorInput({
         theme="dark"
         style={{
           minHeight: 120,
+          height: fullHeight ? "100%" : undefined,
+          flex: fullHeight ? 1 : undefined,
         }}
         editable={!isReadOnly}
         spellCheck={false}

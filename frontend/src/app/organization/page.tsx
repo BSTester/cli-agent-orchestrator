@@ -137,6 +137,8 @@ export default function OrganizationPage() {
   const [newAgentPrompt, setNewAgentPrompt] = useState(defaultProfileTemplate);
   const [loadingProfileFile, setLoadingProfileFile] = useState(false);
   const [creatingProfile, setCreatingProfile] = useState(false);
+  const [showProfileCard, setShowProfileCard] = useState(false);
+  const [showTeamCard, setShowTeamCard] = useState(false);
   const [offboardTarget, setOffboardTarget] = useState<{ agentId: string; sessionName: string; terminalId: string } | null>(null);
   const [disbandTarget, setDisbandTarget] = useState<{
     leaderId: string;
@@ -622,186 +624,216 @@ export default function OrganizationPage() {
           }}
         >
           <SectionCard>
-            <SectionTitle title="新增/编辑岗位" />
-            <form onSubmit={onboardNewEmployee}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-              <SearchableDatalistInput
-                value={selectedProfileFileName}
-                onChange={(e) => onProfileFileInputChange(e.target.value)}
-                onClear={() => onProfileFileInputChange("")}
-                list="agent-profile-file-options"
-                placeholder="选择/搜索已有岗位文件，或留空新增岗位"
-              />
-              <TextInput
-                value={newAgentName}
-                onChange={(e) => setNewAgentName(e.target.value)}
-                required
-                disabled={isEditingProfileFile}
-                placeholder="岗位名称，例如 data_analyst"
-              />
-            </div>
-            <datalist id="agent-profile-file-options">
-              {profileFiles.map((fileItem) => (
-                <option key={fileItem.file_name} value={fileItem.file_name}>
-                  编辑：{fileItem.file_name}
-                </option>
-              ))}
-            </datalist>
-            <CodeEditorInput
-              value={newAgentPrompt}
-              onChange={setNewAgentPrompt}
-              language="markdown"
-              showToolbar
-              enableFormat
-              required
-              placeholder="岗位配置 markdown 内容"
-              style={{ width: "100%", minHeight: 240, marginBottom: 10 }}
-            />
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <PrimaryButton
-                type="submit"
-                disabled={creatingProfile || loadingProfileFile}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: showProfileCard ? 8 : 0 }}>
+              <SectionTitle title="新增/编辑岗位" />
+              <SecondaryButton
+                type="button"
+                onClick={() => setShowProfileCard((previous) => !previous)}
+                style={{ padding: "6px 10px" }}
+                aria-expanded={showProfileCard}
               >
-                {creatingProfile
-                  ? "保存中..."
-                  : isEditingProfileFile
-                    ? "保存岗位文件"
-                    : "保存岗位并完成安装"}
-              </PrimaryButton>
+                {showProfileCard ? "收起" : "展开配置"}
+              </SecondaryButton>
             </div>
-            </form>
+            {showProfileCard ? (
+              <form onSubmit={onboardNewEmployee}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                <SearchableDatalistInput
+                  value={selectedProfileFileName}
+                  onChange={(e) => onProfileFileInputChange(e.target.value)}
+                  onClear={() => onProfileFileInputChange("")}
+                  list="agent-profile-file-options"
+                  placeholder="选择/搜索已有岗位文件，或留空新增岗位"
+                />
+                <TextInput
+                  value={newAgentName}
+                  onChange={(e) => setNewAgentName(e.target.value)}
+                  required
+                  disabled={isEditingProfileFile}
+                  placeholder="岗位名称，例如 data_analyst"
+                />
+              </div>
+              <datalist id="agent-profile-file-options">
+                {profileFiles.map((fileItem) => (
+                  <option key={fileItem.file_name} value={fileItem.file_name}>
+                    编辑：{fileItem.file_name}
+                  </option>
+                ))}
+              </datalist>
+              <CodeEditorInput
+                value={newAgentPrompt}
+                onChange={setNewAgentPrompt}
+                language="markdown"
+                showToolbar
+                enableFormat
+                required
+                placeholder="岗位配置 markdown 内容"
+                style={{ width: "100%", minHeight: 240, marginBottom: 10 }}
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <PrimaryButton
+                  type="submit"
+                  disabled={creatingProfile || loadingProfileFile}
+                >
+                  {creatingProfile
+                    ? "保存中..."
+                    : isEditingProfileFile
+                      ? "保存岗位文件"
+                      : "保存岗位并完成安装"}
+                </PrimaryButton>
+              </div>
+              </form>
+            ) : (
+              <div style={{ color: "var(--text-dim)", fontSize: 12 }}>点击展开配置后新建或编辑岗位</div>
+            )}
           </SectionCard>
 
           <SectionCard>
-            <SectionTitle title="团队编制管理" />
-            <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增负责人</div>
-            <form onSubmit={createMainAgent} style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <SearchableDatalistInput
-                value={mainProfile}
-                onChange={(e) => setMainProfile(e.target.value)}
-                onClear={() => setMainProfile("")}
-                list="main-profile-options"
-                placeholder="选择/搜索负责人岗位"
-                required
-              />
-              <SelectInput
-                value={mainProvider}
-                onChange={(e) => setMainProvider(e.target.value)}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: showTeamCard ? 8 : 0 }}>
+              <SectionTitle title="团队编制管理" />
+              <SecondaryButton
+                type="button"
+                onClick={() => setShowTeamCard((previous) => !previous)}
+                style={{ padding: "6px 10px" }}
+                aria-expanded={showTeamCard}
               >
-                {providers.map((item) => (
-                  <option key={item || "default-main"} value={item}>
-                    {item || "自动选择 provider"}
-                  </option>
-                ))}
-              </SelectInput>
-              <TextInput
-                value={mainTeamAlias}
-                onChange={(e) => setMainTeamAlias(e.target.value)}
-                placeholder="团队别名（可选）"
-              />
-              <SearchableDatalistInput
-                value={mainTeamWorkdirName}
-                onChange={(e) => setMainTeamWorkdirName(e.target.value)}
-                onClear={() => setMainTeamWorkdirName("")}
-                placeholder="团队工作目录（输入或选择 workspace 一级目录）"
-                list="main-team-workdir-options"
-              />
-              </div>
+                {showTeamCard ? "收起" : "展开配置"}
+              </SecondaryButton>
+            </div>
+            {showTeamCard ? (
+              <>
+                <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增负责人</div>
+                <form onSubmit={createMainAgent} style={{ display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <SearchableDatalistInput
+                    value={mainProfile}
+                    onChange={(e) => setMainProfile(e.target.value)}
+                    onClear={() => setMainProfile("")}
+                    list="main-profile-options"
+                    placeholder="选择/搜索负责人岗位"
+                    required
+                  />
+                  <SelectInput
+                    value={mainProvider}
+                    onChange={(e) => setMainProvider(e.target.value)}
+                  >
+                    {providers.map((item) => (
+                      <option key={item || "default-main"} value={item}>
+                        {item || "自动选择 provider"}
+                      </option>
+                    ))}
+                  </SelectInput>
+                  <TextInput
+                    value={mainTeamAlias}
+                    onChange={(e) => setMainTeamAlias(e.target.value)}
+                    placeholder="团队别名（可选）"
+                  />
+                  <SearchableDatalistInput
+                    value={mainTeamWorkdirName}
+                    onChange={(e) => setMainTeamWorkdirName(e.target.value)}
+                    onClear={() => setMainTeamWorkdirName("")}
+                    placeholder="团队工作目录（输入或选择 workspace 一级目录）"
+                    list="main-team-workdir-options"
+                  />
+                  </div>
 
-              <datalist id="main-profile-options">
-                {mainProfileOptions.map((profileName) => (
-                  <option key={`main-${profileName}`} value={profileName} />
-                ))}
-              </datalist>
+                  <datalist id="main-profile-options">
+                    {mainProfileOptions.map((profileName) => (
+                      <option key={`main-${profileName}`} value={profileName} />
+                    ))}
+                  </datalist>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
-                <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                  根目录：~/workspace（输入新目录名会自动在 workspace 下创建一级目录）
-                </div>
-                <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                  可输入新目录名，也可下拉选择已有一级目录
-                </div>
-                <PrimaryButton
-                  type="submit"
-                  disabled={creatingMain}
-                  style={{ width: "fit-content", justifySelf: "end" }}
-                >
-                  {creatingMain ? "组建中..." : "启动团队"}
-                </PrimaryButton>
-              </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
+                    <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                      根目录：~/workspace（输入新目录名会自动在 workspace 下创建一级目录）
+                    </div>
+                    <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                      可输入新目录名，也可下拉选择已有一级目录
+                    </div>
+                    <PrimaryButton
+                      type="submit"
+                      disabled={creatingMain}
+                      style={{ width: "fit-content", justifySelf: "end" }}
+                    >
+                      {creatingMain ? "组建中..." : "启动团队"}
+                    </PrimaryButton>
+                  </div>
 
-              <datalist id="main-team-workdir-options">
-                {homeSubdirs.map((dirName) => (
-                  <option key={`main-team-workdir-${dirName}`} value={dirName} />
-                ))}
-              </datalist>
-            </form>
+                  <datalist id="main-team-workdir-options">
+                    {homeSubdirs.map((dirName) => (
+                      <option key={`main-team-workdir-${dirName}`} value={dirName} />
+                    ))}
+                  </datalist>
+                </form>
 
-            <div style={{ height: 1, background: "var(--border)", margin: "14px 0" }} />
+                <div style={{ height: 1, background: "var(--border)", margin: "14px 0" }} />
 
-            <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增员工</div>
-            <form onSubmit={createWorkerAgent} style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <SearchableDatalistInput
-                  value={workerProfile}
-                  onChange={(e) => setWorkerProfile(e.target.value)}
-                  onClear={() => setWorkerProfile("")}
-                  list="worker-profile-options"
-                  placeholder="选择/搜索员工岗位"
-                  required
-                />
-                <SelectInput
-                  value={workerProvider}
-                  onChange={(e) => setWorkerProvider(e.target.value)}
-                >
-                  {providers.map((item) => (
-                    <option key={item || "default-worker"} value={item}>
-                      {item || "自动选择 provider"}
-                    </option>
-                  ))}
-                </SelectInput>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
-                <SearchableDatalistInput
-                  value={workerLeaderQuery}
-                  onChange={(e) => {
-                    const nextValue = e.target.value;
-                    setWorkerLeaderQuery(nextValue);
-                    const matched = workerLeaderOptions.find((item) => item.label === nextValue);
-                    setWorkerLeaderId(matched ? matched.leaderId : "");
-                  }}
-                  onClear={() => {
-                    setWorkerLeaderQuery("");
-                    setWorkerLeaderId("");
-                  }}
-                  list="worker-leader-options"
-                  placeholder="选择/搜索团队（可留空）"
-                />
-                <datalist id="worker-profile-options">
-                  {workerProfileOptions.map((profileName) => (
-                    <option key={`worker-${profileName}`} value={profileName} />
-                  ))}
-                </datalist>
-                <datalist id="worker-leader-options">
-                  {workerLeaderOptions.map((option) => (
-                    <option key={option.leaderId} value={option.label} />
-                  ))}
-                </datalist>
-                <TextInput
-                  value={workerAlias}
-                  onChange={(e) => setWorkerAlias(e.target.value)}
-                  placeholder="员工别名（可选）"
-                />
-                <SuccessButton
-                  type="submit"
-                  disabled={creatingWorker}
-                  style={{ width: "fit-content", justifySelf: "end" }}
-                >
-                  {creatingWorker ? "加入中..." : "加入团队"}
-                </SuccessButton>
-              </div>
-            </form>
+                <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>新增员工</div>
+                <form onSubmit={createWorkerAgent} style={{ display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <SearchableDatalistInput
+                      value={workerProfile}
+                      onChange={(e) => setWorkerProfile(e.target.value)}
+                      onClear={() => setWorkerProfile("")}
+                      list="worker-profile-options"
+                      placeholder="选择/搜索员工岗位"
+                      required
+                    />
+                    <SelectInput
+                      value={workerProvider}
+                      onChange={(e) => setWorkerProvider(e.target.value)}
+                    >
+                      {providers.map((item) => (
+                        <option key={item || "default-worker"} value={item}>
+                          {item || "自动选择 provider"}
+                        </option>
+                      ))}
+                    </SelectInput>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
+                    <SearchableDatalistInput
+                      value={workerLeaderQuery}
+                      onChange={(e) => {
+                        const nextValue = e.target.value;
+                        setWorkerLeaderQuery(nextValue);
+                        const matched = workerLeaderOptions.find((item) => item.label === nextValue);
+                        setWorkerLeaderId(matched ? matched.leaderId : "");
+                      }}
+                      onClear={() => {
+                        setWorkerLeaderQuery("");
+                        setWorkerLeaderId("");
+                      }}
+                      list="worker-leader-options"
+                      placeholder="选择/搜索团队（可留空）"
+                    />
+                    <datalist id="worker-profile-options">
+                      {workerProfileOptions.map((profileName) => (
+                        <option key={`worker-${profileName}`} value={profileName} />
+                      ))}
+                    </datalist>
+                    <datalist id="worker-leader-options">
+                      {workerLeaderOptions.map((option) => (
+                        <option key={option.leaderId} value={option.label} />
+                      ))}
+                    </datalist>
+                    <TextInput
+                      value={workerAlias}
+                      onChange={(e) => setWorkerAlias(e.target.value)}
+                      placeholder="员工别名（可选）"
+                    />
+                    <SuccessButton
+                      type="submit"
+                      disabled={creatingWorker}
+                      style={{ width: "fit-content", justifySelf: "end" }}
+                    >
+                      {creatingWorker ? "加入中..." : "加入团队"}
+                    </SuccessButton>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <div style={{ color: "var(--text-dim)", fontSize: 12 }}>点击展开配置后创建或加入团队</div>
+            )}
           </SectionCard>
         </section>
 
