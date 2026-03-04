@@ -35,6 +35,33 @@ def test_create_terminal_uses_explicit_provider_override(mock_request):
     assert mock_request.call_args.kwargs["params"]["provider"] == ProviderType.COPILOT.value
 
 
+@patch("cli_agent_orchestrator.mcp_server.server._request_with_retry")
+def test_create_terminal_uses_single_attempt_for_creation(mock_request):
+    metadata_response = MagicMock()
+    metadata_response.raise_for_status.return_value = None
+    metadata_response.json.return_value = {
+        "provider": "kiro_cli",
+        "session_name": "cao-test-session",
+    }
+
+    working_dir_response = MagicMock()
+    working_dir_response.raise_for_status.return_value = None
+    working_dir_response.json.return_value = {"working_directory": "/home/runner/project"}
+
+    create_response = MagicMock()
+    create_response.raise_for_status.return_value = None
+    create_response.json.return_value = {"id": "term2345"}
+
+    mock_request.side_effect = [metadata_response, working_dir_response, create_response]
+
+    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "abc12345"}):
+        terminal_id, provider = _create_terminal("developer")
+
+    assert terminal_id == "term2345"
+    assert provider == "kiro_cli"
+    assert mock_request.call_args_list[2].kwargs.get("retry_attempts") == 1
+
+
 @patch("cli_agent_orchestrator.mcp_server.server.requests.request")
 @patch("cli_agent_orchestrator.mcp_server.server.load_agent_profile")
 def test_create_terminal_uses_profile_provider_when_no_override(mock_load_profile, mock_request):

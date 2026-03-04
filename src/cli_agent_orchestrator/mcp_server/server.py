@@ -78,25 +78,35 @@ def _inject_terminal_id(message: str) -> str:
     except ValueError:
         return message
 
-    return (
-        message.replace("${CAO_TERMINAL_ID}", terminal_id)
-        .replace("${process.env.CAO_TERMINAL_ID}", terminal_id)
-    )
+    replacements = [
+        "${CAO_TERMINAL_ID}",
+        "${process.env.CAO_TERMINAL_ID}",
+        "{{CAO_TERMINAL_ID}}",
+        "{{ CAO_TERMINAL_ID }}",
+        "{{process.env.CAO_TERMINAL_ID}}",
+    ]
+
+    for placeholder in replacements:
+        message = message.replace(placeholder, terminal_id)
+
+    return message
 
 
-def _request_with_retry(method: str, url: str, **kwargs: Any) -> requests.Response:
+def _request_with_retry(
+    method: str, url: str, retry_attempts: int = REQUEST_RETRY_ATTEMPTS, **kwargs: Any
+) -> requests.Response:
     """Send HTTP request with simple retry for transient connection errors."""
     timeout = kwargs.pop("timeout", REQUEST_TIMEOUT_SECONDS)
     last_error: Optional[Exception] = None
 
-    for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
+    for attempt in range(1, retry_attempts + 1):
         try:
             response = requests.request(method=method, url=url, timeout=timeout, **kwargs)
             response.raise_for_status()
             return response
         except requests.exceptions.RequestException as exc:
             last_error = exc
-            if attempt == REQUEST_RETRY_ATTEMPTS:
+            if attempt == retry_attempts:
                 break
             time.sleep(REQUEST_RETRY_BACKOFF_SECONDS * attempt)
 
@@ -206,6 +216,7 @@ def _create_terminal(
             "POST",
             f"{API_BASE_URL}/sessions/{session_name}/terminals",
             params=params,
+            retry_attempts=1,
         )
         terminal = response.json()
     else:
@@ -229,7 +240,9 @@ def _create_terminal(
         if working_directory:
             params["working_directory"] = working_directory
 
-        response = _request_with_retry("POST", f"{API_BASE_URL}/sessions", params=params)
+        response = _request_with_retry(
+            "POST", f"{API_BASE_URL}/sessions", params=params, retry_attempts=1
+        )
         terminal = response.json()
 
     if resolved_provider is None:
