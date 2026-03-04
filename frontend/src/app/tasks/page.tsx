@@ -397,6 +397,7 @@ Share one interesting world trivia for today.
                   enableFormat
                   required
                   placeholder="请输入完整 flow markdown（含 frontmatter）"
+                  maxHeight={560}
                   style={{ width: "100%", minHeight: 320 }}
                 />
                 <PrimaryButton
