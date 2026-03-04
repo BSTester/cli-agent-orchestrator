@@ -174,6 +174,9 @@ def _create_terminal(
     inherited_provider = DEFAULT_PROVIDER
     resolved_provider = provider
 
+    if resolved_provider is not None and resolved_provider.strip() == "":
+        resolved_provider = None
+
     if resolved_provider and resolved_provider not in PROVIDERS:
         raise ValueError(
             f"Invalid provider '{resolved_provider}'. Available providers: {', '.join(PROVIDERS)}"

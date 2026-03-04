@@ -111,3 +111,34 @@ def test_create_terminal_falls_back_to_default_provider_in_new_session(
     assert terminal_id == "term9012"
     assert provider == DEFAULT_PROVIDER
     assert mock_request.call_args.kwargs["params"]["provider"] == DEFAULT_PROVIDER
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.requests.request")
+@patch("cli_agent_orchestrator.mcp_server.server.load_agent_profile")
+def test_create_terminal_treats_empty_provider_as_none(mock_load_profile, mock_request):
+    profile = type("Profile", (), {"provider": ProviderType.CLAUDE_CODE})()
+    mock_load_profile.return_value = profile
+
+    metadata_response = MagicMock()
+    metadata_response.raise_for_status.return_value = None
+    metadata_response.json.return_value = {
+        "provider": "kiro_cli",
+        "session_name": "cao-test-session",
+    }
+
+    working_dir_response = MagicMock()
+    working_dir_response.raise_for_status.return_value = None
+    working_dir_response.json.return_value = {"working_directory": "/home/runner/workspace"}
+
+    create_response = MagicMock()
+    create_response.raise_for_status.return_value = None
+    create_response.json.return_value = {"id": "term7777"}
+
+    mock_request.side_effect = [metadata_response, working_dir_response, create_response]
+
+    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "abc12345"}):
+        terminal_id, provider = _create_terminal("developer", provider=" ")
+
+    assert terminal_id == "term7777"
+    assert provider == ProviderType.CLAUDE_CODE.value
+    assert mock_request.call_args.kwargs["params"]["provider"] == ProviderType.CLAUDE_CODE.value
