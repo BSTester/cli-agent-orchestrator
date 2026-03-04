@@ -674,6 +674,7 @@ export default function OrganizationPage() {
                 enableFormat
                 required
                 placeholder="岗位配置 markdown 内容"
+                maxHeight={520}
                 style={{ width: "100%", minHeight: 240, marginBottom: 10 }}
               />
               <div style={{ display: "flex", justifyContent: "flex-end" }}>

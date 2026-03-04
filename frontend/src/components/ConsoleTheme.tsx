@@ -258,6 +258,7 @@ type CodeEditorInputProps = {
   showCopyButton?: boolean;
   style?: CSSProperties;
   fullHeight?: boolean;
+  maxHeight?: number | string;
 };
 
 export function CodeEditorInput({
@@ -274,10 +275,13 @@ export function CodeEditorInput({
   showCopyButton = false,
   style,
   fullHeight = false,
+  maxHeight,
 }: CodeEditorInputProps) {
   const [isReadOnly, setIsReadOnly] = useState(defaultReadOnly);
   const [lineWrap, setLineWrap] = useState(true);
   const [copyLabel, setCopyLabel] = useState("复制");
+  const resolvedMaxHeight =
+    typeof maxHeight === "number" ? `${maxHeight}px` : maxHeight || undefined;
 
   async function handleCopy() {
     try {
@@ -327,9 +331,19 @@ export function CodeEditorInput({
         ])
       );
     }
+    if (resolvedMaxHeight) {
+      baseExtensions.push(
+        EditorView.theme({
+          ".cm-scroller": {
+            maxHeight: resolvedMaxHeight,
+            overflow: "auto",
+          },
+        })
+      );
+    }
 
     return baseExtensions;
-  }, [isReadOnly, lineWrap, onKeyDown, placeholder, resolvedLanguage]);
+  }, [isReadOnly, lineWrap, onKeyDown, placeholder, resolvedLanguage, resolvedMaxHeight]);
 
   function handleFormat() {
     onChange(formatContent(value, resolvedLanguage));
@@ -451,6 +465,7 @@ export function CodeEditorInput({
         height={fullHeight ? "100%" : undefined}
         style={{
           minHeight: 120,
+          maxHeight: resolvedMaxHeight,
           height: fullHeight ? "100%" : undefined,
           flex: fullHeight ? 1 : undefined,
         }}
@@ -480,6 +495,26 @@ export function CodeEditorInput({
         .cm-activeLine,
         .cm-activeLineGutter {
           background: rgba(127, 127, 127, 0.12) !important;
+        }
+        .cm-scroller {
+          scrollbar-width: thin;
+          scrollbar-color: var(--border) var(--surface2);
+        }
+        .cm-scroller::-webkit-scrollbar {
+          width: 10px;
+          height: 10px;
+        }
+        .cm-scroller::-webkit-scrollbar-track {
+          background: var(--surface2);
+          border-radius: 8px;
+        }
+        .cm-scroller::-webkit-scrollbar-thumb {
+          background: var(--border);
+          border-radius: 8px;
+          border: 2px solid var(--surface2);
+        }
+        .cm-scroller::-webkit-scrollbar-thumb:hover {
+          background: var(--text-dim);
         }
       `}</style>
     </div>
