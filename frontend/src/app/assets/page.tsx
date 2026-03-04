@@ -81,6 +81,7 @@ export default function AssetsPage() {
   const [selectedFileContent, setSelectedFileContent] = useState("");
   const [showPreviewDrawer, setShowPreviewDrawer] = useState(false);
   const [previewMode, setPreviewMode] = useState<"rendered" | "source">("source");
+  const [copyLabel, setCopyLabel] = useState("复制");
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
   const [deletingPath, setDeletingPath] = useState("");
@@ -140,6 +141,7 @@ export default function AssetsPage() {
       ext === "md" || ext === "markdown" || ext === "html" || ext === "htm" ? "rendered" : "source";
     setSelectedFilePath(resolvedPath);
     setSelectedFileContent(result.data.content || "");
+    setCopyLabel("复制");
     setPreviewMode(defaultMode);
     setShowPreviewDrawer(true);
     setLoadingFile(false);
@@ -237,6 +239,17 @@ export default function AssetsPage() {
       return false;
     }
     return TEXT_PREVIEW_EXTENSIONS.has(extension);
+  }
+
+  async function handleCopySource() {
+    try {
+      await navigator.clipboard.writeText(selectedFileContent || "");
+      setCopyLabel("已复制");
+      setTimeout(() => setCopyLabel("复制"), 1200);
+    } catch {
+      setCopyLabel("复制失败");
+      setTimeout(() => setCopyLabel("复制"), 1200);
+    }
   }
 
   function isMarkdownFile(filePath: string): boolean {
@@ -717,6 +730,14 @@ export default function AssetsPage() {
                       {previewMode === "rendered" ? "查看源码" : "渲染预览"}
                     </SecondaryButton>
                   )}
+                  <SecondaryButton
+                    type="button"
+                    onClick={handleCopySource}
+                    disabled={loadingFile}
+                    style={{ padding: "6px 10px" }}
+                  >
+                    {copyLabel}
+                  </SecondaryButton>
                   {selectedTeam ? (
                     <PrimaryButton
                       type="button"
@@ -774,8 +795,8 @@ export default function AssetsPage() {
                     showToolbar
                     defaultReadOnly
                     showReadOnlyToggle={false}
-                    showCopyButton
-                    style={{ width: "100%", height: "100%", minHeight: "100%" }}
+                    fullHeight
+                    style={{ width: "100%", height: "100%", minHeight: 0 }}
                   />
                 )}
               </div>

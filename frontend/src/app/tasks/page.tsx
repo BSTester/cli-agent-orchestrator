@@ -91,6 +91,7 @@ Share one interesting world trivia for today.
   const [taskActionLoading, setTaskActionLoading] = useState<Record<string, boolean>>({});
 
   const [selectedFileName, setSelectedFileName] = useState("");
+  const [showTaskEditor, setShowTaskEditor] = useState(false);
 
   function extractErrorDetail(payload: unknown): string {
     if (!payload || typeof payload !== "object") {
@@ -299,104 +300,121 @@ Share one interesting world trivia for today.
         </SectionCard>
 
         <SectionCard>
-          <SectionTitle title="新建/编辑定时任务" />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-              gap: 10,
-              alignItems: "stretch",
-              marginBottom: 12,
-            }}
-          >
-            <SelectInput
-              value={selectedFileName}
-              onChange={(event) => void onSelectFlowFile(event.target.value)}
-              disabled={loadingFileContent}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: showTaskEditor ? 8 : 0 }}>
+            <SectionTitle title="新建/编辑定时任务" />
+            <SecondaryButton
+              type="button"
+              onClick={() => setShowTaskEditor((previous) => !previous)}
+              style={{ padding: "6px 10px" }}
+              aria-expanded={showTaskEditor}
             >
-              <option value="">选择已有文件并加载到编辑器（可选）</option>
-              {flowFiles.map((fileItem) => (
-                <option key={fileItem.file_name} value={fileItem.file_name}>
-                  {fileItem.file_name}
-                </option>
-              ))}
-            </SelectInput>
-            <div>
-              <SearchableDatalistInput
-                value={leaderQuery}
-                onChange={(event) => {
-                  const query = event.target.value;
-                  const normalizedQuery = query.trim();
-                  setLeaderQuery(query);
-                  const matched = teamOptions.find(
-                    (item) =>
-                      item.label === normalizedQuery ||
-                      item.leaderId === normalizedQuery ||
-                      item.sessionName === normalizedQuery
-                  );
-                  setLeaderId(matched ? matched.leaderId : "");
-                }}
-                onClear={() => {
-                  setLeaderQuery("");
-                  setLeaderId("");
-                }}
-                list="task-team-options"
-                placeholder="搜索并选择绑定团队（可选）"
-              />
-              <datalist id="task-team-options">
-                {teamOptions.map((item) => (
-                  <option key={`team-option-${item.leaderId}`} value={item.label} />
-                ))}
-              </datalist>
-            </div>
-            <TextInput
-              value={flowName}
-              onChange={(event) => setFlowName(event.target.value)}
-              placeholder="Flow 名称（新建时可选，编辑已有文件时将自动带出）"
-            />
+              {showTaskEditor ? "收起" : "展开配置"}
+            </SecondaryButton>
           </div>
 
-          <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
-            {loadingFileContent
-              ? "任务文件加载中..."
-              : "选择已有文件后会回填到编辑器；提交时将保存到原文件并发起任务。未选择文件时将按名称创建新文件。"}
-          </div>
-          <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
-            {leaderId && selectedLeaderOption
-              ? `当前绑定团队：${selectedLeaderOption.label}`
-              : "当前绑定团队：不绑定"}
-          </div>
-          <form
-            onSubmit={createScheduledTask}
-            style={{
-              display: "grid",
-              gap: 10,
-              alignItems: "stretch",
-            }}
-          >
-            <CodeEditorInput
-              value={flowContent}
-              onChange={setFlowContent}
-              language="auto"
-              fileName={selectedFileName || flowName}
-              showToolbar
-              enableFormat
-              required
-              placeholder="请输入完整 flow markdown（含 frontmatter）"
-              style={{ width: "100%", minHeight: 320 }}
-            />
-            <PrimaryButton
-              type="submit"
-              disabled={creating}
-              style={{ minHeight: 38, width: "fit-content", justifySelf: "end", padding: "8px 16px" }}
-            >
-              {creating
-                ? "提交中..."
-                : selectedFileName
-                  ? "保存并发起任务"
-                  : "创建并发起任务"}
-            </PrimaryButton>
-          </form>
+          {showTaskEditor ? (
+            <>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                  gap: 10,
+                  alignItems: "stretch",
+                  marginBottom: 12,
+                }}
+              >
+                <SelectInput
+                  value={selectedFileName}
+                  onChange={(event) => void onSelectFlowFile(event.target.value)}
+                  disabled={loadingFileContent}
+                >
+                  <option value="">选择已有文件并加载到编辑器（可选）</option>
+                  {flowFiles.map((fileItem) => (
+                    <option key={fileItem.file_name} value={fileItem.file_name}>
+                      {fileItem.file_name}
+                    </option>
+                  ))}
+                </SelectInput>
+                <div>
+                  <SearchableDatalistInput
+                    value={leaderQuery}
+                    onChange={(event) => {
+                      const query = event.target.value;
+                      const normalizedQuery = query.trim();
+                      setLeaderQuery(query);
+                      const matched = teamOptions.find(
+                        (item) =>
+                          item.label === normalizedQuery ||
+                          item.leaderId === normalizedQuery ||
+                          item.sessionName === normalizedQuery
+                      );
+                      setLeaderId(matched ? matched.leaderId : "");
+                    }}
+                    onClear={() => {
+                      setLeaderQuery("");
+                      setLeaderId("");
+                    }}
+                    list="task-team-options"
+                    placeholder="搜索并选择绑定团队（可选）"
+                  />
+                  <datalist id="task-team-options">
+                    {teamOptions.map((item) => (
+                      <option key={`team-option-${item.leaderId}`} value={item.label} />
+                    ))}
+                  </datalist>
+                </div>
+                <TextInput
+                  value={flowName}
+                  onChange={(event) => setFlowName(event.target.value)}
+                  placeholder="Flow 名称（新建时可选，编辑已有文件时将自动带出）"
+                />
+              </div>
+
+              <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
+                {loadingFileContent
+                  ? "任务文件加载中..."
+                  : "选择已有文件后会回填到编辑器；提交时将保存到原文件并发起任务。未选择文件时将按名称创建新文件。"}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
+                {leaderId && selectedLeaderOption
+                  ? `当前绑定团队：${selectedLeaderOption.label}`
+                  : "当前绑定团队：不绑定"}
+              </div>
+              <form
+                onSubmit={createScheduledTask}
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  alignItems: "stretch",
+                }}
+              >
+                <CodeEditorInput
+                  value={flowContent}
+                  onChange={setFlowContent}
+                  language="auto"
+                  fileName={selectedFileName || flowName}
+                  showToolbar
+                  enableFormat
+                  required
+                  placeholder="请输入完整 flow markdown（含 frontmatter）"
+                  style={{ width: "100%", minHeight: 320 }}
+                />
+                <PrimaryButton
+                  type="submit"
+                  disabled={creating}
+                  style={{ minHeight: 38, width: "fit-content", justifySelf: "end", padding: "8px 16px" }}
+                >
+                  {creating
+                    ? "提交中..."
+                    : selectedFileName
+                      ? "保存并发起任务"
+                      : "创建并发起任务"}
+                </PrimaryButton>
+              </form>
+            </>
+          ) : (
+            <div style={{ color: "var(--text-dim)", fontSize: 12 }}>点击展开配置后新建或编辑定时任务</div>
+          )}
         </SectionCard>
 
         {teams.length === 0 ? (
