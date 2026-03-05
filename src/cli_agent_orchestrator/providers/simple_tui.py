@@ -12,7 +12,7 @@ from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_sta
 
 logger = logging.getLogger(__name__)
 
-ANSI_CODE_PATTERN = r"\x1b\[[0-9;]*m"
+ANSI_CODE_PATTERN = r"\x1b\[[0-9;?]*[a-zA-Z]"
 
 
 class SimpleTuiProvider(BaseProvider):
@@ -91,6 +91,10 @@ class SimpleTuiProvider(BaseProvider):
 
     def _has_idle_prompt(self, clean_output: str) -> bool:
         lines = clean_output.splitlines()
+        # Strip trailing blank lines that tmux capture-pane may include
+        # for unused pane rows below TUI content.
+        while lines and not lines[-1].strip():
+            lines.pop()
         for line in lines[-8:]:
             # Ignore interactive menu option lines like "> 3. Trust ...".
             # They can appear in startup trust dialogs and are not real idle prompts.
@@ -172,6 +176,10 @@ class SimpleTuiProvider(BaseProvider):
         if not self._has_idle_prompt(clean_output):
             if self._input_received:
                 self._saw_processing_after_input = True
+            if not self._initialized:
+                lines = clean_output.splitlines()
+                tail = lines[-5:] if len(lines) >= 5 else lines
+                logger.debug("No idle prompt in last lines: %s", tail)
             return TerminalStatus.PROCESSING
 
         if not self._input_received:

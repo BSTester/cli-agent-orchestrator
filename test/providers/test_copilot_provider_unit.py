@@ -39,3 +39,63 @@ def test_copilot_prompt_with_input_hint(mock_tmux) -> None:
     provider = CopilotProvider("t3", "s3", "w3")
 
     assert provider.get_status() == TerminalStatus.IDLE
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_copilot_prompt_with_trailing_blank_lines(mock_tmux) -> None:
+    """Idle prompt followed by many blank lines (tmux pane padding) must still be detected."""
+    mock_tmux.get_history.return_value = (
+        "GitHub Copilot v0.0.421\n"
+        "● Selected custom agent: cto\n"
+        "● Environment loaded: 3 MCP servers\n"
+        " ~/workspace\n"
+        "───────────────────────\n"
+        "❯  Type @ to mention files, # for issues/PRs, / for commands\n"
+        "───────────────────────\n"
+        " shift+tab switch mode \n"
+        + "\n" * 30  # simulate unused pane rows
+    )
+
+    provider = CopilotProvider("t4", "s4", "w4")
+
+    assert provider.get_status() == TerminalStatus.IDLE
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_copilot_type_hint_detected_as_idle(mock_tmux) -> None:
+    """'Type @ to mention' text should be detected as idle even without ❯ char."""
+    mock_tmux.get_history.return_value = (
+        "GitHub Copilot v0.0.421\n"
+        "───────────────────────\n"
+        "  Type @ to mention files, # for issues/PRs, / for commands\n"
+    )
+
+    provider = CopilotProvider("t5", "s5", "w5")
+
+    assert provider.get_status() == TerminalStatus.IDLE
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_copilot_shift_tab_hint_detected_as_idle(mock_tmux) -> None:
+    """'shift+tab switch mode' hint should be detected as idle."""
+    mock_tmux.get_history.return_value = (
+        "GitHub Copilot v0.0.421\n"
+        " shift+tab switch mode \n"
+    )
+
+    provider = CopilotProvider("t6", "s6", "w6")
+
+    assert provider.get_status() == TerminalStatus.IDLE
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_copilot_ansi_csi_sequences_stripped(mock_tmux) -> None:
+    """Non-SGR CSI sequences (e.g. erase-line) should be stripped before matching."""
+    mock_tmux.get_history.return_value = (
+        "\x1b[2J\x1b[HGitHub Copilot v0.0.421\n"
+        "\x1b[K❯  Type @ to mention files\n"
+    )
+
+    provider = CopilotProvider("t7", "s7", "w7")
+
+    assert provider.get_status() == TerminalStatus.IDLE
