@@ -51,6 +51,8 @@ def _build_copilot_command(agent_profile: Optional[str], terminal_id: str) -> st
 class CopilotProvider(SimpleTuiProvider):
     """Provider for GitHub Copilot CLI (`copilot`)."""
 
+    _IDLE_PROMPT_PATTERN = r"(?:[cC]opilot>\s*$|[>❯›]\s)"
+
     def __init__(
         self,
         terminal_id: str,
@@ -63,6 +65,6 @@ class CopilotProvider(SimpleTuiProvider):
             session_name=session_name,
             window_name=window_name,
             start_command=_build_copilot_command(agent_profile, terminal_id),
-            idle_prompt_pattern=r"[>❯›]\s",
-            idle_prompt_pattern_log=r"[>❯›]\s",
+            idle_prompt_pattern=self._IDLE_PROMPT_PATTERN,
+            idle_prompt_pattern_log=self._IDLE_PROMPT_PATTERN,
         )
