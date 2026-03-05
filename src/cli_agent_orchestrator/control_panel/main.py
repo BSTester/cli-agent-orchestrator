@@ -1007,19 +1007,14 @@ def _create_local_agent_profile(
     return profile_path
 
 
-def _create_local_agent_profile_from_content(name: str, content: str) -> Path:
-    normalized_name = name.strip()
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_name):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid profile name. Use letters, numbers, underscore, or hyphen.",
-        )
-
+def _create_local_agent_profile_from_content(name: str, content: str) -> tuple[str, Path]:
+    del name  # deprecated param kept for backward compatibility
     normalized_content = content.strip()
     if not normalized_content:
         raise HTTPException(status_code=400, detail="Profile content cannot be empty")
 
-    _validate_profile_markdown_content(normalized_content)
+    metadata = _validate_profile_markdown_content(normalized_content)
+    normalized_name = _validate_profile_name(str(metadata.get("name", "")))
 
     AGENT_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
     profile_path = AGENT_CONTEXT_DIR / f"{normalized_name}.md"
@@ -1028,7 +1023,7 @@ def _create_local_agent_profile_from_content(name: str, content: str) -> Path:
         raise HTTPException(status_code=409, detail="Agent profile already exists")
 
     profile_path.write_text(normalized_content + "\n", encoding="utf-8")
-    return profile_path
+    return normalized_name, profile_path
 
 
 def _validate_profile_name(profile_name: str) -> str:
@@ -2578,7 +2573,7 @@ async def console_agent_profiles() -> Dict[str, Any]:
 @app.post("/console/agent-profiles")
 async def console_create_agent_profile(payload: AgentProfileCreateRequest) -> Dict[str, Any]:
     if payload.content is not None:
-        created_path = await asyncio.to_thread(
+        created_name, created_path = await asyncio.to_thread(
             _create_local_agent_profile_from_content,
             payload.name,
             payload.content,
@@ -2596,10 +2591,19 @@ async def console_create_agent_profile(payload: AgentProfileCreateRequest) -> Di
             payload.system_prompt,
             payload.provider,
         )
-    await asyncio.to_thread(_upsert_profile_display_name, payload.name, payload.display_name)
+        created_name = payload.name.strip()
+
+    if payload.name.strip() and payload.content is not None and payload.name.strip() != created_name:
+        logger.info(
+            "Profile name in payload ('%s') differs from frontmatter ('%s'); using frontmatter",
+            payload.name,
+            created_name,
+        )
+
+    await asyncio.to_thread(_upsert_profile_display_name, created_name, payload.display_name)
     return {
         "ok": True,
-        "profile": payload.name.strip(),
+        "profile": created_name,
         "file_path": str(created_path),
     }
 
@@ -2650,12 +2654,24 @@ async def console_update_agent_profile(
     profile_name: str,
     payload: AgentProfileUpdateRequest,
 ) -> Dict[str, Any]:
+    AGENT_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
     profile_path = _profile_file_path(profile_name)
     exists = await asyncio.to_thread(profile_path.exists)
     if not exists:
         raise HTTPException(status_code=404, detail="Agent profile not found")
 
-    await asyncio.to_thread(_validate_profile_markdown_content, payload.content)
+    metadata = await asyncio.to_thread(_validate_profile_markdown_content, payload.content)
+    content_profile_name = _validate_profile_name(str(metadata.get("name", "")))
+    target_profile_path = _profile_file_path(content_profile_name)
+
+    if target_profile_path.exists() and target_profile_path != profile_path:
+        raise HTTPException(status_code=409, detail="Agent profile name already exists")
+
+    if target_profile_path != profile_path:
+        await asyncio.to_thread(profile_path.rename, target_profile_path)
+        await asyncio.to_thread(_remove_profile_display_name, profile_name)
+        profile_name = content_profile_name
+        profile_path = target_profile_path
 
     await asyncio.to_thread(profile_path.write_text, payload.content, encoding="utf-8")
     await asyncio.to_thread(_upsert_profile_display_name, profile_name, payload.display_name)

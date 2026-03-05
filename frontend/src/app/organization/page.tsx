@@ -71,17 +71,9 @@ mcpServers:
 3. 给出可执行建议，并标注假设与风险。
 `;
 
-const defaultProfileDisplayName =
-  (function extractDefaultDisplayName() {
-    const match = defaultProfileTemplate.match(/^---\s*\n([\s\S]*?)\n---/);
-    if (!match) {
-      return "";
-    }
-    const nameMatch = match[1].match(/^\s*name\s*:\s*(.+)\s*$/m);
-    return nameMatch ? nameMatch[1].trim() : "";
-  })() || "";
+const defaultProfileDisplayName = extractProfileNameFromContent(defaultProfileTemplate) || "";
 
-function extractProfileDisplayName(content: string): string {
+function extractProfileNameFromContent(content: string): string {
   const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
   if (!match) {
     return "";
@@ -114,14 +106,6 @@ function ensureProfileNameInContent(content: string, profileName: string): strin
   const updatedFrontmatter = `name: ${normalizedProfileName}\n${frontmatter}`.trimEnd();
 
   return content.replace(frontmatterMatch[0], `---\n${updatedFrontmatter}\n---\n`);
-}
-
-function normalizeProfileFileName(input: string): string {
-  const fallback = `profile_${Date.now()}`;
-  const normalizedInput = (input || "").trim().replace(/\.md$/i, "");
-  const base = normalizedInput || fallback;
-  const sanitized = base.replace(/[^A-Za-z0-9_-]/g, "_");
-  return sanitized || fallback;
 }
 
 function SearchableDatalistInput(
@@ -326,7 +310,7 @@ export default function OrganizationPage() {
     const profileContent = result.data.content || "";
     const displayName =
       result.data.display_name ||
-      extractProfileDisplayName(profileContent) ||
+      extractProfileNameFromContent(profileContent) ||
       result.data.profile ||
       fileName.replace(/\.md$/i, "");
 
@@ -458,6 +442,19 @@ export default function OrganizationPage() {
       setError("系统提示词不能为空");
       return;
     }
+    const profileNameFromContent = extractProfileNameFromContent(trimmedPrompt);
+    const normalizedProfileName = profileNameFromContent.replace(/\.md$/i, "").trim();
+    if (!normalizedProfileName) {
+      setError("岗位配置需在 frontmatter 中包含有效的 name 字段");
+      return;
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(normalizedProfileName)) {
+      setError("岗位配置的 name 仅支持字母、数字、下划线或中划线");
+      return;
+    }
+
+    const contentWithName = ensureProfileNameInContent(trimmedPrompt, normalizedProfileName);
+    setNewAgentPrompt(contentWithName);
     setCreatingProfile(true);
     setError("");
 
@@ -465,14 +462,14 @@ export default function OrganizationPage() {
       (fileItem) => fileItem.file_name === selectedProfileFileName.trim()
     );
     const isEditing = Boolean(selectedProfileFile);
-    const resolvedProfileName = isEditing
-      ? (selectedProfileFile?.file_name || "").replace(/\.md$/i, "")
-      : normalizeProfileFileName(selectedProfileFileName || newAgentName || "");
-    const contentWithName = ensureProfileNameInContent(trimmedPrompt, resolvedProfileName);
-    setNewAgentPrompt(contentWithName);
 
     if (isEditing) {
       const targetProfile = (selectedProfileFile?.file_name || "").replace(/\.md$/i, "");
+      if (!targetProfile) {
+        setError("岗位文件名称无效");
+        setCreatingProfile(false);
+        return;
+      }
       const result = await caoRequest(
         "PUT",
         `/console/agent-profiles/${encodeURIComponent(targetProfile)}`,
@@ -485,9 +482,10 @@ export default function OrganizationPage() {
         return;
       }
 
+      const savedProfileName = (result.data?.profile || normalizedProfileName).replace(/\.md$/i, "");
       const reinstallResult = await caoRequest<InstallAgentProfileResponse>(
         "POST",
-        `/console/agent-profiles/${encodeURIComponent(targetProfile)}/install`
+        `/console/agent-profiles/${encodeURIComponent(savedProfileName)}/install`
       );
       if (!reinstallResult.ok || !reinstallResult.data.ok) {
         const detail = extractErrorDetail(reinstallResult.data);
@@ -497,20 +495,15 @@ export default function OrganizationPage() {
       }
 
       setCreatingProfile(false);
+      setSelectedProfileFileName(savedProfileName ? `${savedProfileName}.md` : "");
       await loadProfileFiles();
       await loadProfileOptions();
       setNotice("岗位文件已更新并重装完成");
       return;
     }
 
-    if (!/^[A-Za-z0-9_-]+$/.test(resolvedProfileName)) {
-      setError("岗位文件名称无效");
-      setCreatingProfile(false);
-      return;
-    }
-
     const body: CreateAgentProfileRequest = {
-      name: resolvedProfileName,
+      name: normalizedProfileName,
       content: contentWithName,
       display_name: trimmedAgentDisplayName,
     };
