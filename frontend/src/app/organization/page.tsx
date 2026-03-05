@@ -27,10 +27,12 @@ import {
   caoRequest,
   ConsoleAgent,
   ConsoleAgentProfileFilesResponse,
+  ConsoleAgentProfileOption,
   ConsoleAgentProfilesResponse,
   ConsoleHomeWorkdirsResponse,
   CreateAgentProfileRequest,
   CreateAgentProfileResponse,
+  UpdateAgentProfileResponse,
   ConsoleOrganization,
   InstallAgentProfileResponse,
 } from "@/lib/cao";
@@ -152,7 +154,7 @@ export default function OrganizationPage() {
   const [data, setData] = useState<ConsoleOrganization | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [profileOptions, setProfileOptions] = useState<string[]>([]);
+  const [profileOptions, setProfileOptions] = useState<ConsoleAgentProfileOption[]>([]);
 
   const [mainProfile, setMainProfile] = useState("");
   const [mainProvider, setMainProvider] = useState("");
@@ -231,33 +233,58 @@ export default function OrganizationPage() {
       "/console/agent-profiles"
     );
     if (!result.ok) {
-      setProfileOptions(builtInProfiles);
+      setProfileOptions(builtInProfiles.map((profile) => ({ profile })));
       setError("获取 Agent 类型列表失败，已回退内置类型");
       return;
     }
-    const profiles = Array.from(
+    const optionsMap = new Map<string, ConsoleAgentProfileOption>();
+    (result.data.profile_options || []).forEach((item) => {
+      const normalizedProfile = (item?.profile || "").trim();
+      if (!normalizedProfile) {
+        return;
+      }
+      optionsMap.set(normalizedProfile, {
+        profile: normalizedProfile,
+        display_name: item?.display_name || undefined,
+      });
+    });
+
+    const profileNames = Array.from(
       new Set([...(result.data.profiles || []), ...builtInProfiles])
-    ).sort();
-    setProfileOptions(profiles);
+    );
+    profileNames.forEach((profileName) => {
+      const normalizedProfile = (profileName || "").trim();
+      if (!normalizedProfile || optionsMap.has(normalizedProfile)) {
+        return;
+      }
+      optionsMap.set(normalizedProfile, { profile: normalizedProfile });
+    });
 
-    const preferredMainProfile = profiles.includes("code_supervisor")
+    const mergedOptions = Array.from(optionsMap.values()).sort((a, b) =>
+      a.profile.localeCompare(b.profile)
+    );
+
+    setProfileOptions(mergedOptions);
+
+    const normalizedNames = mergedOptions.map((item) => item.profile);
+    const preferredMainProfile = normalizedNames.includes("code_supervisor")
       ? "code_supervisor"
-      : profiles.includes("developer")
+      : normalizedNames.includes("developer")
         ? "developer"
-        : profiles[0] || "";
+        : normalizedNames[0] || "";
 
-    const preferredWorkerProfile = profiles.includes("developer")
+    const preferredWorkerProfile = normalizedNames.includes("developer")
       ? "developer"
-      : profiles[0] || "";
+      : normalizedNames[0] || "";
 
     setMainProfile((previous) => {
-      if (!previous || !profiles.includes(previous)) {
+      if (!previous || !normalizedNames.includes(previous)) {
         return preferredMainProfile;
       }
       return previous;
     });
     setWorkerProfile((previous) => {
-      if (!previous || !profiles.includes(previous)) {
+      if (!previous || !normalizedNames.includes(previous)) {
         return preferredWorkerProfile;
       }
       return previous;
@@ -470,7 +497,7 @@ export default function OrganizationPage() {
         setCreatingProfile(false);
         return;
       }
-      const result = await caoRequest(
+      const result = await caoRequest<UpdateAgentProfileResponse>(
         "PUT",
         `/console/agent-profiles/${encodeURIComponent(targetProfile)}`,
         { body: { content: contentWithName, display_name: trimmedAgentDisplayName } }
@@ -593,7 +620,9 @@ export default function OrganizationPage() {
     setProfileFiles((previous) =>
       previous.filter((fileItem) => fileItem.profile !== profileName)
     );
-    setProfileOptions((previous) => previous.filter((item) => item !== profileName));
+    setProfileOptions((previous) =>
+      previous.filter((item) => item.profile !== profileName)
+    );
     setMainProfile((previous) => (previous === profileName ? "" : previous));
     setWorkerProfile((previous) => (previous === profileName ? "" : previous));
     setMainProvider("");
@@ -1008,9 +1037,17 @@ export default function OrganizationPage() {
                   </div>
 
                   <datalist id="main-profile-options">
-                    {mainProfileOptions.map((profileName) => (
-                      <option key={`main-${profileName}`} value={profileName} />
-                    ))}
+                    {mainProfileOptions.map((option) => {
+                      const label =
+                        option.display_name && option.display_name !== option.profile
+                          ? `${option.profile}（${option.display_name}）`
+                          : option.profile;
+                      return (
+                        <option key={`main-${option.profile}`} value={option.profile} label={label}>
+                          {label}
+                        </option>
+                      );
+                    })}
                   </datalist>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "center" }}>
@@ -1089,9 +1126,17 @@ export default function OrganizationPage() {
                       placeholder="选择/搜索团队（可留空）"
                     />
                     <datalist id="worker-profile-options">
-                      {workerProfileOptions.map((profileName) => (
-                        <option key={`worker-${profileName}`} value={profileName} />
-                      ))}
+                      {workerProfileOptions.map((option) => {
+                        const label =
+                          option.display_name && option.display_name !== option.profile
+                            ? `${option.profile}（${option.display_name}）`
+                            : option.profile;
+                        return (
+                          <option key={`worker-${option.profile}`} value={option.profile} label={label}>
+                            {label}
+                          </option>
+                        );
+                      })}
                     </datalist>
                     <datalist id="worker-leader-options">
                       {workerLeaderOptions.map((option) => (

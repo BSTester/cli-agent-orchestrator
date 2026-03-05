@@ -973,6 +973,51 @@ def _list_available_agent_profiles() -> List[str]:
     return sorted(names)
 
 
+def _resolve_available_profile_display_name(profile: str) -> Optional[str]:
+    display_name = _get_profile_display_name(profile)
+    if display_name:
+        return display_name
+
+    profile_path = AGENT_CONTEXT_DIR / f"{profile}.md"
+    if profile_path.exists():
+        return _extract_profile_display_name(profile_path)
+
+    try:
+        builtin_store = resources.files("cli_agent_orchestrator.agent_store")
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.warning("Failed to access built-in agent profiles: %s", exc)
+        return None
+
+    try:
+        with resources.as_file(builtin_store / f"{profile}.md") as builtin_path:
+            if builtin_path.exists():
+                return _extract_profile_display_name(builtin_path)
+    except FileNotFoundError:
+        return None
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.warning("Failed to resolve built-in agent profile %s: %s", profile, exc)
+
+    return None
+
+
+def _list_available_agent_profile_options(
+    profiles: Optional[List[str]] = None,
+) -> List[Dict[str, Optional[str]]]:
+    resolved_profiles = profiles if profiles is not None else _list_available_agent_profiles()
+    options: List[Dict[str, Optional[str]]] = []
+
+    for profile in resolved_profiles:
+        display_name = _resolve_available_profile_display_name(profile)
+        options.append(
+            {
+                "profile": profile,
+                "display_name": display_name,
+            }
+        )
+
+    return options
+
+
 def _create_local_agent_profile(
     name: str,
     description: str,
@@ -2567,7 +2612,11 @@ async def console_delete_scheduled_task(flow_name: str) -> Dict[str, Any]:
 @app.get("/console/agent-profiles")
 async def console_agent_profiles() -> Dict[str, Any]:
     profiles = await asyncio.to_thread(_list_available_agent_profiles)
-    return {"profiles": profiles}
+    profile_options = await asyncio.to_thread(_list_available_agent_profile_options, profiles)
+    return {
+        "profiles": profiles,
+        "profile_options": profile_options,
+    }
 
 
 @app.post("/console/agent-profiles")

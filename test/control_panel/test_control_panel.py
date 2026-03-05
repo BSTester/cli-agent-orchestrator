@@ -1616,12 +1616,24 @@ def test_console_agent_profiles(client: TestClient) -> None:
     with patch(
         "cli_agent_orchestrator.control_panel.main._list_available_agent_profiles",
         return_value=["code_supervisor", "developer", "reviewer"],
+    ), patch(
+        "cli_agent_orchestrator.control_panel.main._list_available_agent_profile_options",
+        return_value=[
+            {"profile": "code_supervisor", "display_name": "负责人"},
+            {"profile": "developer", "display_name": "工程师"},
+            {"profile": "reviewer", "display_name": None},
+        ],
     ):
         response = client.get("/console/agent-profiles")
 
         assert response.status_code == 200
         body = response.json()
         assert body["profiles"] == ["code_supervisor", "developer", "reviewer"]
+        assert body["profile_options"] == [
+            {"profile": "code_supervisor", "display_name": "负责人"},
+            {"profile": "developer", "display_name": "工程师"},
+            {"profile": "reviewer", "display_name": None},
+        ]
 
 
 def test_console_create_agent_profile(client: TestClient, tmp_path) -> None:

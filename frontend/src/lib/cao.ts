@@ -228,8 +228,14 @@ export interface ConsoleHomeWorkdirsResponse {
   directories: ConsoleHomeDirectoryItem[];
 }
 
+export interface ConsoleAgentProfileOption {
+  profile: string;
+  display_name?: string | null;
+}
+
 export interface ConsoleAgentProfilesResponse {
   profiles: string[];
+  profile_options?: ConsoleAgentProfileOption[];
 }
 
 export interface CreateAgentProfileRequest {
