@@ -71,6 +71,53 @@ mcpServers:
 3. 给出可执行建议，并标注假设与风险。
 `;
 
+const defaultProfileDisplayName =
+  (function extractDefaultDisplayName() {
+    const match = defaultProfileTemplate.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (!match) {
+      return "";
+    }
+    const nameMatch = match[1].match(/^\s*name\s*:\s*(.+)\s*$/m);
+    return nameMatch ? nameMatch[1].trim() : "";
+  })() || "";
+
+function extractProfileDisplayName(content: string): string {
+  const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!match) {
+    return "";
+  }
+  const nameMatch = match[1].match(/^\s*name\s*:\s*(.+)\s*$/m);
+  return nameMatch ? nameMatch[1].trim() : "";
+}
+
+function ensureProfileNameInContent(content: string, profileName: string): string {
+  const normalizedName = profileName.trim();
+  if (!normalizedName) {
+    return content;
+  }
+
+  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*/);
+  if (!frontmatterMatch) {
+    return ["---", `name: ${normalizedName}`, "---", "", content].join("\n");
+  }
+
+  const frontmatter = frontmatterMatch[1];
+  const hasNameField = /\bname\s*:/m.test(frontmatter);
+  const updatedFrontmatter = hasNameField
+    ? frontmatter.replace(/(^\s*name\s*:\s*)(.*)$/m, (_, prefix: string) => `${prefix}${normalizedName}`)
+    : `name: ${normalizedName}\n${frontmatter}`.trimEnd();
+
+  return content.replace(frontmatterMatch[0], `---\n${updatedFrontmatter}\n---\n`);
+}
+
+function normalizeProfileFileName(input: string): string {
+  const fallback = `profile_${Date.now()}`;
+  const normalizedInput = (input || "").trim().replace(/\.md$/i, "");
+  const base = normalizedInput || fallback;
+  const sanitized = base.replace(/[^A-Za-z0-9_-]/g, "_");
+  return sanitized || fallback;
+}
+
 function SearchableDatalistInput(
   props: InputHTMLAttributes<HTMLInputElement> & { onClear?: () => void }
 ) {
@@ -135,7 +182,7 @@ export default function OrganizationPage() {
   const [workerAlias, setWorkerAlias] = useState("");
   const [creatingWorker, setCreatingWorker] = useState(false);
 
-  const [newAgentName, setNewAgentName] = useState("");
+  const [newAgentName, setNewAgentName] = useState(defaultProfileDisplayName);
   const [profileFiles, setProfileFiles] = useState<ConsoleAgentProfileFilesResponse["files"]>([]);
   const [selectedProfileFileName, setSelectedProfileFileName] = useState("");
   const [newAgentPrompt, setNewAgentPrompt] = useState(defaultProfileTemplate);
@@ -253,7 +300,7 @@ export default function OrganizationPage() {
   async function onSelectProfileFile(fileName: string) {
     setSelectedProfileFileName(fileName);
     if (!fileName) {
-      setNewAgentName("");
+      setNewAgentName(defaultProfileDisplayName);
       setNewAgentPrompt(defaultProfileTemplate);
       return;
     }
@@ -270,8 +317,15 @@ export default function OrganizationPage() {
       return;
     }
 
-    setNewAgentName(result.data.profile || fileName.replace(/\.md$/i, ""));
-    setNewAgentPrompt(result.data.content || "");
+    const profileContent = result.data.content || "";
+    const displayName =
+      result.data.display_name ||
+      extractProfileDisplayName(profileContent) ||
+      result.data.profile ||
+      fileName.replace(/\.md$/i, "");
+
+    setNewAgentName(displayName);
+    setNewAgentPrompt(profileContent);
     setLoadingProfileFile(false);
   }
 
@@ -279,7 +333,7 @@ export default function OrganizationPage() {
     setSelectedProfileFileName(fileName);
 
     if (!fileName) {
-      setNewAgentName("");
+      setNewAgentName(defaultProfileDisplayName);
       setNewAgentPrompt(defaultProfileTemplate);
       return;
     }
@@ -388,14 +442,18 @@ export default function OrganizationPage() {
 
   async function onboardNewEmployee(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!newAgentName.trim()) {
+    const trimmedAgentName = newAgentName.trim();
+    if (!trimmedAgentName) {
       setError("岗位名称不能为空");
       return;
     }
-    if (!newAgentPrompt.trim()) {
+    const trimmedPrompt = newAgentPrompt.trim();
+    if (!trimmedPrompt) {
       setError("系统提示词不能为空");
       return;
     }
+    const contentWithName = ensureProfileNameInContent(trimmedPrompt, trimmedAgentName);
+    setNewAgentPrompt(contentWithName);
     setCreatingProfile(true);
     setError("");
 
@@ -403,17 +461,13 @@ export default function OrganizationPage() {
       (fileItem) => fileItem.file_name === selectedProfileFileName.trim()
     );
     const isEditing = Boolean(selectedProfileFile);
-    const body: CreateAgentProfileRequest = {
-      name: newAgentName.trim(),
-      content: newAgentPrompt.trim(),
-    };
 
     if (isEditing) {
       const targetProfile = (selectedProfileFile?.file_name || "").replace(/\.md$/i, "");
       const result = await caoRequest(
         "PUT",
         `/console/agent-profiles/${encodeURIComponent(targetProfile)}`,
-        { body: { content: newAgentPrompt.trim() } }
+        { body: { content: contentWithName } }
       );
       if (!result.ok) {
         const detail = extractErrorDetail(result.data);
@@ -440,6 +494,18 @@ export default function OrganizationPage() {
       return;
     }
 
+    const resolvedProfileName = normalizeProfileFileName(selectedProfileFileName || "");
+    if (!/^[A-Za-z0-9_-]+$/.test(resolvedProfileName)) {
+      setError("岗位文件名称无效");
+      setCreatingProfile(false);
+      return;
+    }
+
+    const body: CreateAgentProfileRequest = {
+      name: resolvedProfileName,
+      content: contentWithName,
+    };
+
     const result = await caoRequest<CreateAgentProfileResponse>(
       "POST",
       "/console/agent-profiles",
@@ -465,7 +531,7 @@ export default function OrganizationPage() {
       return;
     }
 
-    setNewAgentName("");
+    setNewAgentName(defaultProfileDisplayName);
     setNewAgentPrompt(defaultProfileTemplate);
     setSelectedProfileFileName("");
     setCreatingProfile(false);
@@ -536,7 +602,7 @@ export default function OrganizationPage() {
     setWorkerLeaderQuery("");
     setEditingLeaderTarget(null);
     setSelectedProfileFileName("");
-    setNewAgentName("");
+    setNewAgentName(defaultProfileDisplayName);
     setNewAgentPrompt(defaultProfileTemplate);
     await loadProfileFiles();
     await loadProfileOptions();
@@ -824,20 +890,20 @@ export default function OrganizationPage() {
                   onChange={(e) => onProfileFileInputChange(e.target.value)}
                   onClear={() => onProfileFileInputChange("")}
                   list="agent-profile-file-options"
-                  placeholder="选择/搜索已有岗位文件，或留空新增岗位"
+                  placeholder="选择/搜索已有岗位文件，或输入新文件名（文件名不依赖岗位名称）"
                 />
                 <TextInput
                   value={newAgentName}
                   onChange={(e) => setNewAgentName(e.target.value)}
                   required
-                  disabled={isEditingProfileFile}
-                  placeholder="岗位名称，例如 data_analyst"
+                  placeholder="岗位名称（展示用，可输入中文）"
                 />
               </div>
               <datalist id="agent-profile-file-options">
                 {profileFiles.map((fileItem) => (
                   <option key={fileItem.file_name} value={fileItem.file_name}>
                     编辑：{fileItem.file_name}
+                    {fileItem.display_name ? `（${fileItem.display_name}）` : ""}
                   </option>
                 ))}
               </datalist>

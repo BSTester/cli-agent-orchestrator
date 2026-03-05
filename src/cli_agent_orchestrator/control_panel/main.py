@@ -985,11 +985,13 @@ def _list_local_agent_profile_files() -> List[Dict[str, Any]]:
     AGENT_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
     files: List[Dict[str, Any]] = []
     for file_path in sorted(AGENT_CONTEXT_DIR.glob("*.md")):
+        display_name = _extract_profile_display_name(file_path)
         files.append(
             {
                 "file_name": file_path.name,
                 "profile": file_path.stem,
                 "file_path": str(file_path),
+                "display_name": display_name,
             }
         )
     return files
@@ -1166,6 +1168,22 @@ def _validate_profile_markdown_content(content: str) -> Dict[str, Any]:
     metadata = _parse_markdown_frontmatter(content, "agent profile")
     _validate_required_frontmatter_fields(metadata, ["name"], "agent profile")
     return metadata
+
+
+def _extract_profile_display_name(profile_path: Path) -> Optional[str]:
+    try:
+        content = profile_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to read agent profile for display name: %s", exc)
+        return None
+
+    try:
+        metadata = _parse_markdown_frontmatter(content, "agent profile")
+    except HTTPException:
+        return None
+
+    display_name = str(metadata.get("name", "")).strip()
+    return display_name or None
 
 
 def _validate_flow_markdown_content(content: str) -> Dict[str, Any]:
@@ -2532,11 +2550,13 @@ async def console_get_agent_profile_file(file_name: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Agent profile not found")
 
     content = await asyncio.to_thread(profile_path.read_text, encoding="utf-8")
+    display_name = _extract_profile_display_name(profile_path)
     return {
         "profile": profile_name,
         "file_name": profile_path.name,
         "file_path": str(profile_path),
         "content": content,
+        "display_name": display_name,
     }
 
 
