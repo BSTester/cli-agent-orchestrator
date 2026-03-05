@@ -41,34 +41,34 @@ def _build_qoder_mcp_setup_command(agent_profile: Optional[str], terminal_id: st
         else:
             cfg = server_config.model_dump(exclude_none=True)
 
-        transport = str(cfg.get("type", "stdio"))
-        endpoint: Optional[str] = None
-
-        if transport == "stdio":
-            command = cfg.get("command")
-            if command:
-                args = cfg.get("args") or []
-                endpoint = shlex.join([str(command), *[str(arg) for arg in args]])
-        elif transport in {"sse", "http"}:
-            endpoint = cfg.get("url")
-
-        if not endpoint:
-            continue
-
         env = dict(cfg.get("env") or {})
         env.setdefault("CAO_TERMINAL_ID", terminal_id)
 
-        add_parts = [
-            "qodercli",
-            "mcp",
-            "add",
-            str(server_name),
-            str(endpoint),
-            "--transport",
-            transport,
-            "--scope",
-            "project",
-        ]
+        transport = str(cfg.get("type", "stdio"))
+        add_parts = ["qodercli", "mcp", "add", str(server_name)]
+
+        if transport == "stdio":
+            command = cfg.get("command")
+            if not command:
+                continue
+            args = cfg.get("args") or []
+            add_parts.append("--")
+            add_parts.append(str(command))
+            add_parts.extend(str(arg) for arg in args)
+        elif transport in {"sse", "http"}:
+            endpoint = cfg.get("url")
+            if not endpoint:
+                continue
+            add_parts.extend([str(endpoint), "--transport", transport])
+        else:
+            continue
+
+        add_parts.extend(
+            [
+                "--scope",
+                "project",
+            ]
+        )
         for env_key, env_val in env.items():
             add_parts.extend(["--env", f"{env_key}={env_val}"])
 
@@ -117,7 +117,7 @@ def _build_qoder_command(agent_profile: Optional[str], terminal_id: str) -> str:
         if profile.model:
             agent_definition[agent_profile]["model"] = profile.model
 
-        command_parts.extend(["--agents", json.dumps(agent_definition)])
+        command_parts.extend(["--agents", json.dumps(agent_definition, ensure_ascii=False)])
 
     return shlex.join(command_parts)
 

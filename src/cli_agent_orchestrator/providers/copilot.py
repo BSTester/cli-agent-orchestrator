@@ -43,13 +43,17 @@ def _build_copilot_command(agent_profile: Optional[str], terminal_id: str) -> st
                 env["CAO_TERMINAL_ID"] = terminal_id
                 mcp_config[server_name]["env"] = env
 
-        command_parts.extend(["--additional-mcp-config", json.dumps({"mcpServers": mcp_config})])
+        command_parts.extend(
+            ["--additional-mcp-config", json.dumps({"mcpServers": mcp_config}, ensure_ascii=False)]
+        )
 
     return shlex.join(command_parts)
 
 
 class CopilotProvider(SimpleTuiProvider):
     """Provider for GitHub Copilot CLI (`copilot`)."""
+
+    _IDLE_PROMPT_PATTERN = r"(?:[cC]opilot>\s*$|[>❯›]\s)"
 
     def __init__(
         self,
@@ -63,6 +67,6 @@ class CopilotProvider(SimpleTuiProvider):
             session_name=session_name,
             window_name=window_name,
             start_command=_build_copilot_command(agent_profile, terminal_id),
-            idle_prompt_pattern=r"[>❯›]\s",
-            idle_prompt_pattern_log=r"[>❯›]\s",
+            idle_prompt_pattern=self._IDLE_PROMPT_PATTERN,
+            idle_prompt_pattern_log=self._IDLE_PROMPT_PATTERN,
         )
