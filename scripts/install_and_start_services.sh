@@ -22,6 +22,18 @@ CAO_REPO_REF="${CAO_REPO_REF:-main}"
 CAO_REPO_URL="${CAO_REPO_URL:-https://github.com/BSTester/cli-agent-orchestrator.git}"
 CAO_TOOL_SPEC="git+${CAO_REPO_URL}@${CAO_REPO_REF}"
 
+# Skills discovery integration
+SKILLS_DISCOVERY_SPEC="${SKILLS_DISCOVERY_SPEC:-@Kamalnrf/claude-plugins/skills-discovery}"
+SKILLS_INSTALLER_CMD="${SKILLS_INSTALLER_CMD:-skills-installer}"
+
+# npm package specs (allow overriding by environment variables)
+CODEX_NPM_SPEC="${CODEX_NPM_SPEC:-@openai/codex}"
+CLAUDE_CODE_NPM_SPEC="${CLAUDE_CODE_NPM_SPEC:-@anthropic-ai/claude-code}"
+KIRO_CLI_NPM_SPEC="${KIRO_CLI_NPM_SPEC:-kiro-cli}"
+QODERCLI_NPM_SPEC="${QODERCLI_NPM_SPEC:-qoder-cli}"
+CODEBUDDY_NPM_SPEC="${CODEBUDDY_NPM_SPEC:-codebuddy}"
+COPILOT_NPM_SPEC="${COPILOT_NPM_SPEC:-@github/copilot}"
+
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
 info() {
@@ -146,6 +158,33 @@ ensure_python3() {
   esac
 }
 
+ensure_nodejs() {
+  if has_cmd node && has_cmd npm && has_cmd npx; then
+    return
+  fi
+
+  info "未检测到 Node.js/npm，尝试自动安装..."
+  case "$(uname -s)" in
+    Darwin)
+      install_packages_macos node
+      ;;
+    Linux)
+      if has_cmd apt-get; then
+        install_packages_linux nodejs npm
+      else
+        install_packages_linux nodejs
+      fi
+      ;;
+    *)
+      die "当前系统不支持自动安装 Node.js，请手动安装 Node.js 18+"
+      ;;
+  esac
+
+  has_cmd node || die "Node.js 安装失败，请手动安装后重试。"
+  has_cmd npm || die "npm 安装失败，请手动安装后重试。"
+  has_cmd npx || die "npx 不可用，请手动安装后重试。"
+}
+
 ensure_uv() {
   if has_cmd uv; then
     return
@@ -181,7 +220,41 @@ ensure_tmux() {
 }
 
 ensure_tool_path() {
-  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$(npm config get prefix 2>/dev/null || echo "$HOME/.npm-global")/bin:$PATH"
+}
+
+install_npm_cli_if_missing() {
+  local cmd="$1"
+  local npm_spec="$2"
+
+  if has_cmd "$cmd"; then
+    info "$cmd 已安装，跳过。"
+    return
+  fi
+
+  info "安装 $cmd (npm: $npm_spec)..."
+  npm install -g "$npm_spec"
+  ensure_tool_path
+
+  has_cmd "$cmd" || die "$cmd 安装失败，请检查 npm 包名（当前: $npm_spec）"
+}
+
+install_agent_clis() {
+  ensure_nodejs
+  ensure_tool_path
+
+  install_npm_cli_if_missing codex "$CODEX_NPM_SPEC"
+  install_npm_cli_if_missing claude "$CLAUDE_CODE_NPM_SPEC"
+  install_npm_cli_if_missing kiro-cli "$KIRO_CLI_NPM_SPEC"
+  install_npm_cli_if_missing qodercli "$QODERCLI_NPM_SPEC"
+  install_npm_cli_if_missing codebuddy "$CODEBUDDY_NPM_SPEC"
+  install_npm_cli_if_missing copilot "$COPILOT_NPM_SPEC"
+}
+
+install_skills_discovery_for_all_agents() {
+  ensure_nodejs
+  info "安装 skills-discovery 服务（所有支持 skills 的 agent 共用）: $SKILLS_DISCOVERY_SPEC"
+  npx -y "$SKILLS_INSTALLER_CMD" install "$SKILLS_DISCOVERY_SPEC"
 }
 
 install_cao_tool() {
@@ -256,8 +329,11 @@ main() {
   ensure_python3
 
   ensure_uv
+  ensure_nodejs
   ensure_tmux
   install_cao_tool
+  install_agent_clis
+  install_skills_discovery_for_all_agents
 
   start_service \
     "cao-server" \
