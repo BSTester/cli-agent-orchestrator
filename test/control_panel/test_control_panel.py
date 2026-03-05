@@ -8,6 +8,7 @@ import pytest
 import requests
 from fastapi.testclient import TestClient
 
+from cli_agent_orchestrator.control_panel import main as control_panel_main
 from cli_agent_orchestrator.control_panel.main import CONSOLE_PASSWORD, app
 
 
@@ -1617,6 +1618,79 @@ def test_console_get_and_update_agent_profile(client: TestClient, tmp_path) -> N
         file_response = client.get("/console/agent-profiles/files/designer.md")
         assert file_response.status_code == 200
         assert file_response.json()["profile"] == "designer"
+
+
+def test_console_create_agent_profile_stores_display_name(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    profile_dir = tmp_path / "profiles"
+    profile_dir.mkdir()
+    db_path = tmp_path / "org.sqlite"
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.AGENT_CONTEXT_DIR", profile_dir),
+        patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path),
+        patch("cli_agent_orchestrator.control_panel.main.DATABASE_FILE", db_path),
+    ):
+        control_panel_main._init_organization_db()
+        response = client.post(
+            "/console/agent-profiles",
+            json={
+                "name": "data_analyst",
+                "content": "---\nname: data_analyst\nprovider: codex\n---\n\n# DATA ANALYST\nFocus on metrics.",
+                "display_name": "数据分析岗",
+            },
+        )
+
+        assert response.status_code == 200
+
+        list_response = client.get("/console/agent-profiles/files")
+        assert list_response.status_code == 200
+        files = list_response.json()["files"]
+        assert files[0]["display_name"] == "数据分析岗"
+
+        file_response = client.get("/console/agent-profiles/files/data_analyst.md")
+        assert file_response.status_code == 200
+        assert file_response.json()["display_name"] == "数据分析岗"
+
+        profile_file = profile_dir / "data_analyst.md"
+        assert "name: data_analyst" in profile_file.read_text(encoding="utf-8")
+
+
+def test_console_update_agent_profile_sets_display_name_without_touching_frontmatter(
+    client: TestClient, tmp_path: Path
+) -> None:
+    login(client)
+
+    profile_dir = tmp_path / "profiles"
+    profile_dir.mkdir()
+    db_path = tmp_path / "org.sqlite"
+
+    profile_file = profile_dir / "designer.md"
+    profile_file.write_text("---\nname: designer\ndescription: ui\n---\n\nhello\n", encoding="utf-8")
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.AGENT_CONTEXT_DIR", profile_dir),
+        patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path),
+        patch("cli_agent_orchestrator.control_panel.main.DATABASE_FILE", db_path),
+    ):
+        control_panel_main._init_organization_db()
+        update_response = client.put(
+            "/console/agent-profiles/designer",
+            json={"content": profile_file.read_text(encoding="utf-8"), "display_name": "设计师"},
+        )
+
+        assert update_response.status_code == 200
+        assert "name: designer" in profile_file.read_text(encoding="utf-8")
+
+        list_response = client.get("/console/agent-profiles/files")
+        assert list_response.status_code == 200
+        files = list_response.json()["files"]
+        assert files[0]["display_name"] == "设计师"
+
+        file_response = client.get("/console/agent-profiles/files/designer.md")
+        assert file_response.status_code == 200
+        assert file_response.json()["display_name"] == "设计师"
 
 
 def test_console_create_agent_profile_rejects_invalid_markdown(client: TestClient, tmp_path) -> None:

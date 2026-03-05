@@ -156,6 +156,15 @@ def _init_organization_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_profile_display_names (
+                profile TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
 
         # Migrate historical flow-team links into flows.session_name as single source.
         flows_table_row = conn.execute(
@@ -365,6 +374,62 @@ def _list_team_working_directories() -> Dict[str, str]:
         for leader_id, working_directory in rows
         if leader_id and working_directory
     }
+
+
+def _upsert_profile_display_name(profile: str, display_name: Optional[str]) -> None:
+    normalized_profile = (profile or "").strip()
+    if not normalized_profile or display_name is None:
+        return
+
+    normalized_display_name = str(display_name).strip()
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        if normalized_display_name:
+            conn.execute(
+                """
+                INSERT INTO agent_profile_display_names (profile, display_name, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(profile) DO UPDATE SET
+                    display_name=excluded.display_name,
+                    updated_at=excluded.updated_at
+                """,
+                (normalized_profile, normalized_display_name, datetime.now(timezone.utc).isoformat()),
+            )
+        else:
+            conn.execute("DELETE FROM agent_profile_display_names WHERE profile = ?", (normalized_profile,))
+        conn.commit()
+
+
+def _get_profile_display_name(profile: str) -> Optional[str]:
+    normalized_profile = (profile or "").strip()
+    if not normalized_profile:
+        return None
+
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        row = conn.execute(
+            "SELECT display_name FROM agent_profile_display_names WHERE profile = ?",
+            (normalized_profile,),
+        ).fetchone()
+    if not row or not row[0]:
+        return None
+    display_name = str(row[0]).strip()
+    return display_name or None
+
+
+def _remove_profile_display_name(profile: str) -> None:
+    normalized_profile = (profile or "").strip()
+    if not normalized_profile:
+        return
+
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute("DELETE FROM agent_profile_display_names WHERE profile = ?", (normalized_profile,))
+        conn.commit()
+
+
+def _resolve_profile_display_name(profile: str, profile_path: Path) -> Optional[str]:
+    stored_display_name = _get_profile_display_name(profile)
+    if stored_display_name:
+        return stored_display_name
+    return _extract_profile_display_name(profile_path)
 
 
 def _upsert_team_runtime(
@@ -985,11 +1050,12 @@ def _list_local_agent_profile_files() -> List[Dict[str, Any]]:
     AGENT_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
     files: List[Dict[str, Any]] = []
     for file_path in sorted(AGENT_CONTEXT_DIR.glob("*.md")):
-        display_name = _extract_profile_display_name(file_path)
+        profile_name = file_path.stem
+        display_name = _resolve_profile_display_name(profile_name, file_path)
         files.append(
             {
                 "file_name": file_path.name,
-                "profile": file_path.stem,
+                "profile": profile_name,
                 "file_path": str(file_path),
                 "display_name": display_name,
             }
@@ -1059,10 +1125,12 @@ class AgentProfileCreateRequest(BaseModel):
     system_prompt: Optional[str] = None
     content: Optional[str] = None
     provider: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 class AgentProfileUpdateRequest(BaseModel):
     content: str = Field(min_length=1)
+    display_name: Optional[str] = None
 
 
 class ConsoleCreateScheduledTaskRequest(BaseModel):
@@ -2528,6 +2596,7 @@ async def console_create_agent_profile(payload: AgentProfileCreateRequest) -> Di
             payload.system_prompt,
             payload.provider,
         )
+    await asyncio.to_thread(_upsert_profile_display_name, payload.name, payload.display_name)
     return {
         "ok": True,
         "profile": payload.name.strip(),
@@ -2550,7 +2619,7 @@ async def console_get_agent_profile_file(file_name: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Agent profile not found")
 
     content = await asyncio.to_thread(profile_path.read_text, encoding="utf-8")
-    display_name = _extract_profile_display_name(profile_path)
+    display_name = _resolve_profile_display_name(profile_name, profile_path)
     return {
         "profile": profile_name,
         "file_name": profile_path.name,
@@ -2589,6 +2658,7 @@ async def console_update_agent_profile(
     await asyncio.to_thread(_validate_profile_markdown_content, payload.content)
 
     await asyncio.to_thread(profile_path.write_text, payload.content, encoding="utf-8")
+    await asyncio.to_thread(_upsert_profile_display_name, profile_name, payload.display_name)
     return {"ok": True, "profile": profile_name, "file_path": str(profile_path)}
 
 
@@ -2646,6 +2716,7 @@ async def console_delete_agent_profile(profile_name: str) -> Dict[str, Any]:
     # The uninstall command may already remove this file, so deletion here must
     # be idempotent and should not fail when file is already gone.
     await asyncio.to_thread(lambda: profile_path.unlink(missing_ok=True))
+    await asyncio.to_thread(_remove_profile_display_name, normalized_profile)
 
     return {
         "ok": uninstall_process.returncode == 0,
