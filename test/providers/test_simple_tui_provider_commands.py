@@ -21,7 +21,7 @@ def test_qoder_cli_exit_command_is_quit() -> None:
 def test_qoder_cli_start_command_with_agent_profile(mock_load_profile) -> None:
     mock_profile = MagicMock()
     mock_profile.description = "Code supervisor"
-    mock_profile.system_prompt = "You are a code supervisor"
+    mock_profile.system_prompt = "你是一名代码主管"
     mock_profile.tools = ["Read", "Edit"]
     mock_profile.model = "gmodel"
     mock_profile.mcpServers = {
@@ -43,17 +43,18 @@ def test_qoder_cli_start_command_with_agent_profile(mock_load_profile) -> None:
     assert "--agents" in provider._start_command
     assert "--model gmodel" in provider._start_command
     assert "code_supervisor" in provider._start_command
-    assert "You are a code supervisor" in provider._start_command
+    assert "你是一名代码主管" in provider._start_command
     assert "Read" in provider._start_command
     assert "Edit" in provider._start_command
     assert "gmodel" in provider._start_command
+    assert "\\u4f60" not in provider._start_command
     # MCP is configured via `qodercli mcp add`, not embedded in --agents JSON.
     assert '"mcpServers"' not in provider._start_command
 
 
 def test_codebuddy_start_command_skips_permissions() -> None:
     provider = CodeBuddyProvider("t1", "s1", "w1")
-    assert provider._start_command == "codebuddy --dangerously-skip-permissions --append-system-prompt"
+    assert provider._start_command == "codebuddy --dangerously-skip-permissions --append-system-prompt ''"
     assert provider._auto_accept_input == "3"
 
 
@@ -61,7 +62,7 @@ def test_codebuddy_start_command_skips_permissions() -> None:
 def test_codebuddy_start_command_includes_profile_prompt_and_mcp(mock_load_profile) -> None:
     mock_profile = MagicMock()
     mock_profile.description = "Code supervisor"
-    mock_profile.system_prompt = "Follow CAO orchestration"
+    mock_profile.system_prompt = "请严格按编排执行"
     mock_profile.tools = ["Read", "Edit"]
     mock_profile.model = "glm-4.7"
     mock_profile.mcpServers = {
@@ -76,7 +77,8 @@ def test_codebuddy_start_command_includes_profile_prompt_and_mcp(mock_load_profi
 
     assert "--agents" in provider._start_command
     assert "--agent code_supervisor" not in provider._start_command
-    assert "Follow CAO orchestration" in provider._start_command
+    assert "--append-system-prompt" in provider._start_command
+    assert "请严格按编排执行" in provider._start_command
     assert "code_supervisor" in provider._start_command
     assert "--model glm-4.7" in provider._start_command
     assert "--append-system-prompt" in provider._start_command
@@ -85,6 +87,7 @@ def test_codebuddy_start_command_includes_profile_prompt_and_mcp(mock_load_profi
     assert "cao-mcp-server" in provider._start_command
     assert "CAO_TERMINAL_ID" in provider._start_command
     assert "term123" in provider._start_command
+    assert "\\u8bf7" not in provider._start_command
 
 
 def test_copilot_start_command_allows_all_without_ask_user() -> None:
@@ -100,6 +103,7 @@ def test_copilot_start_command_includes_profile_and_mcp(mock_load_profile) -> No
         "cao-mcp-server": {
             "command": "uvx",
             "args": ["cao-mcp-server"],
+            "env": {"NOTE": "中文提示"},
         }
     }
     mock_load_profile.return_value = mock_profile
@@ -112,3 +116,5 @@ def test_copilot_start_command_includes_profile_and_mcp(mock_load_profile) -> No
     assert "cao-mcp-server" in provider._start_command
     assert "CAO_TERMINAL_ID" in provider._start_command
     assert "term123" in provider._start_command
+    assert "中文提示" in provider._start_command
+    assert "\\u4e2d\\u6587" not in provider._start_command

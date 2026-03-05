@@ -15,9 +15,10 @@ class ProviderError(Exception):
 
 
 def _build_codebuddy_command(agent_profile: Optional[str], terminal_id: str) -> str:
-    command_parts = ["codebuddy", "--dangerously-skip-permissions", "--append-system-prompt"]
+    command_parts = ["codebuddy", "--dangerously-skip-permissions"]
 
     if not agent_profile:
+        command_parts.extend(["--append-system-prompt", ""])
         return shlex.join(command_parts)
 
     try:
@@ -26,6 +27,8 @@ def _build_codebuddy_command(agent_profile: Optional[str], terminal_id: str) -> 
         raise ProviderError(f"Failed to load agent profile '{agent_profile}': {e}")
 
     system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
+    command_parts.extend(["--append-system-prompt", system_prompt])
+
     if system_prompt or profile.tools or profile.model:
         agent_definition = {
             agent_profile: {
@@ -38,7 +41,7 @@ def _build_codebuddy_command(agent_profile: Optional[str], terminal_id: str) -> 
             agent_definition[agent_profile]["tools"] = profile.tools
         if profile.model:
             agent_definition[agent_profile]["model"] = profile.model
-        command_parts.extend(["--agents", json.dumps(agent_definition)])
+        command_parts.extend(["--agents", json.dumps(agent_definition, ensure_ascii=False)])
 
     if profile.model:
         command_parts.extend(["--model", profile.model])
@@ -56,7 +59,7 @@ def _build_codebuddy_command(agent_profile: Optional[str], terminal_id: str) -> 
                 env["CAO_TERMINAL_ID"] = terminal_id
                 mcp_config[server_name]["env"] = env
 
-        command_parts.extend(["--mcp-config", json.dumps({"mcpServers": mcp_config})])
+        command_parts.extend(["--mcp-config", json.dumps({"mcpServers": mcp_config}, ensure_ascii=False)])
 
     return shlex.join(command_parts)
 

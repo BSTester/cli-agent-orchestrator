@@ -43,7 +43,9 @@ def _build_copilot_command(agent_profile: Optional[str], terminal_id: str) -> st
                 env["CAO_TERMINAL_ID"] = terminal_id
                 mcp_config[server_name]["env"] = env
 
-        command_parts.extend(["--additional-mcp-config", json.dumps({"mcpServers": mcp_config})])
+        command_parts.extend(
+            ["--additional-mcp-config", json.dumps({"mcpServers": mcp_config}, ensure_ascii=False)]
+        )
 
     return shlex.join(command_parts)
 

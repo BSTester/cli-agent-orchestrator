@@ -117,7 +117,7 @@ def _build_qoder_command(agent_profile: Optional[str], terminal_id: str) -> str:
         if profile.model:
             agent_definition[agent_profile]["model"] = profile.model
 
-        command_parts.extend(["--agents", json.dumps(agent_definition)])
+        command_parts.extend(["--agents", json.dumps(agent_definition, ensure_ascii=False)])
 
     return shlex.join(command_parts)
 
