@@ -24,3 +24,18 @@ def test_copilot_prompt_with_arrow_symbol(mock_tmux) -> None:
     provider = CopilotProvider("t2", "s2", "w2")
 
     assert provider.get_status() == TerminalStatus.IDLE
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_copilot_prompt_with_input_hint(mock_tmux) -> None:
+    """Copilot hint line starting with ❯ should count as idle prompt."""
+    mock_tmux.get_history.return_value = (
+        "GitHub Copilot v0.0.421\n"
+        "Tip: /plugin Manage plugins\n"
+        "\n"
+        "❯  Type @ to mention files, # for issues/PRs, / for commands\n"
+    )
+
+    provider = CopilotProvider("t3", "s3", "w3")
+
+    assert provider.get_status() == TerminalStatus.IDLE
