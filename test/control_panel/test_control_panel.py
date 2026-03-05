@@ -80,6 +80,62 @@ def test_console_delete_agent_profile_file_already_removed(client: TestClient, t
     assert payload["file_deleted"] is True
 
 
+def test_console_create_agent_profile_uses_frontmatter_name(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    login(client)
+
+    agent_dir = tmp_path / "agent-context"
+    monkeypatch.setattr(control_panel_main, "AGENT_CONTEXT_DIR", agent_dir)
+
+    content = "---\nname: cto\n---\n\nhello"
+    response = client.post(
+        "/console/agent-profiles",
+        json={"name": "ignored_payload", "content": content, "display_name": "CTO"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["profile"] == "cto"
+    assert Path(payload["file_path"]).name == "cto.md"
+    assert (agent_dir / "cto.md").exists()
+
+
+def test_console_update_agent_profile_renames_to_frontmatter_name(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    login(client)
+
+    agent_dir = tmp_path / "agent-context"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(control_panel_main, "AGENT_CONTEXT_DIR", agent_dir)
+
+    original_path = agent_dir / "profile_123.md"
+    original_path.write_text("---\nname: profile_123\n---\n\nold", encoding="utf-8")
+
+    updated_content = "---\nname: cto\n---\n\nupdated"
+    response = client.put(
+        "/console/agent-profiles/profile_123",
+        json={"content": updated_content, "display_name": "CTO"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["profile"] == "cto"
+    new_path = agent_dir / "cto.md"
+    assert Path(payload["file_path"]) == new_path
+    assert new_path.exists()
+    assert "updated" in new_path.read_text(encoding="utf-8")
+    assert original_path.exists() is False
+
+    list_response = client.get("/console/agent-profiles/files")
+    assert list_response.status_code == 200
+    files = list_response.json()["files"]
+    assert any(
+        item.get("file_name") == "cto.md" and item.get("display_name") == "CTO" for item in files
+    )
+
+
 def test_health_endpoint_success(client: TestClient) -> None:
     """Test health endpoint when cao-server is reachable."""
     with patch("cli_agent_orchestrator.control_panel.main.requests.get") as mock_get:
