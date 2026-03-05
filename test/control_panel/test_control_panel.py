@@ -930,12 +930,11 @@ def test_console_create_org_agent_propagates_upstream_http_error(client: TestCli
         assert body["detail"] == "Provider not available"
 
 
-def test_console_update_team_leader_restarts_terminal_and_rekeys(client: TestClient) -> None:
-    login(client)
-
+@pytest.mark.asyncio
+async def test_restart_team_leader_task_restarts_terminal_and_rekeys() -> None:
     with (
-        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader1"}),
-        patch("cli_agent_orchestrator.control_panel.main._resolve_terminal_id_alias", return_value="leader1"),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
         patch(
             "cli_agent_orchestrator.control_panel.main._get_team_runtime",
             return_value={
@@ -947,11 +946,9 @@ def test_console_update_team_leader_restarts_terminal_and_rekeys(client: TestCli
                 "working_directory": "/home/penn/workspace/team-a",
             },
         ),
-        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
-        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
         patch(
-            "cli_agent_orchestrator.control_panel.main._resolve_home_level1_directory",
-            return_value="/home/penn/workspace/team-a",
+            "cli_agent_orchestrator.control_panel.main._list_team_working_directories",
+            return_value={"leader1": "/home/penn/workspace/team-a"},
         ),
         patch("cli_agent_orchestrator.control_panel.main._list_live_sessions", return_value={"cao-team1"}),
         patch("cli_agent_orchestrator.control_panel.main._rekey_leader_id") as mock_rekey,
@@ -975,22 +972,22 @@ def test_console_update_team_leader_restarts_terminal_and_rekeys(client: TestCli
             },
         ]
 
-        response = client.put(
-            "/console/organization/leader1/leader",
-            json={
-                "agent_profile": "reviewer",
-                "provider": "codex",
-                "team_alias": "新团队",
-                "team_workdir_mode": "existing",
-                "team_workdir_name": "team-a",
-            },
+        payload = control_panel_main.OrgLeaderUpdateRequest(
+            agent_profile="reviewer",
+            provider="codex",
+            team_alias="新团队",
+            team_workdir_mode="existing",
+            team_workdir_name="team-a",
+        )
+        result = await control_panel_main._restart_team_leader_task(
+            normalized_leader_id="leader1",
+            payload=payload,
+            requested_working_directory="/home/penn/workspace/team-a",
         )
 
-        assert response.status_code == 200
-        body = response.json()
-        assert body["ok"] is True
-        assert body["leader_id"] == "leader2"
-        assert body["previous_leader_id"] == "leader1"
+        assert result["ok"] is True
+        assert result["leader_id"] == "leader2"
+        assert result["previous_leader_id"] == "leader1"
         mock_request_cao.assert_any_call("DELETE", "/terminals/leader1")
         mock_request_cao.assert_any_call(
             "POST",
@@ -1003,12 +1000,11 @@ def test_console_update_team_leader_restarts_terminal_and_rekeys(client: TestCli
         mock_runtime.assert_called_once()
 
 
-def test_console_update_team_leader_recreates_session_when_missing(client: TestClient) -> None:
-    login(client)
-
+@pytest.mark.asyncio
+async def test_restart_team_leader_task_recreates_session_when_missing() -> None:
     with (
-        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader1"}),
-        patch("cli_agent_orchestrator.control_panel.main._resolve_terminal_id_alias", return_value="leader1"),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
         patch(
             "cli_agent_orchestrator.control_panel.main._get_team_runtime",
             return_value={
@@ -1020,8 +1016,10 @@ def test_console_update_team_leader_recreates_session_when_missing(client: TestC
                 "working_directory": "/home/penn/workspace/team-a",
             },
         ),
-        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
-        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+        patch(
+            "cli_agent_orchestrator.control_panel.main._list_team_working_directories",
+            return_value={"leader1": "/home/penn/workspace/team-a"},
+        ),
         patch("cli_agent_orchestrator.control_panel.main._list_live_sessions", return_value=set()),
         patch("cli_agent_orchestrator.control_panel.main._upsert_team_runtime") as mock_runtime,
     ):
@@ -1041,15 +1039,14 @@ def test_console_update_team_leader_recreates_session_when_missing(client: TestC
             },
         ]
 
-        response = client.put(
-            "/console/organization/leader1/leader",
-            json={
-                "agent_profile": "code_supervisor",
-            },
+        payload = control_panel_main.OrgLeaderUpdateRequest(agent_profile="code_supervisor")
+        result = await control_panel_main._restart_team_leader_task(
+            normalized_leader_id="leader1",
+            payload=payload,
+            requested_working_directory="/home/penn/workspace/team-a",
         )
 
-        assert response.status_code == 200
-        assert response.json()["ok"] is True
+        assert result["ok"] is True
         mock_request_cao.assert_any_call("DELETE", "/terminals/leader1")
         mock_request_cao.assert_any_call(
             "POST",
@@ -1062,6 +1059,40 @@ def test_console_update_team_leader_recreates_session_when_missing(client: TestC
             },
         )
         mock_runtime.assert_called_once()
+
+
+def test_console_update_team_leader_returns_async_ack(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._list_teams", return_value={"leader1"}),
+        patch("cli_agent_orchestrator.control_panel.main._resolve_terminal_id_alias", return_value="leader1"),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._resolve_home_level1_directory",
+            return_value="/home/penn/workspace/team-a",
+        ),
+        patch("cli_agent_orchestrator.control_panel.main.asyncio.create_task") as mock_create_task,
+        patch("cli_agent_orchestrator.control_panel.main._restart_team_leader_task", new_callable=AsyncMock),
+    ):
+        mock_create_task.side_effect = lambda coro: (coro.close(), MagicMock())[1]
+
+        response = client.put(
+            "/console/organization/leader1/leader",
+            json={
+                "agent_profile": "reviewer",
+                "provider": "codex",
+                "team_workdir_mode": "existing",
+                "team_workdir_name": "team-a",
+            },
+        )
+
+        assert response.status_code == 202
+        body = response.json()
+        assert body["ok"] is True
+        assert body["queued"] is True
+        assert body["leader_id"] == "leader1"
+        assert "后台重启" in body["message"]
+        mock_create_task.assert_called_once()
 
 
 def test_console_disband_team_deletes_target_session_only(client: TestClient) -> None:
