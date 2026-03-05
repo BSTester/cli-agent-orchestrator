@@ -137,13 +137,14 @@ class QoderCliProvider(SimpleTuiProvider):
         start_command = (
             f"{mcp_setup_command} && {qoder_command}" if mcp_setup_command else qoder_command
         )
+        idle_pattern = r"(?:\b[qQ]oder(?:cli)?\s*[>❯›]?\s*$|[>❯›](?:\s|$))"
 
         super().__init__(
             terminal_id=terminal_id,
             session_name=session_name,
             window_name=window_name,
             start_command=start_command,
-            idle_prompt_pattern=r"[>❯›]\s",
-            idle_prompt_pattern_log=r"[>❯›]\s",
+            idle_prompt_pattern=idle_pattern,
+            idle_prompt_pattern_log=idle_pattern,
             exit_command="/quit",
         )
