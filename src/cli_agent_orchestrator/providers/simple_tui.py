@@ -13,6 +13,17 @@ from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_sta
 logger = logging.getLogger(__name__)
 
 ANSI_CODE_PATTERN = r"\x1b\[[0-9;?]*[a-zA-Z]"
+START_COMMAND_PAYLOAD_MARKERS = (
+    "--agents",
+    "--append-system-prompt",
+    '"prompt":',
+    "## Role and Identity",
+    "## Core Responsibilities",
+    "## Critical Rules",
+    "## Multi-Agent Communication",
+    "## File System Management",
+    "Your success is measured by how effectively",
+)
 
 
 class SimpleTuiProvider(BaseProvider):
@@ -73,9 +84,10 @@ class SimpleTuiProvider(BaseProvider):
             if error_patterns is not None
             else [
                 r"^error:",
-                r"traceback",
-                r"failed",
-                r"exception",
+                r"traceback\s*\(most recent call last\)",
+                r"\bcommand not found\b",
+                r"not recognized as an internal or external command",
+                r"no such file or directory",
             ]
         )
         self._auto_accept_input = auto_accept_input
@@ -106,6 +118,27 @@ class SimpleTuiProvider(BaseProvider):
 
     def _matches_any(self, patterns: Iterable[str], text: str) -> bool:
         return any(re.search(pattern, text, re.IGNORECASE | re.MULTILINE) for pattern in patterns)
+
+    def _is_start_command_payload_line(self, line: str) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+
+        if any(marker in stripped for marker in START_COMMAND_PAYLOAD_MARKERS):
+            return True
+
+        # Serialized JSON/system prompt payload lines often contain many escaped
+        # newlines and JSON delimiters; matching processing words in those lines
+        # should not affect runtime status.
+        if stripped.count("\\n") >= 3 and ("{\"" in stripped or "'{\"" in stripped):
+            return True
+
+        return False
+
+    def _build_status_text(self, clean_output: str, max_lines: int) -> str:
+        lines = clean_output.splitlines()
+        filtered_lines = [line for line in lines if not self._is_start_command_payload_line(line)]
+        return "\n".join(filtered_lines[-max_lines:])
 
     def _handle_startup_prompts(self, timeout: float = 20.0) -> None:
         """Auto-accept common workspace trust/allow prompts."""
@@ -160,7 +193,9 @@ class SimpleTuiProvider(BaseProvider):
             return TerminalStatus.ERROR
 
         clean_output = self._clean_output(output)
-        tail_output = "\n".join(clean_output.splitlines()[-40:])
+        has_idle_prompt = self._has_idle_prompt(clean_output)
+        tail_output = self._build_status_text(clean_output, max_lines=40)
+        recent_output = self._build_status_text(clean_output, max_lines=12)
 
         if self._matches_any(self._waiting_patterns, tail_output):
             return TerminalStatus.WAITING_USER_ANSWER
@@ -168,12 +203,18 @@ class SimpleTuiProvider(BaseProvider):
         if self._matches_any(self._error_patterns, tail_output):
             return TerminalStatus.ERROR
 
-        if self._matches_any(self._processing_patterns, tail_output):
+        # During startup, commands may echo long serialized system prompts that
+        # contain generic words like "working" or "processing". Once idle
+        # prompt is visible, treat terminal as ready instead of processing.
+        if has_idle_prompt and not self._input_received:
+            return TerminalStatus.IDLE
+
+        if self._matches_any(self._processing_patterns, recent_output):
             if self._input_received:
                 self._saw_processing_after_input = True
             return TerminalStatus.PROCESSING
 
-        if not self._has_idle_prompt(clean_output):
+        if not has_idle_prompt:
             if self._input_received:
                 self._saw_processing_after_input = True
             if not self._initialized:

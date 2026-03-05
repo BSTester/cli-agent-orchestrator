@@ -38,6 +38,15 @@ def _build_copilot_command(agent_profile: Optional[str], terminal_id: str) -> st
             else:
                 mcp_config[server_name] = server_config.model_dump(exclude_none=True)
 
+            # Copilot CLI expects command-based MCP servers to include an
+            # args field (empty list is acceptable). Without it, some
+            # configurations are rejected as invalid during startup.
+            if (
+                "command" in mcp_config[server_name]
+                and mcp_config[server_name].get("args") is None
+            ):
+                mcp_config[server_name]["args"] = []
+
             env = mcp_config[server_name].get("env", {})
             if "CAO_TERMINAL_ID" not in env:
                 env["CAO_TERMINAL_ID"] = terminal_id

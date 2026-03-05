@@ -77,8 +77,6 @@ def _build_qoder_mcp_setup_command(agent_profile: Optional[str], terminal_id: st
             "mcp",
             "remove",
             str(server_name),
-            "--scope",
-            "project",
         ]
         setup_commands.append(f"{shlex.join(remove_parts)} >/dev/null 2>&1 || true && {shlex.join(add_parts)}")
 
@@ -90,7 +88,12 @@ def _build_qoder_mcp_setup_command(agent_profile: Optional[str], terminal_id: st
 
 def _build_qoder_command(agent_profile: Optional[str], terminal_id: str) -> str:
     """Build qodercli command with profile-derived agent configuration."""
-    command_parts = ["qodercli", "--yolo"]
+    command_parts = [
+        "qodercli",
+        "--yolo",
+        "--dangerously-skip-permissions",
+        "--with-claude-config",
+    ]
 
     if not agent_profile:
         return shlex.join(command_parts)
@@ -137,7 +140,17 @@ class QoderCliProvider(SimpleTuiProvider):
         start_command = (
             f"{mcp_setup_command} && {qoder_command}" if mcp_setup_command else qoder_command
         )
-        idle_pattern = r"(?:\b[qQ]oder(?:cli)?\s*[>❯›]?\s*$|[>❯›](?:\s|$))"
+        idle_pattern = (
+            r"(?:^[ \t]*[qQ]oder(?:cli)?[ \t]*[>❯›][ \t]*$|"
+            r"[>❯›][ \t]+Type your message|"
+            r"ctrl\+j[ \t]+for[ \t]+newline)"
+        )
+        error_patterns = [
+            r"^error:(?!\s*adding\s+mcp\s+server)",
+            r"traceback",
+            r"command not found",
+            r"not recognized as an internal or external command",
+        ]
 
         super().__init__(
             terminal_id=terminal_id,
@@ -146,5 +159,6 @@ class QoderCliProvider(SimpleTuiProvider):
             start_command=start_command,
             idle_prompt_pattern=idle_pattern,
             idle_prompt_pattern_log=idle_pattern,
+            error_patterns=error_patterns,
             exit_command="/quit",
         )

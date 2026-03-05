@@ -1,9 +1,12 @@
 """Unit tests for Copilot provider prompt detection."""
 
+import json
+import shlex
 from unittest.mock import patch
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.copilot import CopilotProvider
+from cli_agent_orchestrator.providers.copilot import _build_copilot_command
 
 
 @patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
@@ -99,3 +102,31 @@ def test_copilot_ansi_csi_sequences_stripped(mock_tmux) -> None:
     provider = CopilotProvider("t7", "s7", "w7")
 
     assert provider.get_status() == TerminalStatus.IDLE
+
+
+@patch("cli_agent_orchestrator.providers.copilot.load_agent_profile")
+def test_build_copilot_command_adds_empty_args_for_command_only_mcp_server(mock_load_profile) -> None:
+    """Command-based MCP server config should include args to satisfy Copilot schema."""
+    profile = type(
+        "Profile",
+        (),
+        {
+            "model": None,
+            "mcpServers": {
+                "cao-mcp-server": {
+                    "command": "cao-mcp-server",
+                }
+            },
+        },
+    )()
+    mock_load_profile.return_value = profile
+
+    command = _build_copilot_command("developer", "t-123")
+    parts = shlex.split(command)
+    config_json = parts[parts.index("--additional-mcp-config") + 1]
+    config = json.loads(config_json)
+
+    server_cfg = config["mcpServers"]["cao-mcp-server"]
+    assert server_cfg["command"] == "cao-mcp-server"
+    assert server_cfg["args"] == []
+    assert server_cfg["env"]["CAO_TERMINAL_ID"] == "t-123"
