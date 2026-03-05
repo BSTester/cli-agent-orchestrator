@@ -251,12 +251,14 @@ export interface AgentProfileFileResponse {
   file_name?: string;
   file_path: string;
   content: string;
+  display_name?: string;
 }
 
 export interface ConsoleAgentProfileFileItem {
   file_name: string;
   profile: string;
   file_path: string;
+  display_name?: string;
 }
 
 export interface ConsoleAgentProfileFilesResponse {
