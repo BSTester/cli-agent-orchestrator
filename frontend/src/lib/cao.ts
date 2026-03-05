@@ -238,6 +238,7 @@ export interface CreateAgentProfileRequest {
   system_prompt?: string;
   content?: string;
   provider?: string;
+  display_name?: string;
 }
 
 export interface CreateAgentProfileResponse {

@@ -91,21 +91,23 @@ function extractProfileDisplayName(content: string): string {
 }
 
 function ensureProfileNameInContent(content: string, profileName: string): string {
-  const normalizedName = profileName.trim();
-  if (!normalizedName) {
+  const normalizedProfileName = profileName.trim();
+  if (!normalizedProfileName) {
     return content;
   }
 
   const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*/);
   if (!frontmatterMatch) {
-    return ["---", `name: ${normalizedName}`, "---", "", content].join("\n");
+    return ["---", `name: ${normalizedProfileName}`, "---", "", content].join("\n");
   }
 
   const frontmatter = frontmatterMatch[1];
   const hasNameField = /\bname\s*:/m.test(frontmatter);
-  const updatedFrontmatter = hasNameField
-    ? frontmatter.replace(/(^\s*name\s*:\s*)(.*)$/m, (_, prefix: string) => `${prefix}${normalizedName}`)
-    : `name: ${normalizedName}\n${frontmatter}`.trimEnd();
+  if (hasNameField) {
+    return content;
+  }
+
+  const updatedFrontmatter = `name: ${normalizedProfileName}\n${frontmatter}`.trimEnd();
 
   return content.replace(frontmatterMatch[0], `---\n${updatedFrontmatter}\n---\n`);
 }
@@ -442,8 +444,8 @@ export default function OrganizationPage() {
 
   async function onboardNewEmployee(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const trimmedAgentName = newAgentName.trim();
-    if (!trimmedAgentName) {
+    const trimmedAgentDisplayName = newAgentName.trim();
+    if (!trimmedAgentDisplayName) {
       setError("岗位名称不能为空");
       return;
     }
@@ -452,8 +454,6 @@ export default function OrganizationPage() {
       setError("系统提示词不能为空");
       return;
     }
-    const contentWithName = ensureProfileNameInContent(trimmedPrompt, trimmedAgentName);
-    setNewAgentPrompt(contentWithName);
     setCreatingProfile(true);
     setError("");
 
@@ -461,13 +461,18 @@ export default function OrganizationPage() {
       (fileItem) => fileItem.file_name === selectedProfileFileName.trim()
     );
     const isEditing = Boolean(selectedProfileFile);
+    const resolvedProfileName = isEditing
+      ? (selectedProfileFile?.file_name || "").replace(/\.md$/i, "")
+      : normalizeProfileFileName(selectedProfileFileName || "");
+    const contentWithName = ensureProfileNameInContent(trimmedPrompt, resolvedProfileName);
+    setNewAgentPrompt(contentWithName);
 
     if (isEditing) {
       const targetProfile = (selectedProfileFile?.file_name || "").replace(/\.md$/i, "");
       const result = await caoRequest(
         "PUT",
         `/console/agent-profiles/${encodeURIComponent(targetProfile)}`,
-        { body: { content: contentWithName } }
+        { body: { content: contentWithName, display_name: trimmedAgentDisplayName } }
       );
       if (!result.ok) {
         const detail = extractErrorDetail(result.data);
@@ -494,7 +499,6 @@ export default function OrganizationPage() {
       return;
     }
 
-    const resolvedProfileName = normalizeProfileFileName(selectedProfileFileName || "");
     if (!/^[A-Za-z0-9_-]+$/.test(resolvedProfileName)) {
       setError("岗位文件名称无效");
       setCreatingProfile(false);
@@ -504,6 +508,7 @@ export default function OrganizationPage() {
     const body: CreateAgentProfileRequest = {
       name: resolvedProfileName,
       content: contentWithName,
+      display_name: trimmedAgentDisplayName,
     };
 
     const result = await caoRequest<CreateAgentProfileResponse>(
