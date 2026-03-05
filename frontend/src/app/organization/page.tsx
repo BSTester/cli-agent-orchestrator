@@ -104,7 +104,11 @@ function ensureProfileNameInContent(content: string, profileName: string): strin
   const frontmatter = frontmatterMatch[1];
   const hasNameField = /\bname\s*:/m.test(frontmatter);
   if (hasNameField) {
-    return content;
+    const replacedFrontmatter = frontmatter.replace(
+      /^\s*name\s*:\s*.*$/m,
+      `name: ${normalizedProfileName}`
+    );
+    return content.replace(frontmatterMatch[0], `---\n${replacedFrontmatter.trimEnd()}\n---\n`);
   }
 
   const updatedFrontmatter = `name: ${normalizedProfileName}\n${frontmatter}`.trimEnd();
@@ -463,7 +467,7 @@ export default function OrganizationPage() {
     const isEditing = Boolean(selectedProfileFile);
     const resolvedProfileName = isEditing
       ? (selectedProfileFile?.file_name || "").replace(/\.md$/i, "")
-      : normalizeProfileFileName(selectedProfileFileName || "");
+      : normalizeProfileFileName(selectedProfileFileName || newAgentName || "");
     const contentWithName = ensureProfileNameInContent(trimmedPrompt, resolvedProfileName);
     setNewAgentPrompt(contentWithName);
 
