@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 import requests
 import frontmatter
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -3066,48 +3066,11 @@ async def console_disband_team(leader_id: str, payload: Optional[OrgDisbandReque
     }
 
 
-@app.put("/console/organization/{leader_id}/leader")
-async def console_update_team_leader(
-    leader_id: str,
+async def _restart_team_leader_task(
+    normalized_leader_id: str,
     payload: OrgLeaderUpdateRequest,
+    requested_working_directory: Optional[str],
 ) -> Dict[str, Any]:
-    normalized_leader_id = leader_id.strip()
-    if not normalized_leader_id:
-        raise HTTPException(status_code=400, detail="leader_id cannot be empty")
-
-    candidate_leader_id = _resolve_terminal_id_alias(normalized_leader_id)
-    team_ids = _list_teams()
-    if candidate_leader_id in team_ids:
-        normalized_leader_id = candidate_leader_id
-    elif normalized_leader_id not in team_ids:
-        raise HTTPException(status_code=404, detail="Team not found")
-
-    mode = payload.team_workdir_mode
-    dir_name = payload.team_workdir_name
-    explicit_working_directory = (payload.working_directory or "").strip()
-    if mode and not dir_name:
-        raise HTTPException(status_code=400, detail="team_workdir_name is required when team_workdir_mode is set")
-    if dir_name and not mode:
-        raise HTTPException(status_code=400, detail="team_workdir_mode is required when team_workdir_name is set")
-
-    requested_working_directory: Optional[str] = None
-    if mode == "existing":
-        requested_working_directory = await asyncio.to_thread(
-            _resolve_home_level1_directory,
-            dir_name or "",
-            must_exist=True,
-            create_if_missing=False,
-        )
-    elif mode == "new":
-        requested_working_directory = await asyncio.to_thread(
-            _resolve_home_level1_directory,
-            dir_name or "",
-            must_exist=True,
-            create_if_missing=True,
-        )
-    elif explicit_working_directory:
-        requested_working_directory = explicit_working_directory
-
     runtime = await asyncio.to_thread(_get_team_runtime, normalized_leader_id)
 
     current_leader_terminal: Optional[Dict[str, Any]] = None
@@ -3143,14 +3106,21 @@ async def console_update_team_leader(
     if not old_session_name:
         raise HTTPException(status_code=400, detail="leader has no session")
 
-    new_provider = (payload.provider or "").strip() or old_provider or str((runtime or {}).get("provider") or "").strip() or DEFAULT_PROVIDER
+    new_provider = (
+        (payload.provider or "").strip()
+        or old_provider
+        or str((runtime or {}).get("provider") or "").strip()
+        or DEFAULT_PROVIDER
+    )
     new_profile = payload.agent_profile.strip()
     existing_working_directory = str((runtime or {}).get("working_directory") or "").strip() or None
     if not existing_working_directory:
         team_workdirs = await asyncio.to_thread(_list_team_working_directories)
         existing_working_directory = str(team_workdirs.get(normalized_leader_id) or "").strip() or None
     if not existing_working_directory and current_leader_terminal:
-        existing_working_directory = str(current_leader_terminal.get("working_directory") or "").strip() or None
+        existing_working_directory = (
+            str(current_leader_terminal.get("working_directory") or "").strip() or None
+        )
     new_working_directory = requested_working_directory or existing_working_directory
 
     if old_terminal_id:
@@ -3159,7 +3129,9 @@ async def console_update_team_leader(
         except requests.exceptions.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else None
             if status_code != 404:
-                raise HTTPException(status_code=502, detail=f"Failed to remove old leader terminal: {exc}")
+                raise HTTPException(
+                    status_code=502, detail=f"Failed to remove old leader terminal: {exc}"
+                )
         except requests.exceptions.RequestException as exc:
             raise HTTPException(status_code=502, detail=f"Failed to remove old leader terminal: {exc}")
 
@@ -3239,6 +3211,74 @@ async def console_update_team_leader(
         "previous_leader_id": normalized_leader_id,
         "session_name": str(created_leader.get("session_name") or old_session_name or "").strip() or None,
         "leader": created_leader,
+    }
+
+
+@app.put("/console/organization/{leader_id}/leader", status_code=status.HTTP_202_ACCEPTED)
+async def console_update_team_leader(
+    leader_id: str,
+    payload: OrgLeaderUpdateRequest,
+) -> Dict[str, Any]:
+    normalized_leader_id = leader_id.strip()
+    if not normalized_leader_id:
+        raise HTTPException(status_code=400, detail="leader_id cannot be empty")
+
+    candidate_leader_id = _resolve_terminal_id_alias(normalized_leader_id)
+    team_ids = _list_teams()
+    if candidate_leader_id in team_ids:
+        normalized_leader_id = candidate_leader_id
+    elif normalized_leader_id not in team_ids:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    mode = payload.team_workdir_mode
+    dir_name = payload.team_workdir_name
+    explicit_working_directory = (payload.working_directory or "").strip()
+    if mode and not dir_name:
+        raise HTTPException(status_code=400, detail="team_workdir_name is required when team_workdir_mode is set")
+    if dir_name and not mode:
+        raise HTTPException(status_code=400, detail="team_workdir_mode is required when team_workdir_name is set")
+
+    requested_working_directory: Optional[str] = None
+    if mode == "existing":
+        requested_working_directory = await asyncio.to_thread(
+            _resolve_home_level1_directory,
+            dir_name or "",
+            must_exist=True,
+            create_if_missing=False,
+        )
+    elif mode == "new":
+        requested_working_directory = await asyncio.to_thread(
+            _resolve_home_level1_directory,
+            dir_name or "",
+            must_exist=True,
+            create_if_missing=True,
+        )
+    elif explicit_working_directory:
+        requested_working_directory = explicit_working_directory
+
+    async def _restart_task() -> None:
+        try:
+            await _restart_team_leader_task(
+                normalized_leader_id=normalized_leader_id,
+                payload=payload,
+                requested_working_directory=requested_working_directory,
+            )
+        except HTTPException as exc:
+            logger.warning(
+                "Team leader update failed for %s: %s",
+                normalized_leader_id,
+                getattr(exc, "detail", str(exc)),
+            )
+        except Exception:
+            logger.exception("Failed to restart team leader %s asynchronously", normalized_leader_id)
+
+    asyncio.create_task(_restart_task())
+
+    return {
+        "ok": True,
+        "queued": True,
+        "leader_id": normalized_leader_id,
+        "message": "负责人更新任务已提交，后台重启会话中",
     }
 
 

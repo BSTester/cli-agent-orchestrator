@@ -703,7 +703,7 @@ export default function OrganizationPage() {
       setEditingLeaderTarget(null);
       setMainTeamAlias("");
       setMainTeamWorkdirName("");
-      setNotice("负责人信息已更新并重启会话");
+      setNotice("负责人信息更新任务已提交，后台重启会话中");
       await loadOrganization();
       await loadHomeWorkdirOptions();
       return;
