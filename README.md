@@ -178,6 +178,27 @@ cao install https://example.com/agents/custom-agent.md
 
 ### 2. 启动后端
 
+推荐使用项目脚本（安装与启动已拆分）：
+
+```bash
+# 仅安装依赖与工具（全自动）
+bash scripts/install_services.sh
+
+# 仅启动服务（cao-server + cao-control-panel）
+bash scripts/start_services.sh
+
+# 停止服务
+bash scripts/stop_services.sh
+```
+
+兼容入口（等价于先安装再启动）：
+
+```bash
+bash scripts/install_and_start_services.sh
+```
+
+也可手动仅启动后端 API：
+
 ```bash
 cao-server
 ```
@@ -204,7 +225,7 @@ cao launch --agents code_supervisor --yolo
 cao launch --agents code_supervisor --working-directory /home/you/project-a
 ```
 
-> **Qoder CLI 说明：** 使用 `--provider qoder_cli` 启动时，CAO 会自动重装同名 MCP 服务（先删除再添加），并使用 `qodercli mcp ... --scope project`。
+> **Qoder CLI 说明：** 使用 `--provider qoder_cli` 启动时，CAO 会自动重装同名 MCP 服务（先执行 `qodercli mcp remove <name>`，再执行 `qodercli mcp add ... --scope project`）。
 
 监督者会按需协调并派发任务给工作 Agent（developer、reviewer 等），应用上述编排模式。
 
