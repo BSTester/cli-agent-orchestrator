@@ -80,6 +80,48 @@ def test_console_delete_agent_profile_file_already_removed(client: TestClient, t
     assert payload["file_deleted"] is True
 
 
+def test_console_delete_agent_profile_removes_display_name(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    profile_dir = tmp_path / "profiles"
+    profile_dir.mkdir()
+    profile_path = profile_dir / "sample_agent.md"
+    profile_path.write_text("---\nname: sample_agent\n---\n\nhello", encoding="utf-8")
+
+    db_path = tmp_path / "org.sqlite"
+    process = MagicMock(returncode=0, stdout="ok", stderr="")
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.AGENT_CONTEXT_DIR", profile_dir),
+        patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path),
+        patch("cli_agent_orchestrator.control_panel.main.DATABASE_FILE", db_path),
+        patch("cli_agent_orchestrator.control_panel.main.subprocess.run", return_value=process),
+    ):
+        control_panel_main._init_organization_db()
+        control_panel_main._upsert_profile_display_name("sample_agent", "展示名")
+
+        # ensure display_name stored
+        with sqlite3.connect(str(db_path)) as conn:
+            row = conn.execute(
+                "SELECT display_name FROM agent_profile_display_names WHERE profile = ?",
+                ("sample_agent",),
+            ).fetchone()
+        assert row and row[0] == "展示名"
+
+        response = client.delete("/console/agent-profiles/sample_agent")
+
+    assert response.status_code == 200
+    assert response.json()["file_deleted"] is True
+    assert profile_path.exists() is False
+
+    with sqlite3.connect(str(db_path)) as conn:
+        deleted_row = conn.execute(
+            "SELECT display_name FROM agent_profile_display_names WHERE profile = ?",
+            ("sample_agent",),
+        ).fetchone()
+    assert deleted_row is None
+
+
 def test_console_create_agent_profile_uses_frontmatter_name(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
