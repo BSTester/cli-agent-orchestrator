@@ -53,7 +53,7 @@ def test_qoder_cli_start_command_with_agent_profile(mock_load_profile) -> None:
 
 def test_codebuddy_start_command_skips_permissions() -> None:
     provider = CodeBuddyProvider("t1", "s1", "w1")
-    assert provider._start_command == "codebuddy --dangerously-skip-permissions"
+    assert provider._start_command == "codebuddy --dangerously-skip-permissions --append-system-prompt"
     assert provider._auto_accept_input == "3"
 
 
@@ -79,7 +79,7 @@ def test_codebuddy_start_command_includes_profile_prompt_and_mcp(mock_load_profi
     assert "Follow CAO orchestration" in provider._start_command
     assert "code_supervisor" in provider._start_command
     assert "--model glm-4.7" in provider._start_command
-    assert "--append-system-prompt" not in provider._start_command
+    assert "--append-system-prompt" in provider._start_command
     assert "--mcp-config" in provider._start_command
     assert "--strict-mcp-config" not in provider._start_command
     assert "cao-mcp-server" in provider._start_command

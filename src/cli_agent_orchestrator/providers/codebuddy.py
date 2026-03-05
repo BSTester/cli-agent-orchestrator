@@ -15,7 +15,7 @@ class ProviderError(Exception):
 
 
 def _build_codebuddy_command(agent_profile: Optional[str], terminal_id: str) -> str:
-    command_parts = ["codebuddy", "--dangerously-skip-permissions"]
+    command_parts = ["codebuddy", "--dangerously-skip-permissions", "--append-system-prompt"]
 
     if not agent_profile:
         return shlex.join(command_parts)
