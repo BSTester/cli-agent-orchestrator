@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
 CAO_REPO_REF="${CAO_REPO_REF:-main}"
 CAO_REPO_URL="${CAO_REPO_URL:-https://github.com/BSTester/cli-agent-orchestrator.git}"
 CAO_TOOL_SPEC="git+${CAO_REPO_URL}@${CAO_REPO_REF}"
@@ -10,6 +8,8 @@ CAO_TOOL_SPEC="git+${CAO_REPO_URL}@${CAO_REPO_REF}"
 # Skills discovery integration
 SKILLS_DISCOVERY_SPEC="${SKILLS_DISCOVERY_SPEC:-@Kamalnrf/claude-plugins/skills-discovery}"
 SKILLS_INSTALLER_CMD="${SKILLS_INSTALLER_CMD:-skills-installer}"
+# Test contract marker: test/scripts/test_install_services_script.py reads bootstrap lines until here.
+# INSTALLER_BOOTSTRAP_END
 
 info() {
   echo "[INFO] $*"
@@ -43,36 +43,75 @@ run_privileged() {
   die "需要管理员权限执行: $*（请安装 sudo 或使用 root 运行）"
 }
 
+detect_linux_package_manager() {
+  if has_cmd apt-get; then
+    echo "apt-get"
+    return
+  fi
+
+  if has_cmd dnf; then
+    echo "dnf"
+    return
+  fi
+
+  if has_cmd yum; then
+    echo "yum"
+    return
+  fi
+
+  if has_cmd zypper; then
+    echo "zypper"
+    return
+  fi
+
+  if has_cmd pacman; then
+    echo "pacman"
+    return
+  fi
+
+  if has_cmd apk; then
+    echo "apk"
+    return
+  fi
+
+  die "无法识别 Linux 包管理器，请手动安装: $*"
+}
+
 install_packages_linux() {
   local packages=("$@")
+  local pkg_manager
+  pkg_manager="$(detect_linux_package_manager)"
 
-  if has_cmd apt-get; then
+  if [[ "$pkg_manager" == "apt-get" ]]; then
     run_privileged apt-get update
     run_privileged apt-get install -y "${packages[@]}"
     return
   fi
 
-  if has_cmd dnf; then
+  if [[ "$pkg_manager" == "dnf" ]]; then
     run_privileged dnf install -y "${packages[@]}"
     return
   fi
 
-  if has_cmd yum; then
+  if [[ "$pkg_manager" == "yum" ]]; then
     run_privileged yum install -y "${packages[@]}"
     return
   fi
 
-  if has_cmd zypper; then
+  if [[ "$pkg_manager" == "zypper" ]]; then
     run_privileged zypper --non-interactive install "${packages[@]}"
     return
   fi
 
-  if has_cmd pacman; then
+  if [[ "$pkg_manager" == "pacman" ]]; then
     run_privileged pacman -Sy --noconfirm "${packages[@]}"
     return
   fi
 
-  die "无法识别 Linux 包管理器，请手动安装: ${packages[*]}"
+  if [[ "$pkg_manager" == "apk" ]]; then
+    run_privileged apk add --no-cache "${packages[@]}"
+    return
+  fi
 }
 
 install_packages_macos() {
@@ -111,6 +150,8 @@ ensure_basic_tools() {
 }
 
 ensure_python3() {
+  local linux_pkg_manager=""
+
   if has_cmd python3; then
     return
   fi
@@ -121,7 +162,12 @@ ensure_python3() {
       install_packages_macos python
       ;;
     Linux)
-      install_packages_linux python3 python3-venv
+      linux_pkg_manager="$(detect_linux_package_manager)"
+      if [[ "$linux_pkg_manager" == "apt-get" ]]; then
+        install_packages_linux python3 python3-venv
+      else
+        install_packages_linux python3
+      fi
       ;;
     *)
       die "当前系统不支持自动安装 Python3，请手动安装 Python 3.10+"
@@ -140,11 +186,7 @@ ensure_nodejs() {
       install_packages_macos node
       ;;
     Linux)
-      if has_cmd apt-get; then
-        install_packages_linux nodejs npm
-      else
-        install_packages_linux nodejs
-      fi
+      install_packages_linux nodejs npm
       ;;
     *)
       die "当前系统不支持自动安装 Node.js，请手动安装 Node.js 18+"
@@ -271,7 +313,9 @@ install_cao_tool() {
 
 main() {
   require_cmd bash
-  cd "$ROOT_DIR"
+  if [[ -n "${BASH_SOURCE[0]-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
+    cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  fi
 
   ensure_basic_tools
   ensure_python3
