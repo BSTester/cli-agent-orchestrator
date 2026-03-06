@@ -79,7 +79,7 @@ def test_skills_discovery_install_does_not_block_non_interactive_terminal(tmp_pa
         bin_dir / "npx",
         f"""#!/usr/bin/env bash
 set -euo pipefail
-echo "called" > "{npx_log}"
+echo "$*" > "{npx_log}"
 exit 0
 """,
     )
@@ -97,6 +97,9 @@ exit 0
 
     assert result.returncode == 0
     assert npx_log.exists()
+    npx_log_content = npx_log.read_text(encoding="utf-8")
+    assert "install" in npx_log_content
+    assert "@Kamalnrf/claude-plugins/skills-discovery" in npx_log_content
 
 
 def test_skills_discovery_install_unsets_legacy_npm_init_module_env(tmp_path: Path) -> None:
