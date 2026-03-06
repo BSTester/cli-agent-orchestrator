@@ -150,6 +150,8 @@ ensure_basic_tools() {
 }
 
 ensure_python3() {
+  local linux_pkg_manager=""
+
   if has_cmd python3; then
     return
   fi
@@ -160,7 +162,8 @@ ensure_python3() {
       install_packages_macos python
       ;;
     Linux)
-      if [[ "$(detect_linux_package_manager)" == "apt-get" ]]; then
+      linux_pkg_manager="$(detect_linux_package_manager)"
+      if [[ "$linux_pkg_manager" == "apt-get" ]]; then
         install_packages_linux python3 python3-venv
       else
         install_packages_linux python3
