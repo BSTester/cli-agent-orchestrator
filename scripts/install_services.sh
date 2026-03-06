@@ -11,14 +11,6 @@ CAO_TOOL_SPEC="git+${CAO_REPO_URL}@${CAO_REPO_REF}"
 SKILLS_DISCOVERY_SPEC="${SKILLS_DISCOVERY_SPEC:-@Kamalnrf/claude-plugins/skills-discovery}"
 SKILLS_INSTALLER_CMD="${SKILLS_INSTALLER_CMD:-skills-installer}"
 
-# npm package specs (allow overriding by environment variables)
-CODEX_NPM_SPEC="${CODEX_NPM_SPEC:-@openai/codex}"
-CLAUDE_CODE_NPM_SPEC="${CLAUDE_CODE_NPM_SPEC:-@anthropic-ai/claude-code}"
-KIRO_CLI_NPM_SPEC="${KIRO_CLI_NPM_SPEC:-kiro-cli}"
-QODERCLI_NPM_SPEC="${QODERCLI_NPM_SPEC:-qoder-cli}"
-CODEBUDDY_NPM_SPEC="${CODEBUDDY_NPM_SPEC:-codebuddy}"
-COPILOT_NPM_SPEC="${COPILOT_NPM_SPEC:-@github/copilot}"
-
 info() {
   echo "[INFO] $*"
 }
@@ -202,32 +194,63 @@ ensure_tool_path() {
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$(npm config get prefix 2>/dev/null || echo "$HOME/.npm-global")/bin:$PATH"
 }
 
-install_npm_cli_if_missing() {
-  local cmd="$1"
-  local npm_spec="$2"
-
-  if has_cmd "$cmd"; then
-    info "$cmd 已安装，跳过。"
-    return
-  fi
-
-  info "安装 $cmd (npm: $npm_spec)..."
-  npm install -g "$npm_spec"
-  ensure_tool_path
-
-  has_cmd "$cmd" || die "$cmd 安装失败，请检查 npm 包名（当前: $npm_spec）"
-}
-
 install_agent_clis() {
   ensure_nodejs
   ensure_tool_path
 
-  install_npm_cli_if_missing codex "$CODEX_NPM_SPEC"
-  install_npm_cli_if_missing claude "$CLAUDE_CODE_NPM_SPEC"
-  install_npm_cli_if_missing kiro-cli "$KIRO_CLI_NPM_SPEC"
-  install_npm_cli_if_missing qodercli "$QODERCLI_NPM_SPEC"
-  install_npm_cli_if_missing codebuddy "$CODEBUDDY_NPM_SPEC"
-  install_npm_cli_if_missing copilot "$COPILOT_NPM_SPEC"
+  if has_cmd codex; then
+    info "codex 已安装，跳过。"
+  else
+    info "安装 codex（官方方式）..."
+    npm install -g @openai/codex --force --no-os-check
+    ensure_tool_path
+    has_cmd codex || die "codex 安装失败。"
+  fi
+
+  if has_cmd claude; then
+    info "claude 已安装，跳过。"
+  else
+    info "安装 claude（官方方式）..."
+    curl -fsSL https://claude.ai/install.sh | bash
+    ensure_tool_path
+    has_cmd claude || die "claude 安装失败。"
+  fi
+
+  if has_cmd kiro-cli; then
+    info "kiro-cli 已安装，跳过。"
+  else
+    info "安装 kiro-cli（官方方式）..."
+    curl -fsSL https://cli.kiro.dev/install | bash
+    ensure_tool_path
+    has_cmd kiro-cli || die "kiro-cli 安装失败。"
+  fi
+
+  if has_cmd qodercli; then
+    info "qodercli 已安装，跳过。"
+  else
+    info "安装 qodercli（官方方式）..."
+    curl -fsSL https://qoder.com/install | bash
+    ensure_tool_path
+    has_cmd qodercli || die "qodercli 安装失败。"
+  fi
+
+  if has_cmd codebuddy; then
+    info "codebuddy 已安装，跳过。"
+  else
+    info "安装 codebuddy（官方方式）..."
+    npm install -g @tencent-ai/codebuddy-code
+    ensure_tool_path
+    has_cmd codebuddy || die "codebuddy 安装失败。"
+  fi
+
+  if has_cmd copilot; then
+    info "copilot 已安装，跳过。"
+  else
+    info "安装 copilot（官方方式）..."
+    npm install -g @github/copilot
+    ensure_tool_path
+    has_cmd copilot || die "copilot 安装失败。"
+  fi
 }
 
 install_skills_discovery_for_all_agents() {
