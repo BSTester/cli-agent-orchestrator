@@ -211,3 +211,37 @@ exit 0
 
     assert result.returncode == 0
     assert "copilot 自动安装失败，请手动执行：npm install -g @github/copilot" in result.stderr
+
+
+def test_installs_default_agent_profiles(tmp_path: Path) -> None:
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir, tmp_path)
+    cao_log = tmp_path / "cao.log"
+    _make_stub_command(
+        bin_dir / "cao",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> "{cao_log}"
+exit 0
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        },
+    )
+
+    assert result.returncode == 0
+    assert cao_log.read_text(encoding="utf-8").splitlines() == [
+        "install code_supervisor",
+        "install developer",
+        "install reviewer",
+    ]

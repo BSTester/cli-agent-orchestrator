@@ -363,6 +363,17 @@ install_cao_tool() {
   fi
 }
 
+install_default_agent_profiles() {
+  local profile
+  for profile in code_supervisor developer reviewer; do
+    info "安装预置 Agent 角色: $profile"
+    if ! cao install "$profile"; then
+      print_manual_install_command "$profile" "cao install $profile"
+      die "预置 Agent 角色安装失败: $profile"
+    fi
+  done
+}
+
 main() {
   require_cmd bash
   if [[ -n "${BASH_SOURCE[0]-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
@@ -376,6 +387,7 @@ main() {
   ensure_tmux
 
   install_cao_tool
+  install_default_agent_profiles
   install_agent_clis
   install_skills_discovery_for_all_agents
 
