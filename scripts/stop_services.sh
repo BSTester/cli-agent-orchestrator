@@ -32,19 +32,30 @@ list_pids_by_name() {
     return
   fi
 
-  if ! has_cmd ps || ! has_cmd awk; then
+  if ! has_cmd ps; then
     return
   fi
 
   local os_name
   os_name="$(detect_os)"
 
+  local ps_output
   if [[ "$os_name" == "Darwin" ]]; then
-    ps ax -o pid= -o command= | awk -v n="$name" '$0 ~ n && $0 !~ /awk/ {print $1}'
-    return
+    ps_output="$(ps ax -o pid= -o command= 2>/dev/null || true)"
+  else
+    ps_output="$(ps -eo pid=,args= 2>/dev/null || true)"
   fi
 
-  ps -eo pid=,args= | awk -v n="$name" '$0 ~ n && $0 !~ /awk/ {print $1}'
+  while read -r pid command_line; do
+    if [[ -n "$pid" ]] && [[
+      "$command_line" == "$name" ||
+        "$command_line" == "$name "* ||
+        "$command_line" == *"/$name" ||
+        "$command_line" == *"/$name "*
+    ]]; then
+      echo "$pid"
+    fi
+  done <<<"$ps_output"
 }
 
 wait_for_exit() {
@@ -115,7 +126,17 @@ stop_by_name_fallback() {
     return
   fi
 
-  warn "检测到残留进程，按名称停止: $name ($pids)"
+  local pids_display
+  pids_display=""
+  while IFS= read -r pid; do
+    if [[ -n "$pid" ]]; then
+      if [[ -n "$pids_display" ]]; then
+        pids_display+=" "
+      fi
+      pids_display+="$pid"
+    fi
+  done <<<"$pids"
+  warn "检测到残留进程，按名称停止: $name ($pids_display)"
   while IFS= read -r pid; do
     if [[ -n "$pid" ]]; then
       kill "$pid" >/dev/null 2>&1 || true

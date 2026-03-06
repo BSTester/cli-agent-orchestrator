@@ -17,12 +17,25 @@ def _prepare_shell_basics(bin_dir: Path) -> None:
         bin_dir / "dirname",
         """#!/bin/bash
 set -euo pipefail
-/usr/bin/dirname "$@"
+target="${1:-.}"
+if [[ "$target" != *"/"* ]]; then
+  echo "."
+else
+  target="${target%/*}"
+  if [[ -z "$target" ]]; then
+    echo "/"
+  else
+    echo "$target"
+  fi
+fi
 """,
     )
 
 
-def _prepare_ps_fallback_tools(bin_dir: Path, os_name: str, ps_log: Path) -> None:
+def _prepare_ps_fallback_tools(
+    bin_dir: Path, os_name: str, ps_log: Path, ps_output_rows: list[str] | None = None
+) -> None:
+    rows = ps_output_rows or ["1234 cao-server"]
     _make_stub_command(
         bin_dir / "uname",
         f"""#!/bin/bash
@@ -35,17 +48,9 @@ echo "{os_name}"
         f"""#!/bin/bash
 set -euo pipefail
 echo "$*" >> "{ps_log}"
-echo "1234 cao-server"
-""",
-    )
-    _make_stub_command(
-        bin_dir / "awk",
-        """#!/bin/bash
-set -euo pipefail
-while IFS= read -r _line; do
-  :
-done
-echo "1234"
+cat <<'EOF'
+{"\n".join(rows)}
+EOF
 """,
     )
 
