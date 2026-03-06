@@ -15,9 +15,19 @@ info() {
   echo "[INFO] $*"
 }
 
+warn() {
+  echo "[WARN] $*" >&2
+}
+
 die() {
   echo "[ERROR] $*" >&2
   exit 1
+}
+
+print_manual_install_command() {
+  local component="$1"
+  local cmd="$2"
+  warn "${component} 自动安装失败，请手动执行：${cmd}"
 }
 
 require_cmd() {
@@ -205,10 +215,16 @@ ensure_uv() {
 
   info "未检测到 uv，正在安装..."
   require_cmd curl
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+  if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
+    print_manual_install_command "uv" "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    die "uv 自动安装失败。"
+  fi
 
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-  has_cmd uv || die "uv 安装完成但当前 shell 未找到 uv，请手动执行: source ~/.bashrc 或 source ~/.zshrc"
+  if ! has_cmd uv; then
+    print_manual_install_command "uv" "source ~/.bashrc 或 source ~/.zshrc 后重试，或重新执行：curl -LsSf https://astral.sh/uv/install.sh | sh"
+    die "uv 安装完成但当前 shell 未找到 uv。"
+  fi
 }
 
 ensure_tmux() {
@@ -244,54 +260,78 @@ install_agent_clis() {
     info "codex 已安装，跳过。"
   else
     info "安装 codex（官方方式）..."
-    npm install -g @openai/codex --force --no-os-check
+    if ! npm install -g @openai/codex --force --no-os-check; then
+      print_manual_install_command "codex" "npm install -g @openai/codex --force --no-os-check"
+    fi
     ensure_tool_path
-    has_cmd codex || die "codex 安装失败。"
+    if ! has_cmd codex; then
+      print_manual_install_command "codex" "npm install -g @openai/codex --force --no-os-check"
+    fi
   fi
 
   if has_cmd claude; then
     info "claude 已安装，跳过。"
   else
     info "安装 claude（官方方式）..."
-    curl -fsSL https://claude.ai/install.sh | bash
+    if ! curl -fsSL https://claude.ai/install.sh | bash; then
+      print_manual_install_command "claude" "curl -fsSL https://claude.ai/install.sh | bash"
+    fi
     ensure_tool_path
-    has_cmd claude || die "claude 安装失败。"
+    if ! has_cmd claude; then
+      print_manual_install_command "claude" "curl -fsSL https://claude.ai/install.sh | bash"
+    fi
   fi
 
   if has_cmd kiro-cli; then
     info "kiro-cli 已安装，跳过。"
   else
     info "安装 kiro-cli（官方方式）..."
-    curl -fsSL https://cli.kiro.dev/install | bash
+    if ! curl -fsSL https://cli.kiro.dev/install | bash; then
+      print_manual_install_command "kiro-cli" "curl -fsSL https://cli.kiro.dev/install | bash"
+    fi
     ensure_tool_path
-    has_cmd kiro-cli || die "kiro-cli 安装失败。"
+    if ! has_cmd kiro-cli; then
+      print_manual_install_command "kiro-cli" "curl -fsSL https://cli.kiro.dev/install | bash"
+    fi
   fi
 
   if has_cmd qodercli; then
     info "qodercli 已安装，跳过。"
   else
     info "安装 qodercli（官方方式）..."
-    curl -fsSL https://qoder.com/install | bash
+    if ! curl -fsSL https://qoder.com/install | bash; then
+      print_manual_install_command "qodercli" "curl -fsSL https://qoder.com/install | bash"
+    fi
     ensure_tool_path
-    has_cmd qodercli || die "qodercli 安装失败。"
+    if ! has_cmd qodercli; then
+      print_manual_install_command "qodercli" "curl -fsSL https://qoder.com/install | bash"
+    fi
   fi
 
   if has_cmd codebuddy; then
     info "codebuddy 已安装，跳过。"
   else
     info "安装 codebuddy（官方方式）..."
-    npm install -g @tencent-ai/codebuddy-code
+    if ! npm install -g @tencent-ai/codebuddy-code; then
+      print_manual_install_command "codebuddy" "npm install -g @tencent-ai/codebuddy-code"
+    fi
     ensure_tool_path
-    has_cmd codebuddy || die "codebuddy 安装失败。"
+    if ! has_cmd codebuddy; then
+      print_manual_install_command "codebuddy" "npm install -g @tencent-ai/codebuddy-code"
+    fi
   fi
 
   if has_cmd copilot; then
     info "copilot 已安装，跳过。"
   else
     info "安装 copilot（官方方式）..."
-    npm install -g @github/copilot
+    if ! npm install -g @github/copilot; then
+      print_manual_install_command "copilot" "npm install -g @github/copilot"
+    fi
     ensure_tool_path
-    has_cmd copilot || die "copilot 安装失败。"
+    if ! has_cmd copilot; then
+      print_manual_install_command "copilot" "npm install -g @github/copilot"
+    fi
   fi
 }
 
@@ -299,17 +339,23 @@ install_skills_discovery_for_all_agents() {
   ensure_nodejs
   info "安装 skills-discovery 服务（所有支持 skills 的 agent 共用）: $SKILLS_DISCOVERY_SPEC"
   unset npm_config_init_module NPM_CONFIG_INIT_MODULE
-  npx -y "$SKILLS_INSTALLER_CMD" install "$SKILLS_DISCOVERY_SPEC"
+  if ! npx -y "$SKILLS_INSTALLER_CMD" install "$SKILLS_DISCOVERY_SPEC"; then
+    print_manual_install_command "skills-discovery" "npx -y \"$SKILLS_INSTALLER_CMD\" install \"$SKILLS_DISCOVERY_SPEC\""
+  fi
 }
 
 install_cao_tool() {
   info "安装/升级 CLI Agent Orchestrator 工具: $CAO_TOOL_SPEC"
-  uv tool install "$CAO_TOOL_SPEC" --upgrade
+  if ! uv tool install "$CAO_TOOL_SPEC" --upgrade; then
+    print_manual_install_command "CLI Agent Orchestrator" "uv tool install \"$CAO_TOOL_SPEC\" --upgrade"
+    die "CLI Agent Orchestrator 安装失败。"
+  fi
   ensure_tool_path
 
-  require_cmd cao
-  require_cmd cao-server
-  require_cmd cao-control-panel
+  if ! has_cmd cao || ! has_cmd cao-server || ! has_cmd cao-control-panel; then
+    print_manual_install_command "CLI Agent Orchestrator" "uv tool install \"$CAO_TOOL_SPEC\" --upgrade"
+    die "CLI Agent Orchestrator 安装完成但命令不可用。"
+  fi
 }
 
 main() {
