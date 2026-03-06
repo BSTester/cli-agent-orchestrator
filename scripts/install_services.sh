@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$PWD"
-if [[ -n "${BASH_SOURCE[0]-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
-  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-fi
-
 CAO_REPO_REF="${CAO_REPO_REF:-main}"
 CAO_REPO_URL="${CAO_REPO_URL:-https://github.com/BSTester/cli-agent-orchestrator.git}"
 CAO_TOOL_SPEC="git+${CAO_REPO_URL}@${CAO_REPO_REF}"
@@ -13,6 +8,8 @@ CAO_TOOL_SPEC="git+${CAO_REPO_URL}@${CAO_REPO_REF}"
 # Skills discovery integration
 SKILLS_DISCOVERY_SPEC="${SKILLS_DISCOVERY_SPEC:-@Kamalnrf/claude-plugins/skills-discovery}"
 SKILLS_INSTALLER_CMD="${SKILLS_INSTALLER_CMD:-skills-installer}"
+# Test contract marker: test/scripts/test_install_services_script.py reads bootstrap lines until here.
+# INSTALLER_BOOTSTRAP_END
 
 info() {
   echo "[INFO] $*"
@@ -316,7 +313,9 @@ install_cao_tool() {
 
 main() {
   require_cmd bash
-  cd "$ROOT_DIR"
+  if [[ -n "${BASH_SOURCE[0]-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
+    cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  fi
 
   ensure_basic_tools
   ensure_python3
