@@ -142,3 +142,70 @@ exit 0
     npx_log_content = npx_log.read_text(encoding="utf-8")
     assert "npm_config_init_module=unset" in npx_log_content
     assert "NPM_CONFIG_INIT_MODULE=unset" in npx_log_content
+
+
+def test_skills_discovery_install_failure_prints_manual_command(tmp_path: Path) -> None:
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir, tmp_path)
+    _make_stub_command(
+        bin_dir / "npx",
+        """#!/usr/bin/env bash
+set -euo pipefail
+exit 1
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        },
+    )
+
+    assert result.returncode == 0
+    assert (
+        'skills-discovery 自动安装失败，请手动执行：npx -y "skills-installer" install '
+        '"@Kamalnrf/claude-plugins/skills-discovery"'
+    ) in result.stderr
+
+
+def test_agent_cli_install_failure_prints_manual_command(tmp_path: Path) -> None:
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir, tmp_path)
+    (bin_dir / "copilot").unlink()
+    _make_stub_command(
+        bin_dir / "npm",
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1-}" == "config" && "${2-}" == "get" && "${3-}" == "prefix" ]]; then
+  echo "$HOME/.npm-global"
+  exit 0
+fi
+if [[ "${1-}" == "install" && "${2-}" == "-g" && "${3-}" == "@github/copilot" ]]; then
+  exit 1
+fi
+exit 0
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        },
+    )
+
+    assert result.returncode == 0
+    assert "copilot 自动安装失败，请手动执行：npm install -g @github/copilot" in result.stderr
