@@ -298,6 +298,10 @@ install_agent_clis() {
 install_skills_discovery_for_all_agents() {
   ensure_nodejs
   info "安装 skills-discovery 服务（所有支持 skills 的 agent 共用）: $SKILLS_DISCOVERY_SPEC"
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    die "skills-installer 需要交互终端，请在可交互 shell 中运行安装脚本。"
+  fi
+  unset npm_config_init_module NPM_CONFIG_INIT_MODULE
   npx -y "$SKILLS_INSTALLER_CMD" install "$SKILLS_DISCOVERY_SPEC"
 }
 
