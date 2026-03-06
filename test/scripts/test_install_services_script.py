@@ -69,7 +69,7 @@ def test_install_services_header_supports_stdin_execution() -> None:
     assert result.stderr == ""
 
 
-def test_skills_discovery_install_does_not_block_non_interactive_terminal(tmp_path: Path) -> None:
+def test_skills_discovery_non_interactive_terminal_prints_manual_command(tmp_path: Path) -> None:
     script_path = _script_path()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -96,10 +96,12 @@ exit 0
     )
 
     assert result.returncode == 0
-    assert npx_log.exists()
-    npx_log_content = npx_log.read_text(encoding="utf-8")
-    assert "install" in npx_log_content
-    assert "@Kamalnrf/claude-plugins/skills-discovery" in npx_log_content
+    assert not npx_log.exists()
+    assert "当前终端不支持交互式安装 skills-discovery。" in result.stderr
+    assert (
+        'skills-discovery 自动安装失败，请手动执行：npx -y "skills-installer" install '
+        '"@Kamalnrf/claude-plugins/skills-discovery"'
+    ) in result.stderr
 
 
 def test_skills_discovery_install_unsets_legacy_npm_init_module_env(tmp_path: Path) -> None:
