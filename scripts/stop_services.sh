@@ -20,6 +20,33 @@ has_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+detect_os() {
+  uname -s 2>/dev/null || echo "Unknown"
+}
+
+list_pids_by_name() {
+  local name="$1"
+
+  if has_cmd pgrep; then
+    pgrep -f "$name" || true
+    return
+  fi
+
+  if ! has_cmd ps || ! has_cmd awk; then
+    return
+  fi
+
+  local os_name
+  os_name="$(detect_os)"
+
+  if [[ "$os_name" == "Darwin" ]]; then
+    ps ax -o pid= -o command= | awk -v n="$name" '$0 ~ n && $0 !~ /awk/ {print $1}'
+    return
+  fi
+
+  ps -eo pid=,args= | awk -v n="$name" '$0 ~ n && $0 !~ /awk/ {print $1}'
+}
+
 wait_for_exit() {
   local pid="$1"
   local retries="${2:-20}"
@@ -82,25 +109,18 @@ stop_by_pid_file() {
 
 stop_by_name_fallback() {
   local name="$1"
-
-  if has_cmd pgrep; then
-    local pids
-    pids="$(pgrep -f "$name" || true)"
-    if [[ -n "$pids" ]]; then
-      warn "检测到残留进程，按名称停止: $name ($pids)"
-      pkill -f "$name" >/dev/null 2>&1 || true
-    fi
+  local pids
+  pids="$(list_pids_by_name "$name" || true)"
+  if [[ -z "$pids" ]]; then
     return
   fi
 
-  if has_cmd ps && has_cmd awk && has_cmd xargs; then
-    local pids
-    pids="$(ps -ef | awk -v n="$name" '$0 ~ n && $0 !~ /awk/ {print $2}' | xargs 2>/dev/null || true)"
-    if [[ -n "$pids" ]]; then
-      warn "检测到残留进程，按名称停止: $name ($pids)"
-      kill $pids >/dev/null 2>&1 || true
+  warn "检测到残留进程，按名称停止: $name ($pids)"
+  while IFS= read -r pid; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" >/dev/null 2>&1 || true
     fi
-  fi
+  done <<<"$pids"
 }
 
 main() {
