@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNTIME_DIR="$ROOT_DIR/.runtime"
-PID_DIR="$RUNTIME_DIR/pids"
-
-SERVER_PID_FILE="$PID_DIR/cao-server.pid"
-PANEL_PID_FILE="$PID_DIR/cao-control-panel.pid"
-
 info() {
   echo "[INFO] $*"
 }
@@ -145,13 +138,25 @@ stop_by_name_fallback() {
 }
 
 main() {
+  local root_dir
+  if [[ -n "${BASH_SOURCE[0]-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
+    root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  else
+    root_dir="$(pwd)"
+  fi
+
+  local runtime_dir="$root_dir/.runtime"
+  local pid_dir="$runtime_dir/pids"
+  local server_pid_file="$pid_dir/cao-server.pid"
+  local panel_pid_file="$pid_dir/cao-control-panel.pid"
+
   local any_stopped=0
 
-  if stop_by_pid_file "cao-server" "$SERVER_PID_FILE"; then
+  if stop_by_pid_file "cao-server" "$server_pid_file"; then
     any_stopped=1
   fi
 
-  if stop_by_pid_file "cao-control-panel" "$PANEL_PID_FILE"; then
+  if stop_by_pid_file "cao-control-panel" "$panel_pid_file"; then
     any_stopped=1
   fi
 
