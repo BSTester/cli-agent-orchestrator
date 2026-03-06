@@ -69,11 +69,20 @@ def test_install_services_header_supports_stdin_execution() -> None:
     assert result.stderr == ""
 
 
-def test_skills_discovery_install_requires_interactive_terminal(tmp_path: Path) -> None:
+def test_skills_discovery_install_does_not_block_non_interactive_terminal(tmp_path: Path) -> None:
     script_path = _script_path()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _prepare_stub_tools(bin_dir, tmp_path)
+    npx_log = tmp_path / "npx.log"
+    _make_stub_command(
+        bin_dir / "npx",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" > "{npx_log}"
+exit 0
+""",
+    )
 
     result = subprocess.run(
         ["bash", str(script_path)],
@@ -86,8 +95,11 @@ def test_skills_discovery_install_requires_interactive_terminal(tmp_path: Path) 
         },
     )
 
-    assert result.returncode == 1
-    assert "skills-installer 需要交互终端" in result.stderr
+    assert result.returncode == 0
+    assert npx_log.exists()
+    npx_log_content = npx_log.read_text(encoding="utf-8")
+    assert "install" in npx_log_content
+    assert "@Kamalnrf/claude-plugins/skills-discovery" in npx_log_content
 
 
 def test_skills_discovery_install_unsets_legacy_npm_init_module_env(tmp_path: Path) -> None:
