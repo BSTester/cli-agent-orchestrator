@@ -85,6 +85,10 @@ export default function AssetsPage() {
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
   const [deletingPath, setDeletingPath] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{
+    team: ConsoleAssetTeam;
+    entry: ConsoleAssetEntry;
+  } | null>(null);
 
   const loadTeams = useCallback(async () => {
     const result = await caoRequest<ConsoleAssetTeamsResponse>("GET", "/console/assets/teams");
@@ -150,10 +154,6 @@ export default function AssetsPage() {
 
   const deleteEntry = useCallback(
     async (team: ConsoleAssetTeam, entry: ConsoleAssetEntry) => {
-      const label = entry.is_dir ? "文件夹" : "文件";
-      if (!window.confirm(`确定要删除${label} "${entry.name}" 吗？此操作不可撤销。`)) {
-        return;
-      }
       setDeletingPath(entry.path);
       const result = await caoRequest<{ ok: boolean }>(
         "DELETE",
@@ -342,6 +342,24 @@ export default function AssetsPage() {
     }
 
     window.open(toDownloadUrl(selectedTeam, entry.path), "_blank", "noopener,noreferrer");
+  }
+
+  function requestDeleteEntry(team: ConsoleAssetTeam, entry: ConsoleAssetEntry) {
+    setDeleteTarget({ team, entry });
+    setError("");
+  }
+
+  function cancelDeleteEntry() {
+    setDeleteTarget(null);
+  }
+
+  async function confirmDeleteEntry() {
+    if (!deleteTarget) {
+      return;
+    }
+    const { team, entry } = deleteTarget;
+    setDeleteTarget(null);
+    await deleteEntry(team, entry);
   }
 
   function renderTreeNodes(parentPath: string, depth: number) {
@@ -647,7 +665,7 @@ export default function AssetsPage() {
                                   if (!selectedTeam) {
                                     return;
                                   }
-                                  void deleteEntry(selectedTeam, entry);
+                                  requestDeleteEntry(selectedTeam, entry);
                                 }}
                                 style={{
                                   padding: "4px 8px",
@@ -670,6 +688,57 @@ export default function AssetsPage() {
           </SectionCard>
         ) : (
           <EmptyState text="请选择一个团队以浏览其工作目录" />
+        )}
+
+        {deleteTarget && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 50,
+              background: "rgba(0,0,0,0.45)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+            }}
+            onClick={cancelDeleteEntry}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="删除资产确认"
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "min(560px, 100%)",
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                padding: 14,
+              }}
+            >
+              <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
+                确认删除{deleteTarget.entry.is_dir ? "文件夹" : "文件"}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 12 }}>
+                名称：{deleteTarget.entry.name}
+              </div>
+              <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 14 }}>
+                路径：{deleteTarget.entry.path}
+              </div>
+              <div style={{ color: "var(--danger, #e05c5c)", fontSize: 12, marginBottom: 14 }}>
+                此操作不可撤销。
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <SecondaryButton type="button" onClick={cancelDeleteEntry}>
+                  取消
+                </SecondaryButton>
+                <PrimaryButton type="button" onClick={() => void confirmDeleteEntry()}>
+                  确认删除
+                </PrimaryButton>
+              </div>
+            </div>
+          </div>
         )}
 
         {showPreviewDrawer && selectedFilePath && (
