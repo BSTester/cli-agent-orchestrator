@@ -213,7 +213,7 @@ exit 0
     assert "copilot 自动安装失败，请手动执行：npm install -g @github/copilot" in result.stderr
 
 
-def test_install_services_installs_default_agent_profiles_after_cao(tmp_path: Path) -> None:
+def test_installs_default_agent_profiles(tmp_path: Path) -> None:
     script_path = _script_path()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
