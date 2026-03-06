@@ -1,10 +1,55 @@
 import subprocess
+import shutil
 from pathlib import Path
+
+import pytest
+
+
+def _script_path() -> Path:
+    repo_root = Path(__file__).resolve().parents[2]
+    return repo_root / "scripts" / "install_services.sh"
+
+
+def _make_stub_command(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _prepare_stub_tools(bin_dir: Path, tmp_path: Path) -> None:
+    _make_stub_command(
+        bin_dir / "npm",
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1-}" == "config" && "${2-}" == "get" && "${3-}" == "prefix" ]]; then
+  echo "$HOME/.npm-global"
+  exit 0
+fi
+exit 0
+""",
+    )
+    _make_stub_command(bin_dir / "npx", "#!/usr/bin/env bash\nexit 0\n")
+    _make_stub_command(bin_dir / "uv", "#!/usr/bin/env bash\nexit 0\n")
+    for cmd in [
+        "curl",
+        "git",
+        "python3",
+        "node",
+        "tmux",
+        "codex",
+        "claude",
+        "kiro-cli",
+        "qodercli",
+        "codebuddy",
+        "copilot",
+        "cao",
+        "cao-server",
+        "cao-control-panel",
+    ]:
+        _make_stub_command(bin_dir / cmd, "#!/usr/bin/env bash\nexit 0\n")
 
 
 def test_install_services_header_supports_stdin_execution() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    script_path = repo_root / "scripts" / "install_services.sh"
+    script_path = _script_path()
     header_lines = []
     for line in script_path.read_text(encoding="utf-8").splitlines(keepends=True):
         if line.strip() == "# INSTALLER_BOOTSTRAP_END":
@@ -22,3 +67,66 @@ def test_install_services_header_supports_stdin_execution() -> None:
 
     assert result.returncode == 0
     assert result.stderr == ""
+
+
+def test_skills_discovery_install_requires_interactive_terminal(tmp_path: Path) -> None:
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir, tmp_path)
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        },
+    )
+
+    assert result.returncode == 1
+    assert "skills-installer 需要交互终端" in result.stderr
+
+
+def test_skills_discovery_install_unsets_legacy_npm_init_module_env(tmp_path: Path) -> None:
+    if shutil.which("script") is None:
+        pytest.skip("script command is required for pseudo-tty validation")
+
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir, tmp_path)
+
+    npx_log = tmp_path / "npx.log"
+    _make_stub_command(
+        bin_dir / "npx",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+echo "npm_config_init_module=${{npm_config_init_module-unset}}" > "{npx_log}"
+echo "NPM_CONFIG_INIT_MODULE=${{NPM_CONFIG_INIT_MODULE-unset}}" >> "{npx_log}"
+exit 0
+""",
+    )
+
+    script_cmd = ["script", "-qec", f"bash {script_path}", "/dev/null"]
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        "npm_config_init_module": "/tmp/legacy-init.js",
+        "NPM_CONFIG_INIT_MODULE": "/tmp/legacy-init.js",
+    }
+    result = subprocess.run(
+        script_cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert npx_log.exists()
+    npx_log_content = npx_log.read_text(encoding="utf-8")
+    assert "npm_config_init_module=unset" in npx_log_content
+    assert "NPM_CONFIG_INIT_MODULE=unset" in npx_log_content
