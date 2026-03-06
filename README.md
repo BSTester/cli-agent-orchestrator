@@ -82,7 +82,7 @@ brew install python@3.12
 # Ubuntu/Debian
 sudo apt update && sudo apt install python3.12 python3.12-venv
 
-# Amazon Linux 2023 / Fedora
+# CentOS/RHEL/Amazon Linux/Fedora
 sudo dnf install python3.12
 ```
 
