@@ -144,7 +144,9 @@ def send_handoff_message(terminal_id: str, message: str, provider: str) -> None:
             "This is a blocking handoff \u2014 the orchestrator will automatically "
             "capture your response when you finish. Complete the task and output "
             "your results directly. Do NOT use send_message to notify the supervisor "
-            "unless explicitly needed \u2014 just do the work and present your deliverables.\n\n"
+            "unless explicitly needed \u2014 just do the work, present your deliverables, "
+            "and remain online in this terminal. Do NOT send /exit or /quit unless "
+            "explicitly instructed.\n\n"
             f"{message}"
         )
     else:

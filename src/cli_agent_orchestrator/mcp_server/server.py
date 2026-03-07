@@ -517,7 +517,9 @@ async def _handoff_impl(
                 "This is a blocking handoff — the orchestrator will automatically "
                 "capture your response when you finish. Complete the task and output "
                 "your results directly. Do NOT use send_message to notify the supervisor "
-                "unless explicitly needed — just do the work and present your deliverables.\n\n"
+                "unless explicitly needed — just do the work, present your deliverables, "
+                "and remain online in this terminal. Do NOT send /exit or /quit unless "
+                "explicitly instructed.\n\n"
                 f"{message}"
             )
         else:
@@ -540,9 +542,6 @@ async def _handoff_impl(
         # Get response with short stabilization polling to avoid returning
         # transient CLI rendering status (e.g. "Generating...")
         output = _fetch_stable_handoff_output(terminal_id, timeout)
-
-        # Send provider-specific exit command to cleanup terminal
-        _request_with_retry("POST", f"{API_BASE_URL}/terminals/{terminal_id}/exit")
 
         execution_time = time.time() - start_time
 
@@ -597,7 +596,7 @@ if ENABLE_WORKING_DIRECTORY:
         3. Send the message to the terminal
         4. Monitor until completion
         5. Return the agent's response
-        6. Clean up the terminal with /exit
+        6. Leave the worker terminal running for reuse
 
         ## Working Directory
 
@@ -661,7 +660,7 @@ else:
         2. Send the message to the terminal (starts in supervisor's current directory)
         3. Monitor until completion
         4. Return the agent's response
-        5. Clean up the terminal with /exit
+        5. Leave the worker terminal running for reuse
 
         ## Requirements
 

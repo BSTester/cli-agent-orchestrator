@@ -41,6 +41,7 @@ class TestHandoffMessageContext:
         assert "supervisor-abc123" in sent_message
         assert "Implement hello world" in sent_message
         assert "Do NOT use send_message" in sent_message
+        assert "Do NOT send /exit or /quit" in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
@@ -203,6 +204,31 @@ def test_handoff_expands_terminal_placeholder(mock_create, mock_wait, mock_send)
     sent_message = mock_send.call_args[0][1]
     assert "my-term" in sent_message
     assert "${CAO_TERMINAL_ID}" not in sent_message
+
+
+@patch("cli_agent_orchestrator.mcp_server.server._request_with_retry")
+@patch("cli_agent_orchestrator.mcp_server.server._fetch_stable_handoff_output")
+@patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
+@patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
+def test_handoff_keeps_worker_terminal_online(
+    mock_create,
+    mock_wait,
+    mock_send,
+    mock_fetch_output,
+    mock_request,
+):
+    mock_create.return_value = ("dev-terminal-keep", "codex")
+    mock_wait.side_effect = [True, True]
+    mock_fetch_output.return_value = "task done"
+
+    result = asyncio.get_event_loop().run_until_complete(
+        server._handoff_impl("developer", "Implement hello world")
+    )
+
+    assert result.success is True
+    assert result.terminal_id == "dev-terminal-keep"
+    mock_request.assert_not_called()
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
