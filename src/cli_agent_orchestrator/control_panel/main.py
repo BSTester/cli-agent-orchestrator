@@ -2826,6 +2826,23 @@ async def console_link_worker(payload: OrgLinkRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"Failed to link organization: {exc}")
 
 
+@app.post("/console/internal/agent-alias/auto-set")
+async def console_auto_set_agent_alias(payload: Dict[str, str]) -> Dict[str, Any]:
+    """Internal API to automatically set agent alias based on profile display name."""
+    terminal_id = payload.get("terminal_id", "").strip()
+    agent_profile = payload.get("agent_profile", "").strip()
+
+    if not terminal_id or not agent_profile:
+        raise HTTPException(status_code=400, detail="terminal_id and agent_profile are required")
+
+    display_name = await asyncio.to_thread(_get_profile_display_name, agent_profile)
+    if display_name:
+        await asyncio.to_thread(_set_agent_alias, terminal_id, display_name)
+        return {"ok": True, "terminal_id": terminal_id, "agent_alias": display_name}
+
+    return {"ok": True, "terminal_id": terminal_id, "agent_alias": None}
+
+
 @app.post("/console/organization/create")
 async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
     params: Dict[str, str] = {"agent_profile": payload.agent_profile}

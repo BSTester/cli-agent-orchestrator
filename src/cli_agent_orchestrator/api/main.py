@@ -242,6 +242,20 @@ async def create_session(
             new_session=True,
             working_directory=working_directory,
         )
+
+        # Auto-set agent alias based on profile display name
+        try:
+            import os
+            import requests
+            control_panel_port = int(os.getenv("CONTROL_PANEL_PORT", "8000"))
+            requests.post(
+                f"http://localhost:{control_panel_port}/console/internal/agent-alias/auto-set",
+                json={"terminal_id": result.id, "agent_profile": agent_profile},
+                timeout=5,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to auto-set agent alias for terminal {result.id}: {e}")
+
         return result
 
     except ValueError as e:
@@ -311,6 +325,20 @@ async def create_terminal_in_session(
             new_session=False,
             working_directory=working_directory,
         )
+
+        # Auto-set agent alias based on profile display name
+        try:
+            import os
+            import requests
+            control_panel_port = int(os.getenv("CONTROL_PANEL_PORT", "8000"))
+            requests.post(
+                f"http://localhost:{control_panel_port}/console/internal/agent-alias/auto-set",
+                json={"terminal_id": result.id, "agent_profile": agent_profile},
+                timeout=5,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to auto-set agent alias for terminal {result.id}: {e}")
+
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

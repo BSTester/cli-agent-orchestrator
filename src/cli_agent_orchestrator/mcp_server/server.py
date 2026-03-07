@@ -528,9 +528,10 @@ async def _handoff_impl(
         # Send message to terminal
         _send_direct_input(terminal_id, handoff_message)
 
-        # Monitor until completion with timeout
+        # Monitor until agent returns to IDLE state (task completed but terminal stays online)
+        # Changed from COMPLETED to IDLE to keep worker agents online after task completion
         if not wait_until_terminal_status(
-            terminal_id, TerminalStatus.COMPLETED, timeout=timeout, polling_interval=1.0
+            terminal_id, TerminalStatus.IDLE, timeout=timeout, polling_interval=1.0
         ):
             return HandoffResult(
                 success=False,
