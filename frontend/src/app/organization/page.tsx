@@ -824,8 +824,19 @@ export default function OrganizationPage() {
     if (workerLeaderId) {
       body.leader_id = workerLeaderId;
     }
-    if (workerAlias.trim()) {
-      body.agent_alias = workerAlias.trim();
+
+    // 如果没有填写员工别名，使用岗位名称作为默认值
+    const aliasToUse = workerAlias.trim();
+    if (aliasToUse) {
+      body.agent_alias = aliasToUse;
+    } else {
+      // 从 workerProfileOptions 中找到对应的 profile，获取其 display_name
+      const selectedProfile = workerProfileOptions.find(
+        (option) => option.profile === workerProfile.trim()
+      );
+      if (selectedProfile?.display_name) {
+        body.agent_alias = selectedProfile.display_name;
+      }
     }
 
     const result = await caoRequest("POST", "/console/organization/create", { body });

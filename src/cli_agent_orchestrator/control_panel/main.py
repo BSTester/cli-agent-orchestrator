@@ -2871,6 +2871,13 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
     elif explicit_working_directory:
         params["working_directory"] = explicit_working_directory
 
+    # 如果没有传入agent_alias，使用agent profile的display_name作为默认值
+    agent_alias_to_use = payload.agent_alias
+    if not agent_alias_to_use:
+        display_name = await asyncio.to_thread(_get_profile_display_name, payload.agent_profile)
+        if display_name:
+            agent_alias_to_use = display_name
+
     try:
         if payload.role_type == "main":
             created_response = await asyncio.to_thread(_request_cao, "POST", "/sessions", params)
@@ -2886,8 +2893,8 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
                     )
                 if payload.team_alias:
                     await asyncio.to_thread(_set_team_alias, leader_id, payload.team_alias)
-                if payload.agent_alias:
-                    await asyncio.to_thread(_set_agent_alias, leader_id, payload.agent_alias)
+                if agent_alias_to_use:
+                    await asyncio.to_thread(_set_agent_alias, leader_id, agent_alias_to_use)
                 await asyncio.to_thread(
                     _upsert_team_runtime,
                     leader_id,
@@ -2938,8 +2945,8 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
                 await asyncio.to_thread(_register_team, payload.leader_id)
                 worker_id = created_agent["id"]
                 await asyncio.to_thread(_set_worker_link, worker_id, payload.leader_id)
-                if payload.agent_alias:
-                    await asyncio.to_thread(_set_agent_alias, worker_id, payload.agent_alias)
+                if agent_alias_to_use:
+                    await asyncio.to_thread(_set_agent_alias, worker_id, agent_alias_to_use)
             return {
                 "ok": True,
                 "role_type": payload.role_type,
@@ -2954,8 +2961,8 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
             await asyncio.to_thread(_register_team, created_agent_id)
             if payload.team_alias:
                 await asyncio.to_thread(_set_team_alias, created_agent_id, payload.team_alias)
-            if payload.agent_alias:
-                await asyncio.to_thread(_set_agent_alias, created_agent_id, payload.agent_alias)
+            if agent_alias_to_use:
+                await asyncio.to_thread(_set_agent_alias, created_agent_id, agent_alias_to_use)
             await asyncio.to_thread(
                 _upsert_team_runtime,
                 created_agent_id,
