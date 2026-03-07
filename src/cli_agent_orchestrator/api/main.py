@@ -408,6 +408,21 @@ async def send_terminal_input(terminal_id: TerminalId, message: str) -> Dict:
         )
 
 
+@app.post("/terminals/{terminal_id}/special-key")
+async def send_terminal_special_key(terminal_id: TerminalId, key: str) -> Dict:
+    """Send a tmux special key sequence to a terminal."""
+    try:
+        success = terminal_service.send_special_key(terminal_id, key)
+        return {"success": success}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send special key: {str(e)}",
+        )
+
+
 @app.get("/terminals/{terminal_id}/output", response_model=TerminalOutputResponse)
 async def get_terminal_output(
     terminal_id: TerminalId, mode: OutputMode = OutputMode.FULL

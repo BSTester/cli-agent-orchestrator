@@ -2023,7 +2023,11 @@ app.add_middleware(
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path == "/health" or path.startswith("/auth/"):
+    if (
+        path == "/health"
+        or path.startswith("/auth/")
+        or path.startswith("/console/internal/")
+    ):
         return await call_next(request)
 
     if not (
@@ -2826,6 +2830,12 @@ async def console_link_worker(payload: OrgLinkRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"Failed to link organization: {exc}")
 
 
+@app.post("/console/internal/organization/link")
+async def console_internal_link_worker(payload: OrgLinkRequest) -> Dict[str, Any]:
+    """Internal API to link a worker to a leader without control-panel auth."""
+    return await console_link_worker(payload)
+
+
 @app.post("/console/internal/agent-alias/auto-set")
 async def console_auto_set_agent_alias(payload: Dict[str, str]) -> Dict[str, Any]:
     """Internal API to automatically set agent alias based on profile display name."""
@@ -2835,7 +2845,7 @@ async def console_auto_set_agent_alias(payload: Dict[str, str]) -> Dict[str, Any
     if not terminal_id or not agent_profile:
         raise HTTPException(status_code=400, detail="terminal_id and agent_profile are required")
 
-    display_name = await asyncio.to_thread(_get_profile_display_name, agent_profile)
+    display_name = await asyncio.to_thread(_resolve_available_profile_display_name, agent_profile)
     if display_name:
         await asyncio.to_thread(_set_agent_alias, terminal_id, display_name)
         return {"ok": True, "terminal_id": terminal_id, "agent_alias": display_name}
@@ -2888,10 +2898,13 @@ async def console_create_org_agent(payload: OrgCreateRequest) -> Dict[str, Any]:
     elif explicit_working_directory:
         params["working_directory"] = explicit_working_directory
 
-    # 如果没有传入agent_alias，使用agent profile的display_name作为默认值
+    # 如果没有传入agent_alias，使用岗位配置中的展示名称作为默认值
     agent_alias_to_use = payload.agent_alias
     if not agent_alias_to_use:
-        display_name = await asyncio.to_thread(_get_profile_display_name, payload.agent_profile)
+        display_name = await asyncio.to_thread(
+            _resolve_available_profile_display_name,
+            payload.agent_profile,
+        )
         if display_name:
             agent_alias_to_use = display_name
 

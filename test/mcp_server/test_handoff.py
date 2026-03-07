@@ -47,7 +47,7 @@ class TestHandoffMessageContext:
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_claude_code_provider_no_handoff_context(self, mock_create, mock_wait, mock_send):
-        """Claude Code provider should NOT prepend any handoff context."""
+        """Claude Code provider should prepend generic keep-online handoff context."""
         mock_create.return_value = ("dev-terminal-2", "claude_code")
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
@@ -62,16 +62,19 @@ class TestHandoffMessageContext:
                 _handoff_impl("developer", "Implement hello world")
             )
 
-        # Verify message was sent unchanged
         mock_send.assert_called_once()
         sent_message = mock_send.call_args[0][1]
-        assert sent_message == "Implement hello world"
+        assert sent_message.startswith("[CAO Handoff]")
+        assert "Implement hello world" in sent_message
+        assert "remain online in this terminal" in sent_message
+        assert "Do NOT send /exit or /quit" in sent_message
+        assert "Do NOT use send_message" not in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_kiro_cli_provider_no_handoff_context(self, mock_create, mock_wait, mock_send):
-        """Kiro CLI provider should NOT prepend any handoff context."""
+        """Kiro CLI provider should prepend generic keep-online handoff context."""
         mock_create.return_value = ("dev-terminal-3", "kiro_cli")
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
@@ -88,7 +91,11 @@ class TestHandoffMessageContext:
 
         mock_send.assert_called_once()
         sent_message = mock_send.call_args[0][1]
-        assert sent_message == "Implement hello world"
+        assert sent_message.startswith("[CAO Handoff]")
+        assert "Implement hello world" in sent_message
+        assert "remain online in this terminal" in sent_message
+        assert "Do NOT send /exit or /quit" in sent_message
+        assert "Do NOT use send_message" not in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
@@ -178,8 +185,9 @@ def test_current_terminal_id_falls_back_to_tmux(monkeypatch):
 
 @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
+@patch("cli_agent_orchestrator.mcp_server.server._sync_worker_terminal_metadata")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
-def test_handoff_expands_terminal_placeholder(mock_create, mock_wait, mock_send):
+def test_handoff_expands_terminal_placeholder(mock_create, mock_sync, mock_wait, mock_send):
     mock_create.return_value = ("dev-terminal-9", "codex")
     mock_wait.side_effect = [True, True]
     mock_send.return_value = None
@@ -210,9 +218,11 @@ def test_handoff_expands_terminal_placeholder(mock_create, mock_wait, mock_send)
 @patch("cli_agent_orchestrator.mcp_server.server._fetch_stable_handoff_output")
 @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
+@patch("cli_agent_orchestrator.mcp_server.server._sync_worker_terminal_metadata")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
 def test_handoff_keeps_worker_terminal_online(
     mock_create,
+    mock_sync,
     mock_wait,
     mock_send,
     mock_fetch_output,
@@ -229,6 +239,7 @@ def test_handoff_keeps_worker_terminal_online(
     assert result.success is True
     assert result.terminal_id == "dev-terminal-keep"
     mock_request.assert_not_called()
+    mock_sync.assert_called_once_with("dev-terminal-keep", "developer")
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
@@ -259,9 +270,13 @@ def test_assign_fails_when_message_is_blank():
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
 @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
 @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._confirm_assign_submission")
+@patch("cli_agent_orchestrator.mcp_server.server._sync_worker_terminal_metadata")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
 def test_assign_replaces_terminal_placeholder(
     mock_create,
+    mock_sync,
+    mock_confirm,
     mock_send,
     mock_send_inbox,
     mock_wait,
@@ -275,17 +290,23 @@ def test_assign_replaces_terminal_placeholder(
         result = _assign_impl("developer", "Notify ${CAO_TERMINAL_ID}")
 
     assert result["success"] is True
-    send_args = mock_send_inbox.call_args[0]
-    assert send_args[1] == "Notify abc999"
+    mock_send.assert_called_once_with("dev-terminal-10", "Notify abc999")
+    mock_confirm.assert_called_once_with("dev-terminal-10")
+    mock_send_inbox.assert_not_called()
+    mock_sync.assert_called_once_with("dev-terminal-10", "developer")
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
 @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
 @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._confirm_assign_submission")
+@patch("cli_agent_orchestrator.mcp_server.server._sync_worker_terminal_metadata")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
 def test_assign_replaces_double_brace_terminal_placeholder(
     mock_create,
+    mock_sync,
+    mock_confirm,
     mock_send,
     mock_send_inbox,
     mock_wait,
@@ -299,17 +320,23 @@ def test_assign_replaces_double_brace_terminal_placeholder(
         result = _assign_impl("developer", "Ping {{CAO_TERMINAL_ID}}")
 
     assert result["success"] is True
-    send_args = mock_send_inbox.call_args[0]
-    assert send_args[1] == "Ping xyz123"
+    mock_send.assert_called_once_with("dev-terminal-11", "Ping xyz123")
+    mock_confirm.assert_called_once_with("dev-terminal-11")
+    mock_send_inbox.assert_not_called()
+    mock_sync.assert_called_once_with("dev-terminal-11", "developer")
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
 @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
 @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._confirm_assign_submission")
+@patch("cli_agent_orchestrator.mcp_server.server._sync_worker_terminal_metadata")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
 def test_assign_waits_stabilization_before_sending(
     mock_create,
+    mock_sync,
+    mock_confirm,
     mock_send,
     mock_send_inbox,
     mock_wait,
@@ -322,17 +349,23 @@ def test_assign_waits_stabilization_before_sending(
 
     assert result["success"] is True
     mock_sleep.assert_any_call(2.0)
-    mock_send_inbox.assert_called_once_with("dev-terminal-8", "Do work")
-    mock_send.assert_not_called()
+    mock_sync.assert_called_once_with("dev-terminal-8", "developer")
+    mock_send.assert_called_once_with("dev-terminal-8", "Do work")
+    mock_confirm.assert_called_once_with("dev-terminal-8")
+    mock_send_inbox.assert_not_called()
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
 @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
 @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._confirm_assign_submission")
+@patch("cli_agent_orchestrator.mcp_server.server._sync_worker_terminal_metadata")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
 def test_assign_does_not_resend_when_initial_inbox_send_succeeds(
     mock_create,
+    mock_sync,
+    mock_confirm,
     mock_send,
     mock_send_inbox,
     mock_wait,
@@ -344,17 +377,23 @@ def test_assign_does_not_resend_when_initial_inbox_send_succeeds(
     result = _assign_impl("developer", "Do work")
 
     assert result["success"] is True
-    mock_send_inbox.assert_called_once_with("dev-terminal-9", "Do work")
-    mock_send.assert_not_called()
+    mock_sync.assert_called_once_with("dev-terminal-9", "developer")
+    mock_send.assert_called_once_with("dev-terminal-9", "Do work")
+    mock_confirm.assert_called_once_with("dev-terminal-9")
+    mock_send_inbox.assert_not_called()
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
 @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
 @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
 @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+@patch("cli_agent_orchestrator.mcp_server.server._confirm_assign_submission")
+@patch("cli_agent_orchestrator.mcp_server.server._sync_worker_terminal_metadata")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
 def test_assign_fallbacks_to_direct_input_if_inbox_send_fails(
     mock_create,
+    mock_sync,
+    mock_confirm,
     mock_send,
     mock_send_inbox,
     mock_wait,
@@ -368,14 +407,17 @@ def test_assign_fallbacks_to_direct_input_if_inbox_send_fails(
 
     assert result["success"] is True
     mock_send.assert_called_once_with("dev-terminal-10", "Do work")
-    mock_send_inbox.assert_called_once_with("dev-terminal-10", "Do work")
+    mock_send_inbox.assert_not_called()
+    mock_sync.assert_called_once_with("dev-terminal-10", "developer")
+    mock_confirm.assert_called_once_with("dev-terminal-10")
 
 
 @patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server._sync_worker_terminal_metadata")
 @patch("cli_agent_orchestrator.mcp_server.server._create_terminal_with_retry")
 @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
 def test_assign_reuses_existing_terminal_when_available(
-    mock_send_inbox, mock_create, mock_sleep
+    mock_send_inbox, mock_create, mock_sync, mock_sleep
 ):
     """Assign should reuse an existing worker with the same profile in session."""
     mock_send_inbox.return_value = {"success": True}
@@ -404,8 +446,68 @@ def test_assign_reuses_existing_terminal_when_available(
     assert result["terminal_id"] == "worker-1111"
     assert "codex" in result["message"]
     mock_send_inbox.assert_called_once_with("worker-1111", "Draft a landing page")
+    mock_sync.assert_called_once_with("worker-1111", "designer")
     mock_create.assert_not_called()
     mock_sleep.assert_not_called()
+
+
+@patch("cli_agent_orchestrator.mcp_server.server._request_with_retry")
+def test_sync_worker_terminal_metadata_calls_internal_control_panel_endpoints(mock_request):
+    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "leader-123", "CONTROL_PANEL_PORT": "8000"}):
+        server._sync_worker_terminal_metadata("worker-456", "developer")
+
+    assert mock_request.call_count == 2
+    alias_call = mock_request.call_args_list[0]
+    assert alias_call.args[0] == "POST"
+    assert alias_call.args[1] == "http://localhost:8000/console/internal/agent-alias/auto-set"
+    assert alias_call.kwargs["json"] == {
+        "terminal_id": "worker-456",
+        "agent_profile": "developer",
+    }
+
+    link_call = mock_request.call_args_list[1]
+    assert link_call.args[0] == "POST"
+    assert link_call.args[1] == "http://localhost:8000/console/internal/organization/link"
+    assert link_call.kwargs["json"] == {
+        "worker_id": "worker-456",
+        "leader_id": "leader-123",
+    }
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server._send_special_key")
+@patch("cli_agent_orchestrator.mcp_server.server._request_with_retry")
+def test_confirm_assign_submission_sends_extra_enter_when_terminal_stays_ready(
+    mock_request_with_retry,
+    mock_send_special_key,
+    mock_sleep,
+):
+    status_resp = MagicMock()
+    status_resp.json.return_value = {"status": "idle"}
+    mock_request_with_retry.return_value = status_resp
+
+    server._confirm_assign_submission("worker-1234")
+
+    mock_send_special_key.assert_called_once_with("worker-1234", "C-m")
+
+
+@patch("cli_agent_orchestrator.mcp_server.server.time.sleep")
+@patch("cli_agent_orchestrator.mcp_server.server._send_special_key")
+@patch("cli_agent_orchestrator.mcp_server.server._request_with_retry")
+def test_confirm_assign_submission_skips_extra_enter_after_processing_begins(
+    mock_request_with_retry,
+    mock_send_special_key,
+    mock_sleep,
+):
+    ready_resp = MagicMock()
+    ready_resp.json.return_value = {"status": "idle"}
+    processing_resp = MagicMock()
+    processing_resp.json.return_value = {"status": "processing"}
+    mock_request_with_retry.side_effect = [ready_resp, processing_resp]
+
+    server._confirm_assign_submission("worker-1234")
+
+    mock_send_special_key.assert_not_called()
 
 
 @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")

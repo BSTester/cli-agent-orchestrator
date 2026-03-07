@@ -317,3 +317,23 @@ class TestTaskTitleTracking:
             assert response.status_code == 200
             assert response.json() == {"success": True}
             mock_upsert.assert_called_once_with("abcd1234", "Do work")
+
+
+class TestSpecialKeyEndpoint:
+    def test_send_terminal_special_key(self, client):
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.send_special_key.return_value = True
+
+            response = client.post("/terminals/abcd1234/special-key", params={"key": "C-m"})
+
+            assert response.status_code == 200
+            assert response.json() == {"success": True}
+            mock_svc.send_special_key.assert_called_once_with("abcd1234", "C-m")
+
+    def test_send_terminal_special_key_not_found(self, client):
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.send_special_key.side_effect = ValueError("Terminal not found")
+
+            response = client.post("/terminals/abcd1234/special-key", params={"key": "C-m"})
+
+            assert response.status_code == 404

@@ -887,6 +887,117 @@ def test_console_create_org_worker_with_agent_alias(client: TestClient) -> None:
         mock_set_agent_alias.assert_called_once_with("worker1", "后端工程师-A")
 
 
+def test_console_create_org_worker_defaults_agent_alias_from_profile_display_name(
+    client: TestClient,
+) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._register_team") as mock_register_team,
+        patch("cli_agent_orchestrator.control_panel.main._set_worker_link") as mock_set_worker_link,
+        patch("cli_agent_orchestrator.control_panel.main._set_agent_alias") as mock_set_agent_alias,
+        patch(
+            "cli_agent_orchestrator.control_panel.main._resolve_available_profile_display_name",
+            return_value="后端工程师",
+        ),
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+    ):
+        leader = MagicMock()
+        leader.raise_for_status.return_value = None
+        leader.json.return_value = {
+            "id": "leader1",
+            "agent_profile": "code_supervisor",
+            "session_name": "cao-team1",
+        }
+
+        created = MagicMock()
+        created.raise_for_status.return_value = None
+        created.json.return_value = {
+            "id": "worker1",
+            "agent_profile": "developer",
+            "session_name": "cao-team1",
+        }
+
+        mock_request.side_effect = [leader, created]
+
+        response = client.post(
+            "/console/organization/create",
+            json={
+                "role_type": "worker",
+                "agent_profile": "developer",
+                "leader_id": "leader1",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        mock_register_team.assert_called_once_with("leader1")
+        mock_set_worker_link.assert_called_once_with("worker1", "leader1")
+        mock_set_agent_alias.assert_called_once_with("worker1", "后端工程师")
+
+
+def test_console_auto_set_agent_alias_uses_available_profile_display_name(
+    client: TestClient,
+) -> None:
+    with (
+        patch(
+            "cli_agent_orchestrator.control_panel.main._resolve_available_profile_display_name",
+            return_value="工程师",
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._set_agent_alias") as mock_set_agent_alias,
+    ):
+        response = client.post(
+            "/console/internal/agent-alias/auto-set",
+            json={"terminal_id": "worker-1", "agent_profile": "developer"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "terminal_id": "worker-1",
+            "agent_alias": "工程师",
+        }
+        mock_set_agent_alias.assert_called_once_with("worker-1", "工程师")
+
+
+def test_console_internal_organization_link_is_accessible_without_login(
+    client: TestClient,
+) -> None:
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._register_team") as mock_register_team,
+        patch("cli_agent_orchestrator.control_panel.main._set_worker_link") as mock_set_worker_link,
+        patch("cli_agent_orchestrator.control_panel.main.requests.request") as mock_request,
+    ):
+        worker = MagicMock()
+        worker.raise_for_status.return_value = None
+        worker.json.return_value = {
+            "id": "worker1",
+            "agent_profile": "developer",
+            "session_name": "cao-team1",
+        }
+
+        leader = MagicMock()
+        leader.raise_for_status.return_value = None
+        leader.json.return_value = {
+            "id": "leader1",
+            "agent_profile": "code_supervisor",
+            "session_name": "cao-team1",
+        }
+
+        mock_request.side_effect = [worker, leader]
+
+        response = client.post(
+            "/console/internal/organization/link",
+            json={"worker_id": "worker1", "leader_id": "leader1"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"ok": True, "worker_id": "worker1", "leader_id": "leader1"}
+        mock_register_team.assert_called_once_with("leader1")
+        mock_set_worker_link.assert_called_once_with("worker1", "leader1")
+
+
 def test_console_home_workdirs_lists_home_level1_directories(client: TestClient, tmp_path: Path) -> None:
     login(client)
 

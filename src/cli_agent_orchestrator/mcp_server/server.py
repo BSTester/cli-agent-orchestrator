@@ -26,6 +26,8 @@ WORK_AGENT_CREATE_RETRY_ATTEMPTS = 3
 PROVIDER_READY_TIMEOUT_SECONDS = 120.0
 PROVIDER_READY_STATUSES = {TerminalStatus.IDLE, TerminalStatus.COMPLETED}
 ASSIGN_POST_READY_STABILIZATION_SECONDS = 2.0
+ASSIGN_SUBMIT_CONFIRMATION_SECONDS = 3.0
+ASSIGN_SUBMIT_CONFIRMATION_POLL_SECONDS = 0.5
 HANDOFF_OUTPUT_SETTLE_POLLING_SECONDS = 1.0
 HANDOFF_OUTPUT_SETTLE_MAX_SECONDS = 30.0
 
@@ -115,6 +117,78 @@ def _request_with_retry(
     if last_error is None:
         raise RuntimeError("Request failed without exception details")
     raise last_error
+
+
+def _control_panel_base_url() -> str:
+    port = int(os.getenv("CONTROL_PANEL_PORT", "8000"))
+    return f"http://localhost:{port}"
+
+
+def _sync_worker_terminal_metadata(worker_terminal_id: str, agent_profile: str) -> None:
+    """Best-effort sync of worker alias and org link into control panel state."""
+    try:
+        _request_with_retry(
+            "POST",
+            f"{_control_panel_base_url()}/console/internal/agent-alias/auto-set",
+            json={"terminal_id": worker_terminal_id, "agent_profile": agent_profile},
+            retry_attempts=1,
+            timeout=5,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to auto-set agent alias for worker %s (%s): %s",
+            worker_terminal_id,
+            agent_profile,
+            exc,
+        )
+
+    try:
+        leader_terminal_id = _current_terminal_id()
+    except ValueError:
+        return
+
+    if not leader_terminal_id or leader_terminal_id == worker_terminal_id:
+        return
+
+    try:
+        _request_with_retry(
+            "POST",
+            f"{_control_panel_base_url()}/console/internal/organization/link",
+            json={"worker_id": worker_terminal_id, "leader_id": leader_terminal_id},
+            retry_attempts=1,
+            timeout=5,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to link worker %s to leader %s in organization: %s",
+            worker_terminal_id,
+            leader_terminal_id,
+            exc,
+        )
+
+
+def _build_handoff_message(
+    provider: str,
+    supervisor_terminal_id: str,
+    user_message: str,
+) -> str:
+    """Build a blocking handoff message that keeps the worker terminal online."""
+    base_prefix = (
+        f"[CAO Handoff] Supervisor terminal ID: {supervisor_terminal_id}. "
+        "This is a blocking handoff. The orchestrator will automatically capture your "
+        "response when you finish. Complete the task, present your deliverables, and "
+        "remain online in this terminal. Do NOT send /exit or /quit unless explicitly "
+        "instructed. "
+    )
+
+    if provider == "codex":
+        provider_specific = (
+            "Do NOT use send_message to notify the supervisor unless explicitly needed. "
+        )
+    else:
+        provider_specific = ""
+
+    return f"{base_prefix}{provider_specific}\n\n{user_message}"
 
 
 def _create_terminal_with_retry(
@@ -370,6 +444,56 @@ def _send_direct_input(terminal_id: str, message: str) -> None:
     )
 
 
+def _send_special_key(terminal_id: str, key: str) -> None:
+    """Send a tmux special key to a terminal via API."""
+    _request_with_retry(
+        "POST",
+        f"{API_BASE_URL}/terminals/{terminal_id}/special-key",
+        params={"key": key},
+    )
+
+
+def _confirm_assign_submission(terminal_id: str) -> None:
+    """Ensure a freshly created worker actually consumed the first assign message.
+
+    Some providers transiently report ready before the input box is fully focused.
+    In that case the first pasted message may appear in the UI without being submitted.
+    If the terminal never leaves ready state shortly after the initial send, press Enter once
+    to submit the already populated input.
+    """
+    deadline = time.time() + ASSIGN_SUBMIT_CONFIRMATION_SECONDS
+
+    while time.time() < deadline:
+        try:
+            response = _request_with_retry(
+                "GET",
+                f"{API_BASE_URL}/terminals/{terminal_id}",
+                retry_attempts=1,
+            )
+            status_value = str(response.json().get("status") or "").strip().lower()
+        except Exception as exc:
+            logger.warning(
+                "Failed to confirm assign submission for terminal %s: %s",
+                terminal_id,
+                exc,
+            )
+            return
+
+        if status_value not in {
+            TerminalStatus.IDLE.value,
+            TerminalStatus.COMPLETED.value,
+        }:
+            return
+
+        time.sleep(ASSIGN_SUBMIT_CONFIRMATION_POLL_SECONDS)
+
+    logger.info(
+        "Assign terminal %s stayed in ready state after first send; sending extra Enter",
+        terminal_id,
+    )
+    _send_special_key(terminal_id, "C-m")
+
+
 def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
     """Send message to another terminal's inbox (queued delivery when IDLE).
 
@@ -500,30 +624,14 @@ async def _handoff_impl(
 
         await asyncio.sleep(2)  # wait another 2s
 
-        # For Codex provider: prepend handoff context so the worker agent knows
-        # this is a blocking handoff and should simply output results rather than
-        # attempting to call send_message back to the supervisor.
-        # Includes the supervisor's terminal ID (from CAO_TERMINAL_ID env var in
-        # the MCP server process) so the worker can call back if needed.
-        # Other providers (Claude Code, Kiro CLI) naturally complete and return
-        # to idle without this hint, so the message is left unchanged for them.
-        if provider == "codex":
-            try:
-                supervisor_id = _current_terminal_id()
-            except ValueError:
-                supervisor_id = "unknown"
-            handoff_message = (
-                f"[CAO Handoff] Supervisor terminal ID: {supervisor_id}. "
-                "This is a blocking handoff — the orchestrator will automatically "
-                "capture your response when you finish. Complete the task and output "
-                "your results directly. Do NOT use send_message to notify the supervisor "
-                "unless explicitly needed — just do the work, present your deliverables, "
-                "and remain online in this terminal. Do NOT send /exit or /quit unless "
-                "explicitly instructed.\n\n"
-                f"{message}"
-            )
-        else:
-            handoff_message = message
+        try:
+            supervisor_id = _current_terminal_id()
+        except ValueError:
+            supervisor_id = "unknown"
+
+        handoff_message = _build_handoff_message(provider, supervisor_id, message)
+
+        _sync_worker_terminal_metadata(terminal_id, agent_profile)
 
         # Send message to terminal
         _send_direct_input(terminal_id, handoff_message)
@@ -708,6 +816,7 @@ def _assign_impl(
 
         if existing_terminal_id:
             terminal_id = existing_terminal_id
+            _sync_worker_terminal_metadata(terminal_id, agent_profile)
         else:
             terminal_id, resolved_provider = _create_terminal_with_retry(
                 agent_profile, working_directory=working_directory, provider=provider
@@ -732,7 +841,20 @@ def _assign_impl(
             # handoff behavior and avoid first-assignment input being ignored.
             time.sleep(ASSIGN_POST_READY_STABILIZATION_SECONDS)
 
-        # Create terminal
+            _sync_worker_terminal_metadata(terminal_id, agent_profile)
+
+            _send_direct_input(terminal_id, message)
+            _confirm_assign_submission(terminal_id)
+
+            return {
+                "success": True,
+                "terminal_id": terminal_id,
+                "message": (
+                    f"Task assigned to {agent_profile} ({resolved_provider}) "
+                    f"(terminal: {terminal_id})"
+                ),
+            }
+
         try:
             _send_to_inbox(terminal_id, message)
         except Exception as exc:
