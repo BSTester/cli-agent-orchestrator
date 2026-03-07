@@ -1,8 +1,8 @@
-# CLI Agent Orchestrator
+# CLI Agent Orchestrator Dashboard
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/BSTester/cli-agent-orchestrator)
 
-CLI Agent Orchestrator（CAO，读作 “kay-oh”）是一套轻量级编排系统，用于在 tmux 终端中管理多个 AI Agent 会话，通过 MCP server 实现多智能体协作。
+CLI Agent Orchestrator（CAO，读作 “kay-oh”）是一套轻量级编排系统，用于在 tmux 终端中管理多个 AI Agent 会话，通过 MCP server 实现多智能体协作。本项目是CAO的控制面板组件，提供基于浏览器的 UI 来管理 Agent 团队、监控任务状态和直接与 Agent 交互。
 
 ## 分层多智能体系统
 
