@@ -310,7 +310,6 @@ class TestInstallCommand:
 
     @patch("cli_agent_orchestrator.cli.commands.install.load_agent_profile")
     @patch("cli_agent_orchestrator.cli.commands.install.AGENT_CONTEXT_DIR")
-    @patch("cli_agent_orchestrator.cli.commands.install.CODEBUDDY_AGENTS_DIR")
     @patch("cli_agent_orchestrator.cli.commands.install.COPILOT_AGENTS_DIR")
     @patch("cli_agent_orchestrator.cli.commands.install.QODER_AGENTS_DIR")
     @patch("cli_agent_orchestrator.cli.commands.install.KIRO_AGENTS_DIR")
@@ -323,7 +322,6 @@ class TestInstallCommand:
         mock_kiro_dir,
         mock_qoder_dir,
         mock_copilot_dir,
-        mock_codebuddy_dir,
         mock_context_dir,
         mock_load,
         runner,
@@ -343,12 +341,10 @@ class TestInstallCommand:
             mock_kiro_dir.__truediv__ = lambda self, x: tmppath / "kiro" / x
             mock_qoder_dir.__truediv__ = lambda self, x: tmppath / "qoder" / x
             mock_copilot_dir.__truediv__ = lambda self, x: tmppath / "copilot" / x
-            mock_codebuddy_dir.__truediv__ = lambda self, x: tmppath / "codebuddy" / x
             mock_q_dir.mkdir = MagicMock()
             mock_kiro_dir.mkdir = MagicMock()
             mock_qoder_dir.mkdir = MagicMock()
             mock_copilot_dir.mkdir = MagicMock()
-            mock_codebuddy_dir.mkdir = MagicMock()
             mock_context_dir.__truediv__ = lambda self, x: tmppath / "context" / x
             mock_context_dir.mkdir = MagicMock()
 
@@ -359,7 +355,6 @@ class TestInstallCommand:
             (tmppath / "kiro").mkdir(parents=True, exist_ok=True)
             (tmppath / "qoder").mkdir(parents=True, exist_ok=True)
             (tmppath / "copilot").mkdir(parents=True, exist_ok=True)
-            (tmppath / "codebuddy").mkdir(parents=True, exist_ok=True)
 
             result = runner.invoke(install, ["test-agent"])
 
@@ -367,10 +362,11 @@ class TestInstallCommand:
             assert "q_cli agent" in result.output
             assert "kiro_cli agent" in result.output
             assert "qoder_cli agent" in result.output
-            assert "codebuddy agent" in result.output
             assert "copilot agent" in result.output
-            assert "Runtime-injected providers" in result.output
             assert "Installed for providers" in result.output
+            assert "claude_code" not in result.output
+            assert "codex" not in result.output
+            assert "codebuddy" not in result.output
 
     @patch("cli_agent_orchestrator.cli.commands.install.load_agent_profile")
     @patch("cli_agent_orchestrator.cli.commands.install.AGENT_CONTEXT_DIR")
@@ -412,18 +408,16 @@ class TestInstallCommand:
 
     @patch("cli_agent_orchestrator.cli.commands.install.load_agent_profile")
     @patch("cli_agent_orchestrator.cli.commands.install.AGENT_CONTEXT_DIR")
-    @patch("cli_agent_orchestrator.cli.commands.install.CODEBUDDY_AGENTS_DIR")
     @patch("cli_agent_orchestrator.cli.commands.install.LOCAL_AGENT_STORE_DIR")
-    def test_install_codebuddy_provider(
+    def test_install_codebuddy_provider_uses_runtime_injection(
         self,
         mock_local_store,
-        mock_codebuddy_dir,
         mock_context_dir,
         mock_load,
         runner,
         mock_agent_profile,
     ):
-        """Test installing agent for codebuddy provider creates local codebuddy agent file."""
+        """Test installing agent for codebuddy provider without creating local agent file."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
 
@@ -433,20 +427,18 @@ class TestInstallCommand:
             local_profile.write_text("# Test\nname: test-agent")
 
             mock_local_store.__truediv__ = lambda self, x: local_path / x
-            mock_codebuddy_dir.__truediv__ = lambda self, x: tmppath / "codebuddy" / x
-            mock_codebuddy_dir.mkdir = MagicMock()
             mock_context_dir.__truediv__ = lambda self, x: tmppath / "context" / x
             mock_context_dir.mkdir = MagicMock()
 
             mock_load.return_value = mock_agent_profile
 
             (tmppath / "context").mkdir(parents=True, exist_ok=True)
-            (tmppath / "codebuddy").mkdir(parents=True, exist_ok=True)
 
             result = runner.invoke(install, ["test-agent", "--provider", "codebuddy"])
 
             assert result.exit_code == 0
-            assert "codebuddy agent" in result.output
+            assert "Runtime-injected providers" in result.output
+            assert "codebuddy" in result.output
 
     @patch("cli_agent_orchestrator.cli.commands.install.load_agent_profile")
     @patch("cli_agent_orchestrator.cli.commands.install.AGENT_CONTEXT_DIR")

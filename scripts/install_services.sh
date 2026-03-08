@@ -256,32 +256,6 @@ install_agent_clis() {
   ensure_nodejs
   ensure_tool_path
 
-  if has_cmd codex; then
-    info "codex 已安装，跳过。"
-  else
-    info "安装 codex（官方方式）..."
-    if ! npm install -g @openai/codex --force --no-os-check; then
-      print_manual_install_command "codex" "npm install -g @openai/codex --force --no-os-check"
-    fi
-    ensure_tool_path
-    if ! has_cmd codex; then
-      print_manual_install_command "codex" "npm install -g @openai/codex --force --no-os-check"
-    fi
-  fi
-
-  if has_cmd claude; then
-    info "claude 已安装，跳过。"
-  else
-    info "安装 claude（官方方式）..."
-    if ! curl -fsSL https://claude.ai/install.sh | bash; then
-      print_manual_install_command "claude" "curl -fsSL https://claude.ai/install.sh | bash"
-    fi
-    ensure_tool_path
-    if ! has_cmd claude; then
-      print_manual_install_command "claude" "curl -fsSL https://claude.ai/install.sh | bash"
-    fi
-  fi
-
   if has_cmd kiro-cli; then
     info "kiro-cli 已安装，跳过。"
   else
@@ -305,19 +279,6 @@ install_agent_clis() {
     ensure_tool_path
     if ! has_cmd qodercli; then
       print_manual_install_command "qodercli" "curl -fsSL https://qoder.com/install | bash"
-    fi
-  fi
-
-  if has_cmd codebuddy; then
-    info "codebuddy 已安装，跳过。"
-  else
-    info "安装 codebuddy（官方方式）..."
-    if ! npm install -g @tencent-ai/codebuddy-code; then
-      print_manual_install_command "codebuddy" "npm install -g @tencent-ai/codebuddy-code"
-    fi
-    ensure_tool_path
-    if ! has_cmd codebuddy; then
-      print_manual_install_command "codebuddy" "npm install -g @tencent-ai/codebuddy-code"
     fi
   fi
 

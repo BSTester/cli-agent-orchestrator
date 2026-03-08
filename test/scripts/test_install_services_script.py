@@ -213,6 +213,60 @@ exit 0
     assert "copilot 自动安装失败，请手动执行：npm install -g @github/copilot" in result.stderr
 
 
+def test_skips_codex_claude_and_codebuddy_auto_install(tmp_path: Path) -> None:
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir, tmp_path)
+
+    (bin_dir / "codex").unlink()
+    (bin_dir / "claude").unlink()
+    (bin_dir / "codebuddy").unlink()
+
+    npm_log = tmp_path / "npm.log"
+    curl_log = tmp_path / "curl.log"
+    _make_stub_command(
+        bin_dir / "npm",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> "{npm_log}"
+if [[ "${{1-}}" == "config" && "${{2-}}" == "get" && "${{3-}}" == "prefix" ]]; then
+  echo "$HOME/.npm-global"
+fi
+exit 0
+""",
+    )
+    _make_stub_command(
+        bin_dir / "curl",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> "{curl_log}"
+exit 0
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        },
+    )
+
+    assert result.returncode == 0
+    npm_log_content = npm_log.read_text(encoding="utf-8")
+    assert "install -g @openai/codex --force --no-os-check" not in npm_log_content
+    assert "install -g @tencent-ai/codebuddy-code" not in npm_log_content
+    assert "install -g @github/copilot" not in npm_log_content
+    assert not curl_log.exists()
+    assert "codex 自动安装失败" not in result.stderr
+    assert "claude 自动安装失败" not in result.stderr
+    assert "codebuddy 自动安装失败" not in result.stderr
+
+
 def test_installs_default_agent_profiles(tmp_path: Path) -> None:
     script_path = _script_path()
     bin_dir = tmp_path / "bin"

@@ -8,7 +8,6 @@ import requests
 
 from cli_agent_orchestrator.constants import (
     AGENT_CONTEXT_DIR,
-    CODEBUDDY_AGENTS_DIR,
     COPILOT_AGENTS_DIR,
     KIRO_AGENTS_DIR,
     LOCAL_AGENT_STORE_DIR,
@@ -26,7 +25,14 @@ ALL_PROVIDERS = "all"
 RUNTIME_INJECTED_PROVIDERS = {
     ProviderType.CLAUDE_CODE.value,
     ProviderType.CODEX.value,
+    ProviderType.CODEBUDDY.value,
 }
+
+DEFAULT_GLOBAL_INSTALL_PROVIDERS = [
+    provider_name
+    for provider_name in PROVIDERS
+    if provider_name not in RUNTIME_INJECTED_PROVIDERS
+]
 
 
 def _download_agent(source: str) -> str:
@@ -72,7 +78,7 @@ def _download_agent(source: str) -> str:
     type=click.Choice([ALL_PROVIDERS, *PROVIDERS]),
     default=ALL_PROVIDERS,
     help=(
-        f"Provider to install for (default: {ALL_PROVIDERS}); "
+        f"Provider to install for (default: {ALL_PROVIDERS} global-install providers); "
         f"use one of: {', '.join(PROVIDERS)}"
     ),
 )
@@ -129,7 +135,9 @@ def install(agent_source: str, provider: str):
 
         # Create provider-specific agent artifacts
         safe_filename = profile.name.replace("/", "__")
-        target_providers = PROVIDERS if provider == ALL_PROVIDERS else [provider]
+        target_providers = (
+            DEFAULT_GLOBAL_INSTALL_PROVIDERS if provider == ALL_PROVIDERS else [provider]
+        )
 
         installed_files = []
         runtime_injected = []
@@ -187,13 +195,6 @@ def install(agent_source: str, provider: str):
             if target_provider == ProviderType.QODER_CLI.value:
                 QODER_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
                 agent_file = QODER_AGENTS_DIR / f"{safe_filename}.md"
-                agent_file.write_text(source_file.read_text())
-                installed_files.append((target_provider, agent_file))
-                continue
-
-            if target_provider == ProviderType.CODEBUDDY.value:
-                CODEBUDDY_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
-                agent_file = CODEBUDDY_AGENTS_DIR / f"{safe_filename}.md"
                 agent_file.write_text(source_file.read_text())
                 installed_files.append((target_provider, agent_file))
                 continue
