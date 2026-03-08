@@ -337,14 +337,12 @@ export default function AssetsPage() {
     setError("");
   }
 
-  function toggleTreeDir(path: string) {
+  function toggleTreeDir(path: string, isDir: boolean) {
     if (!selectedTeam) {
       return;
     }
 
-    const currentTree = treeByPath[currentPath] || [];
-    const target = currentTree.find((item) => item.path === path);
-    if (!target || !target.is_dir) {
+    if (!isDir) {
       return;
     }
 
@@ -432,7 +430,7 @@ export default function AssetsPage() {
             onClick={() => {
               onClickEntry(entry);
               if (entry.is_dir) {
-                toggleTreeDir(entry.path);
+                toggleTreeDir(entry.path, entry.is_dir);
               }
             }}
             onDoubleClick={() => onDoubleClickEntry(entry)}
