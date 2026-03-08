@@ -1,5 +1,6 @@
 """Control Panel FastAPI server - middleware layer between frontend and cao-server."""
 
+import mimetypes
 import logging
 import os
 import re
@@ -2280,6 +2281,24 @@ async def console_team_asset_download(leader_id: str, path: str) -> FileResponse
         raise HTTPException(status_code=400, detail="Path is not a file")
 
     return FileResponse(path=str(target), filename=target.name)
+
+
+@app.get("/console/assets/teams/{leader_id}/preview")
+async def console_team_asset_preview(leader_id: str, path: str) -> FileResponse:
+    root = await asyncio.to_thread(_resolve_team_working_directory_for_assets, leader_id)
+    target = await asyncio.to_thread(_resolve_asset_target, root, path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    media_type, _ = mimetypes.guess_type(str(target))
+    return FileResponse(
+        path=str(target),
+        media_type=media_type,
+        filename=target.name,
+        content_disposition_type="inline",
+    )
 
 
 @app.delete("/console/assets/teams/{leader_id}/entry")

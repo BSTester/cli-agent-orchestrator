@@ -1794,6 +1794,29 @@ def test_console_assets_download_file(client: TestClient, tmp_path: Path) -> Non
         assert response.content == b"\x00\x01\x02"
 
 
+def test_console_assets_preview_file_inline(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    team_root = tmp_path / "team-a"
+    team_root.mkdir(parents=True)
+    image_file = team_root / "diagram.png"
+    image_file.write_bytes(b"\x89PNG\r\n\x1a\npreview")
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main._resolve_team_working_directory_for_assets",
+        return_value=team_root,
+    ):
+        response = client.get(
+            "/console/assets/teams/leader1/preview",
+            params={"path": "diagram.png"},
+        )
+
+        assert response.status_code == 200
+        assert response.content == b"\x89PNG\r\n\x1a\npreview"
+        assert response.headers["content-type"].startswith("image/png")
+        assert "inline" in response.headers.get("content-disposition", "")
+
+
 def test_console_agent_profiles(client: TestClient) -> None:
     login(client)
 

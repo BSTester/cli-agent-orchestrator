@@ -53,6 +53,26 @@ const TEXT_PREVIEW_EXTENSIONS = new Set([
   "conf",
 ]);
 
+const IMAGE_PREVIEW_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "ico",
+  "avif",
+]);
+
+function getFileExtension(path: string): string {
+  const fileName = path.split("/").pop() || "";
+  if (!fileName.includes(".")) {
+    return "";
+  }
+  return fileName.split(".").pop()?.toLowerCase() || "";
+}
+
 function formatBytes(value?: number | null): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "-";
@@ -248,12 +268,13 @@ export default function AssetsPage() {
   }
 
   function isTextPreviewable(path: string): boolean {
-    const fileName = path.split("/").pop() || "";
-    const extension = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() : "";
-    if (!extension) {
-      return false;
-    }
-    return TEXT_PREVIEW_EXTENSIONS.has(extension);
+    const extension = getFileExtension(path);
+    return Boolean(extension) && TEXT_PREVIEW_EXTENSIONS.has(extension);
+  }
+
+  function isImagePreviewable(path: string): boolean {
+    const extension = getFileExtension(path);
+    return Boolean(extension) && IMAGE_PREVIEW_EXTENSIONS.has(extension);
   }
 
   async function handleCopySource() {
@@ -268,13 +289,17 @@ export default function AssetsPage() {
   }
 
   function isMarkdownFile(filePath: string): boolean {
-    const ext = filePath.split(".").pop()?.toLowerCase();
+    const ext = getFileExtension(filePath);
     return ext === "md" || ext === "markdown";
   }
 
   function isHtmlFile(filePath: string): boolean {
-    const ext = filePath.split(".").pop()?.toLowerCase();
+    const ext = getFileExtension(filePath);
     return ext === "html" || ext === "htm";
+  }
+
+  function isImageFile(filePath: string): boolean {
+    return isImagePreviewable(filePath);
   }
 
   function toDownloadUrl(team: ConsoleAssetTeam, path: string): string {
@@ -288,6 +313,28 @@ export default function AssetsPage() {
     const normalizedBase = base.replace(/\/$/, "");
     const searchParams = new URLSearchParams({ path });
     return `${normalizedBase}/console/assets/teams/${encodeURIComponent(team.leader_id)}/download?${searchParams.toString()}`;
+  }
+
+  function toPreviewUrl(team: ConsoleAssetTeam, path: string): string {
+    const base =
+      process.env.NEXT_PUBLIC_CAO_CONTROL_PANEL_URL?.trim() ||
+      (typeof window !== "undefined" && window.location.port === "3000"
+        ? "http://localhost:8000"
+        : typeof window !== "undefined"
+          ? window.location.origin
+          : "");
+    const normalizedBase = base.replace(/\/$/, "");
+    const searchParams = new URLSearchParams({ path });
+    return `${normalizedBase}/console/assets/teams/${encodeURIComponent(team.leader_id)}/preview?${searchParams.toString()}`;
+  }
+
+  function openImagePreview(path: string) {
+    setSelectedFilePath(path);
+    setSelectedFileContent("");
+    setCopyLabel("复制");
+    setShowPreviewDrawer(true);
+    setLoadingFile(false);
+    setError("");
   }
 
   function toggleTreeDir(path: string) {
@@ -338,6 +385,11 @@ export default function AssetsPage() {
 
     if (isTextPreviewable(entry.path)) {
       void loadFile(selectedTeam, entry.path);
+      return;
+    }
+
+    if (isImagePreviewable(entry.path)) {
+      openImagePreview(entry.path);
       return;
     }
 
@@ -425,7 +477,7 @@ export default function AssetsPage() {
       <PageShell>
         <PageIntro
           title="资产管理"
-          description="按团队浏览工作目录资产，支持树形目录下钻与文本文件在线预览。"
+          description="按团队浏览工作目录资产，支持树形目录下钻，以及文本和图片文件在线预览。"
         />
 
         {error && <ErrorBanner text={error} />}
@@ -577,7 +629,8 @@ export default function AssetsPage() {
                           : "";
                         const shouldHighlightFromRemembered = rememberedNode === entry.path;
                         const effectiveActive = isActive || shouldHighlightFromRemembered;
-                        const previewable = !entry.is_dir && isTextPreviewable(entry.path);
+                        const previewable =
+                          !entry.is_dir && (isTextPreviewable(entry.path) || isImagePreviewable(entry.path));
                         return (
                           <div
                             key={entry.path}
@@ -632,7 +685,11 @@ export default function AssetsPage() {
                                     if (!selectedTeam) {
                                       return;
                                     }
-                                    void loadFile(selectedTeam, entry.path);
+                                    if (isTextPreviewable(entry.path)) {
+                                      void loadFile(selectedTeam, entry.path);
+                                      return;
+                                    }
+                                    openImagePreview(entry.path);
                                   }}
                                   style={{ padding: "4px 8px", fontSize: 12, whiteSpace: "nowrap" }}
                                 >
@@ -814,14 +871,16 @@ export default function AssetsPage() {
                       {previewMode === "rendered" ? "查看源码" : "渲染预览"}
                     </SecondaryButton>
                   )}
-                  <SecondaryButton
-                    type="button"
-                    onClick={handleCopySource}
-                    disabled={loadingFile}
-                    style={{ padding: "6px 10px" }}
-                  >
-                    {copyLabel}
-                  </SecondaryButton>
+                  {!isImageFile(selectedFilePath) ? (
+                    <SecondaryButton
+                      type="button"
+                      onClick={handleCopySource}
+                      disabled={loadingFile}
+                      style={{ padding: "6px 10px" }}
+                    >
+                      {copyLabel}
+                    </SecondaryButton>
+                  ) : null}
                   {selectedTeam ? (
                     <PrimaryButton
                       type="button"
@@ -853,6 +912,35 @@ export default function AssetsPage() {
               >
                 {loadingFile ? (
                   <div style={{ color: "var(--text-dim)", fontSize: 13 }}>文件加载中...</div>
+                ) : isImageFile(selectedFilePath) && selectedTeam ? (
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      overflow: "auto",
+                      borderRadius: 8,
+                      background:
+                        "linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.03) 75%), linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.03) 75%)",
+                      backgroundPosition: "0 0, 12px 12px",
+                      backgroundSize: "24px 24px",
+                    }}
+                  >
+                    <img
+                      src={toPreviewUrl(selectedTeam, selectedFilePath)}
+                      alt={selectedFilePath}
+                      style={{
+                        display: "block",
+                        maxWidth: "100%",
+                        maxHeight: "100%",
+                        objectFit: "contain",
+                        borderRadius: 8,
+                        boxShadow: "0 10px 30px rgba(0, 0, 0, 0.22)",
+                      }}
+                    />
+                  </div>
                 ) : previewMode === "rendered" && isMarkdownFile(selectedFilePath) ? (
                   <div
                     style={{
