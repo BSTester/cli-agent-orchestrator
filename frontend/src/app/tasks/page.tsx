@@ -76,7 +76,7 @@ export default function TasksPage() {
   const [creating, setCreating] = useState(false);
   const [loadingFileContent, setLoadingFileContent] = useState(false);
 
-  const [flowName, setFlowName] = useState("");
+  const [flowDisplayName, setFlowDisplayName] = useState("");
   const [flowContent, setFlowContent] = useState(`---
 name: morning-trivia
 schedule: "30 7 * * *"
@@ -92,6 +92,14 @@ Share one interesting world trivia for today.
 
   const [selectedFileName, setSelectedFileName] = useState("");
   const [showTaskEditor, setShowTaskEditor] = useState(false);
+
+  function extractFlowFileNameFromContent(content: string): string {
+    const match = content.match(/^name\s*:\s*([A-Za-z0-9_-]+)\s*$/m);
+    if (!match) {
+      return "untitled.md";
+    }
+    return `${match[1]}.md`;
+  }
 
   function extractErrorDetail(payload: unknown): string {
     if (!payload || typeof payload !== "object") {
@@ -179,7 +187,7 @@ Share one interesting world trivia for today.
     const result = await caoRequest("POST", "/console/tasks/scheduled", {
       body: {
         file_name: selectedFileName.trim() || undefined,
-        flow_name: selectedFileName.trim() ? undefined : flowName.trim() || undefined,
+        flow_display_name: flowDisplayName.trim(),
         flow_content: flowContent.trim(),
         session_name: sessionName,
         leader_id: leaderId.trim() || undefined,
@@ -193,7 +201,7 @@ Share one interesting world trivia for today.
       return;
     }
 
-    setFlowName("");
+    setFlowDisplayName("");
     setCreating(false);
     await loadFlowFiles();
     await loadTasks();
@@ -217,7 +225,7 @@ Share one interesting world trivia for today.
       return;
     }
 
-    setFlowName(result.data.flow_name || "");
+    setFlowDisplayName(result.data.display_name || "");
     setFlowContent(result.data.content || "");
     setLoadingFileContent(false);
   }
@@ -331,7 +339,9 @@ Share one interesting world trivia for today.
                   <option value="">选择已有文件并加载到编辑器（可选）</option>
                   {flowFiles.map((fileItem) => (
                     <option key={fileItem.file_name} value={fileItem.file_name}>
-                      {fileItem.file_name}
+                      {fileItem.display_name
+                        ? `${fileItem.file_name}（${fileItem.display_name}）`
+                        : fileItem.file_name}
                     </option>
                   ))}
                 </SelectInput>
@@ -364,16 +374,16 @@ Share one interesting world trivia for today.
                   </datalist>
                 </div>
                 <TextInput
-                  value={flowName}
-                  onChange={(event) => setFlowName(event.target.value)}
-                  placeholder="Flow 名称（新建时可选，编辑已有文件时将自动带出）"
+                  value={flowDisplayName}
+                  onChange={(event) => setFlowDisplayName(event.target.value)}
+                  placeholder="任务名称"
                 />
               </div>
 
               <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
                 {loadingFileContent
                   ? "任务文件加载中..."
-                  : "选择已有文件后会回填到编辑器；提交时将保存到原文件并发起任务。未选择文件时将按名称创建新文件。"}
+                  : "选择已有文件后会回填到编辑器；提交时文件名始终取 flow frontmatter 的 name 字段，备注单独保存并展示。"}
               </div>
               <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 10 }}>
                 {leaderId && selectedLeaderOption
@@ -392,7 +402,7 @@ Share one interesting world trivia for today.
                   value={flowContent}
                   onChange={setFlowContent}
                   language="auto"
-                  fileName={selectedFileName || flowName}
+                  fileName={selectedFileName || extractFlowFileNameFromContent(flowContent)}
                   showToolbar
                   enableFormat
                   required
@@ -506,6 +516,7 @@ Share one interesting world trivia for today.
                         const isToggling = Boolean(taskActionLoading[`toggle:${task.name}`]);
                         const isDeleting = Boolean(taskActionLoading[`delete:${task.name}`]);
                         const isBusy = isRunning || isToggling || isDeleting;
+                        const title = task.display_name || task.name;
                         return (
                           <div
                             key={task.name}
@@ -517,9 +528,10 @@ Share one interesting world trivia for today.
                               background: "var(--surface)",
                             }}
                           >
-                            <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{task.name}</div>
+                            <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{title}</div>
                             <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 2, marginBottom: 8 }}>
                               {task.schedule} · {task.agent_profile}
+                              {task.display_name ? ` · ${task.name}` : ""}
                             </div>
                             <div style={{ display: "flex", marginBottom: 8 }}>
                               <StatusPill text={task.enabled ? "已启用" : "已暂停"} active={task.enabled} />
@@ -570,6 +582,7 @@ Share one interesting world trivia for today.
                 const isToggling = Boolean(taskActionLoading[`toggle:${task.name}`]);
                 const isDeleting = Boolean(taskActionLoading[`delete:${task.name}`]);
                 const isBusy = isToggling || isDeleting;
+                const title = task.display_name || task.name;
 
                 return (
                   <div
@@ -582,9 +595,10 @@ Share one interesting world trivia for today.
                       background: "var(--surface2)",
                     }}
                   >
-                    <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{task.name}</div>
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>{title}</div>
                     <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 2, marginBottom: 8 }}>
                       {task.schedule} · {task.agent_profile}
+                      {task.display_name ? ` · ${task.name}` : ""}
                     </div>
                     <div style={{ display: "flex", marginBottom: 8 }}>
                       <StatusPill text={task.enabled ? "已启用" : "已暂停"} active={task.enabled} />

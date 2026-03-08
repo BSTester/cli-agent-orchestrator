@@ -166,6 +166,15 @@ def _init_organization_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS flow_display_names (
+                flow_name TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
 
         # Migrate historical flow-team links into flows.session_name as single source.
         flows_table_row = conn.execute(
@@ -431,6 +440,55 @@ def _resolve_profile_display_name(profile: str, profile_path: Path) -> Optional[
     if stored_display_name:
         return stored_display_name
     return _extract_profile_display_name(profile_path)
+
+
+def _upsert_flow_display_name(flow_name: str, display_name: Optional[str]) -> None:
+    normalized_flow_name = (flow_name or "").strip()
+    if not normalized_flow_name or display_name is None:
+        return
+
+    normalized_display_name = str(display_name).strip()
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        if normalized_display_name:
+            conn.execute(
+                """
+                INSERT INTO flow_display_names (flow_name, display_name, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(flow_name) DO UPDATE SET
+                    display_name=excluded.display_name,
+                    updated_at=excluded.updated_at
+                """,
+                (normalized_flow_name, normalized_display_name, datetime.now(timezone.utc).isoformat()),
+            )
+        else:
+            conn.execute("DELETE FROM flow_display_names WHERE flow_name = ?", (normalized_flow_name,))
+        conn.commit()
+
+
+def _get_flow_display_name(flow_name: str) -> Optional[str]:
+    normalized_flow_name = (flow_name or "").strip()
+    if not normalized_flow_name:
+        return None
+
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        row = conn.execute(
+            "SELECT display_name FROM flow_display_names WHERE flow_name = ?",
+            (normalized_flow_name,),
+        ).fetchone()
+    if not row or not row[0]:
+        return None
+    display_name = str(row[0]).strip()
+    return display_name or None
+
+
+def _remove_flow_display_name(flow_name: str) -> None:
+    normalized_flow_name = (flow_name or "").strip()
+    if not normalized_flow_name:
+        return
+
+    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        conn.execute("DELETE FROM flow_display_names WHERE flow_name = ?", (normalized_flow_name,))
+        conn.commit()
 
 
 def _upsert_team_runtime(
@@ -1176,7 +1234,7 @@ class AgentProfileUpdateRequest(BaseModel):
 
 class ConsoleCreateScheduledTaskRequest(BaseModel):
     flow_content: Optional[str] = None
-    flow_name: Optional[str] = None
+    flow_display_name: Optional[str] = None
     file_name: Optional[str] = None
     session_name: Optional[str] = None
     leader_id: Optional[str] = None
@@ -1212,10 +1270,16 @@ def _list_console_flow_files() -> List[Dict[str, Any]]:
     files: List[Dict[str, Any]] = []
     for file_path in sorted(flow_dir.glob("**/*.md")):
         relative_name = file_path.relative_to(flow_dir).as_posix()
+        flow_name = file_path.stem
+        try:
+            flow_name = _extract_flow_name_from_path(file_path)
+        except HTTPException:
+            pass
         files.append(
             {
                 "file_name": relative_name,
-                "flow_name": file_path.stem,
+                "flow_name": flow_name,
+                "display_name": _get_flow_display_name(flow_name),
                 "file_path": str(file_path),
             }
         )
@@ -1301,6 +1365,18 @@ def _validate_flow_markdown_content(content: str) -> Dict[str, Any]:
     return metadata
 
 
+def _validate_flow_name(flow_name: str) -> str:
+    normalized_name = (flow_name or "").strip()
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Flow frontmatter.name cannot be empty")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid flow name. Use letters, numbers, underscore, or hyphen.",
+        )
+    return normalized_name
+
+
 def _resolve_console_flow_file(file_name: str) -> Path:
     flow_root_dir = _console_flow_root_dir().resolve()
     normalized_name = _normalize_console_flow_relative_name(file_name)
@@ -1318,10 +1394,19 @@ def _resolve_console_flow_file(file_name: str) -> Path:
 
 
 def _extract_flow_name_from_content(flow_content: str) -> Optional[str]:
-    match = re.search(r"^name\s*:\s*([A-Za-z0-9_-]+)\s*$", flow_content, flags=re.MULTILINE)
-    if match:
-        return match.group(1)
-    return None
+    content = (flow_content or "").strip()
+    if not content:
+        return None
+    metadata = _validate_flow_markdown_content(content)
+    return _validate_flow_name(str(metadata.get("name", "")))
+
+
+def _extract_flow_name_from_path(flow_path: Path) -> str:
+    content = flow_path.read_text(encoding="utf-8")
+    extracted_name = _extract_flow_name_from_content(content)
+    if not extracted_name:
+        raise HTTPException(status_code=400, detail="Flow frontmatter.name cannot be empty")
+    return extracted_name
 
 
 def _is_duplicate_flow_name_error(response: Optional[requests.Response]) -> bool:
@@ -1349,25 +1434,15 @@ def _is_duplicate_flow_name_error(response: Optional[requests.Response]) -> bool
 
 def _save_flow_content_to_file(
     flow_content: str,
-    flow_name: Optional[str],
     session_name: Optional[str] = None,
 ) -> Path:
     content = flow_content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Flow content cannot be empty")
 
-    _validate_flow_markdown_content(content)
-
-    extracted_name = _extract_flow_name_from_content(content)
-    normalized_name = (flow_name or extracted_name or "").strip()
+    normalized_name = _extract_flow_name_from_content(content)
     if not normalized_name:
-        normalized_name = f"flow-{uuid.uuid4().hex[:8]}"
-
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_name):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid flow name. Use letters, numbers, underscore, or hyphen.",
-        )
+        raise HTTPException(status_code=400, detail="Flow frontmatter.name cannot be empty")
 
     flow_dir = _console_flow_dir(session_name=session_name)
     flow_path = flow_dir / f"{normalized_name}.md"
@@ -1380,10 +1455,18 @@ def _overwrite_console_flow_file(flow_path: Path, flow_content: str) -> Path:
     if not content:
         raise HTTPException(status_code=400, detail="Flow content cannot be empty")
 
-    _validate_flow_markdown_content(content)
+    flow_name = _extract_flow_name_from_content(content)
+    if not flow_name:
+        raise HTTPException(status_code=400, detail="Flow frontmatter.name cannot be empty")
 
-    flow_path.write_text(content + "\n", encoding="utf-8")
-    return flow_path
+    target_path = flow_path.parent / f"{flow_name}.md"
+    if target_path.exists() and target_path.resolve() != flow_path.resolve():
+        raise HTTPException(status_code=409, detail="Flow file name already exists")
+
+    target_path.write_text(content + "\n", encoding="utf-8")
+    if target_path.resolve() != flow_path.resolve() and flow_path.exists():
+        flow_path.unlink()
+    return target_path
 
 
 def _set_flow_execution_session_name(flow_path: Path, session_name: Optional[str]) -> Path:
@@ -1422,8 +1505,10 @@ def _is_instant_task_status(status_value: Optional[str]) -> bool:
 
 
 def _normalize_flow_item(flow_item: Dict[str, Any]) -> Dict[str, Any]:
+    flow_name = str(flow_item.get("name", ""))
     return {
-        "name": str(flow_item.get("name", "")),
+        "name": flow_name,
+        "display_name": _get_flow_display_name(flow_name),
         "file_path": str(flow_item.get("file_path", "")),
         "schedule": str(flow_item.get("schedule", "")),
         "agent_profile": str(flow_item.get("agent_profile", "")),
@@ -2417,7 +2502,10 @@ async def console_tasks() -> Dict[str, Any]:
 async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskRequest) -> Dict[str, Any]:
     file_name = payload.file_name.strip() if payload.file_name else ""
     flow_content = payload.flow_content.strip() if payload.flow_content else ""
+    flow_display_name = payload.flow_display_name if payload.flow_display_name is not None else None
     leader_id = payload.leader_id.strip() if payload.leader_id else None
+    original_flow_path: Optional[Path] = None
+    previous_flow_name: Optional[str] = None
 
     if leader_id:
         if not payload.session_name or not payload.session_name.strip():
@@ -2427,14 +2515,18 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
         normalized_session_name = None
 
     if file_name:
-        flow_path = await asyncio.to_thread(_resolve_console_flow_file, file_name)
+        original_flow_path = await asyncio.to_thread(_resolve_console_flow_file, file_name)
+        flow_path = original_flow_path
+        try:
+            previous_flow_name = await asyncio.to_thread(_extract_flow_name_from_path, original_flow_path)
+        except (HTTPException, OSError):
+            previous_flow_name = None
         if flow_content:
             flow_path = await asyncio.to_thread(_overwrite_console_flow_file, flow_path, flow_content)
     elif flow_content:
         flow_path = await asyncio.to_thread(
             _save_flow_content_to_file,
             flow_content,
-            payload.flow_name,
             normalized_session_name,
         )
     else:
@@ -2447,17 +2539,20 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
     )
 
     body = {"file_path": str(flow_path)}
+    target_flow_name = (
+        _extract_flow_name_from_content(flow_content)
+        if flow_content
+        else previous_flow_name or flow_path.stem
+    )
 
-    target_flow_name = (payload.flow_name or "").strip() or flow_path.stem
-
-    async def _resolve_existing_flow_name_for_file() -> Optional[str]:
+    async def _resolve_existing_flow_name_for_path(candidate_path: Path) -> Optional[str]:
         try:
             flows_response = await asyncio.to_thread(_request_cao, "GET", "/flows")
             flow_items = await asyncio.to_thread(_response_json_or_text, flows_response)
             if not isinstance(flow_items, list):
                 return None
 
-            flow_path_str = str(flow_path)
+            flow_path_str = str(candidate_path)
             for item in flow_items:
                 if not isinstance(item, dict):
                     continue
@@ -2473,7 +2568,10 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
     async def _candidate_flow_names_for_recreate() -> List[str]:
         candidates: List[str] = []
 
-        resolved_existing_name = await _resolve_existing_flow_name_for_file()
+        if previous_flow_name:
+            candidates.append(previous_flow_name)
+
+        resolved_existing_name = await _resolve_existing_flow_name_for_path(original_flow_path or flow_path)
         if resolved_existing_name:
             candidates.append(resolved_existing_name)
 
@@ -2561,6 +2659,11 @@ async def console_create_scheduled_task(payload: ConsoleCreateScheduledTaskReque
         flow_name = str(created_flow.get("name", ""))
         if not flow_name:
             raise HTTPException(status_code=500, detail="Flow name missing in response")
+
+        if previous_flow_name and previous_flow_name != flow_name:
+            await asyncio.to_thread(_remove_flow_display_name, previous_flow_name)
+        await asyncio.to_thread(_upsert_flow_display_name, flow_name, flow_display_name)
+
         return {
             "ok": True,
             "flow": created_flow,
@@ -2583,9 +2686,14 @@ async def console_get_scheduled_task_file(file_name: str) -> Dict[str, Any]:
     content = await asyncio.to_thread(flow_path.read_text, encoding="utf-8")
     flow_root_dir = await asyncio.to_thread(_console_flow_root_dir)
     relative_name = flow_path.relative_to(flow_root_dir).as_posix()
+    try:
+        flow_name = await asyncio.to_thread(_extract_flow_name_from_content, content)
+    except HTTPException:
+        flow_name = flow_path.stem
     return {
         "file_name": relative_name,
-        "flow_name": flow_path.stem,
+        "flow_name": flow_name,
+        "display_name": await asyncio.to_thread(_get_flow_display_name, flow_name),
         "file_path": str(flow_path),
         "content": content,
     }
@@ -2627,6 +2735,7 @@ async def console_delete_scheduled_task(flow_name: str) -> Dict[str, Any]:
     try:
         response = await asyncio.to_thread(_request_cao, "DELETE", f"/flows/{flow_name}")
         result = await asyncio.to_thread(_response_json_or_text, response)
+        await asyncio.to_thread(_remove_flow_display_name, flow_name)
         return {"ok": True, "result": result}
     except requests.exceptions.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to delete scheduled task: {exc}")

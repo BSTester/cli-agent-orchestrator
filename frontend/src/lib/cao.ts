@@ -298,6 +298,7 @@ export interface ConsoleTaskInstantItem {
 
 export interface ConsoleTaskScheduledItem {
   name: string;
+  display_name?: string | null;
   file_path: string;
   schedule: string;
   agent_profile: string;
@@ -325,6 +326,7 @@ export interface ConsoleTasksResponse {
 export interface ConsoleScheduledTaskFile {
   file_name: string;
   flow_name: string;
+  display_name?: string | null;
   file_path: string;
 }
 

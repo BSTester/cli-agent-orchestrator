@@ -2222,7 +2222,7 @@ def test_console_create_scheduled_task_success(client: TestClient) -> None:
         response = client.post(
             "/console/tasks/scheduled",
             json={
-                "flow_name": "flowA",
+                "flow_display_name": "早会提醒",
                 "flow_content": "---\nname: flowA\nschedule: '*/5 * * * *'\nagent_profile: developer\n---\nhello",
                 "session_name": "cao-team1",
                 "leader_id": "leader1",
@@ -2236,7 +2236,6 @@ def test_console_create_scheduled_task_success(client: TestClient) -> None:
         assert body["saved_file_path"] == "/tmp/console_flows/flowA.md"
         mock_save_file.assert_called_once_with(
             "---\nname: flowA\nschedule: '*/5 * * * *'\nagent_profile: developer\n---\nhello",
-            "flowA",
             "cao-team1",
         )
         mock_set_session.assert_called_once_with(Path("/tmp/console_flows/flowA.md"), "cao-team1")
@@ -2249,7 +2248,7 @@ def test_console_create_scheduled_task_rejects_invalid_markdown(client: TestClie
         response = client.post(
             "/console/tasks/scheduled",
             json={
-                "flow_name": "invalid",
+                "flow_display_name": "无效备注",
                 "flow_content": "hello without frontmatter",
             },
         )
@@ -2262,14 +2261,32 @@ def test_console_create_scheduled_task_rejects_invalid_markdown(client: TestClie
 def test_console_list_scheduled_task_files(client: TestClient, tmp_path: Path) -> None:
     login(client)
 
-    with patch("cli_agent_orchestrator.control_panel.main.AGENT_FLOW_DIR", tmp_path):
+    db_path = tmp_path / "org.sqlite"
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.AGENT_FLOW_DIR", tmp_path),
+        patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path),
+        patch("cli_agent_orchestrator.control_panel.main.DATABASE_FILE", db_path),
+    ):
+        control_panel_main._init_organization_db()
+        control_panel_main._upsert_flow_display_name("daily", "每日任务")
+
         flow_dir = tmp_path
         flow_dir.mkdir(parents=True, exist_ok=True)
-        (flow_dir / "daily.md").write_text("---\nname: daily\n---\n", encoding="utf-8")
-        (flow_dir / "nightly.md").write_text("---\nname: nightly\n---\n", encoding="utf-8")
+        (flow_dir / "daily.md").write_text(
+            "---\nname: daily\nschedule: '0 8 * * *'\nagent_profile: developer\n---\n",
+            encoding="utf-8",
+        )
+        (flow_dir / "nightly.md").write_text(
+            "---\nname: nightly\nschedule: '0 9 * * *'\nagent_profile: developer\n---\n",
+            encoding="utf-8",
+        )
         session_dir = flow_dir / "cao-team1"
         session_dir.mkdir(parents=True, exist_ok=True)
-        (session_dir / "session.md").write_text("---\nname: session\n---\n", encoding="utf-8")
+        (session_dir / "session.md").write_text(
+            "---\nname: session\nschedule: '0 10 * * *'\nagent_profile: developer\n---\n",
+            encoding="utf-8",
+        )
 
         response = client.get("/console/tasks/scheduled/files")
 
@@ -2277,6 +2294,9 @@ def test_console_list_scheduled_task_files(client: TestClient, tmp_path: Path) -
         body = response.json()
         names = [item["file_name"] for item in body["files"]]
         assert names == ["cao-team1/session.md", "daily.md", "nightly.md"]
+        daily_item = next(item for item in body["files"] if item["file_name"] == "daily.md")
+        assert daily_item["flow_name"] == "daily"
+        assert daily_item["display_name"] == "每日任务"
 
 
 def test_console_create_scheduled_task_from_existing_file(client: TestClient) -> None:
@@ -2334,6 +2354,7 @@ def test_console_get_scheduled_task_file_content(client: TestClient, tmp_path: P
         body = response.json()
         assert body["file_name"] == "cao-team1/editable.md"
         assert body["flow_name"] == "editable"
+        assert body["display_name"] is None
         assert "name: editable" in body["content"]
 
 
@@ -2385,7 +2406,7 @@ def test_console_create_scheduled_task_requires_session_when_leader_set(client: 
     response = client.post(
         "/console/tasks/scheduled",
         json={
-            "flow_name": "flowA",
+            "flow_display_name": "团队任务",
             "flow_content": "---\nname: flowA\nschedule: '*/5 * * * *'\nagent_profile: developer\n---\nhello",
             "leader_id": "leader1",
         },
@@ -2430,7 +2451,7 @@ def test_console_create_scheduled_task_recreates_on_duplicate_name(client: TestC
         response = client.post(
             "/console/tasks/scheduled",
             json={
-                "flow_name": "morning-trivia",
+                "flow_display_name": "晨会任务",
                 "flow_content": "---\nname: morning-trivia\nschedule: '52 0 * * *'\nagent_profile: ai_editor_supervisor\n---\n\nhello",
             },
         )
@@ -2483,7 +2504,7 @@ def test_console_create_scheduled_task_recreates_using_flow_name_from_file_path(
         response = client.post(
             "/console/tasks/scheduled",
             json={
-                "flow_name": "trivia",
+                "flow_display_name": "晨间问答",
                 "flow_content": "---\nname: morning-trivia\nschedule: '52 0 * * *'\nagent_profile: ai_editor_supervisor\n---\n\nhello",
             },
         )
@@ -2532,7 +2553,7 @@ def test_console_create_scheduled_task_recreates_with_delete_404_fallback_to_fro
         response = client.post(
             "/console/tasks/scheduled",
             json={
-                "flow_name": "trivia",
+                "flow_display_name": "晨间问答",
                 "flow_content": "---\nname: morning-trivia\nschedule: '52 0 * * *'\nagent_profile: ai_editor_supervisor\n---\n\nhello",
             },
         )
@@ -2561,6 +2582,129 @@ def test_console_run_enable_disable_scheduled_task_success(client: TestClient) -
         assert enable_resp.status_code == 200
         assert disable_resp.status_code == 200
         mock_sync_session.assert_called_once_with("flowA")
+
+
+def test_console_create_scheduled_task_stores_display_name_and_uses_frontmatter_name(
+    client: TestClient, tmp_path: Path
+) -> None:
+    login(client)
+
+    flow_dir = tmp_path / "flows"
+    db_path = tmp_path / "org.sqlite"
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.AGENT_FLOW_DIR", flow_dir),
+        patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path),
+        patch("cli_agent_orchestrator.control_panel.main.DATABASE_FILE", db_path),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+    ):
+        control_panel_main._init_organization_db()
+        mock_request_cao.return_value = MagicMock()
+        mock_json.return_value = {
+            "name": "morning-trivia",
+            "file_path": str(flow_dir / "morning-trivia.md"),
+            "schedule": "52 0 * * *",
+            "agent_profile": "developer",
+            "provider": "kiro_cli",
+            "enabled": True,
+        }
+
+        response = client.post(
+            "/console/tasks/scheduled",
+            json={
+                "flow_display_name": "早报提醒",
+                "flow_content": "---\nname: morning-trivia\nschedule: '52 0 * * *'\nagent_profile: developer\n---\n\nhello",
+            },
+        )
+
+        assert response.status_code == 200
+        assert (flow_dir / "morning-trivia.md").exists()
+        saved_content = (flow_dir / "morning-trivia.md").read_text(encoding="utf-8")
+        assert "name: morning-trivia" in saved_content
+
+        files_response = client.get("/console/tasks/scheduled/files")
+        assert files_response.status_code == 200
+        files = files_response.json()["files"]
+        assert files[0]["file_name"] == "morning-trivia.md"
+        assert files[0]["flow_name"] == "morning-trivia"
+        assert files[0]["display_name"] == "早报提醒"
+
+
+def test_console_update_scheduled_task_renames_file_to_frontmatter_name(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    flow_dir = tmp_path / "flows"
+    flow_dir.mkdir(parents=True, exist_ok=True)
+    db_path = tmp_path / "org.sqlite"
+    original_path = flow_dir / "old-name.md"
+    original_path.write_text(
+        "---\nname: old-name\nschedule: '0 8 * * *'\nagent_profile: developer\n---\n\nhello\n",
+        encoding="utf-8",
+    )
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.AGENT_FLOW_DIR", flow_dir),
+        patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path),
+        patch("cli_agent_orchestrator.control_panel.main.DATABASE_FILE", db_path),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text") as mock_json,
+    ):
+        control_panel_main._init_organization_db()
+        control_panel_main._upsert_flow_display_name("old-name", "旧备注")
+        mock_request_cao.return_value = MagicMock()
+        mock_json.return_value = {
+            "name": "new-name",
+            "file_path": str(flow_dir / "new-name.md"),
+            "schedule": "0 8 * * *",
+            "agent_profile": "developer",
+            "provider": "kiro_cli",
+            "enabled": True,
+        }
+
+        response = client.post(
+            "/console/tasks/scheduled",
+            json={
+                "file_name": "old-name.md",
+                "flow_display_name": "新备注",
+                "flow_content": "---\nname: new-name\nschedule: '0 8 * * *'\nagent_profile: developer\n---\n\nupdated",
+            },
+        )
+
+        assert response.status_code == 200
+        assert (flow_dir / "new-name.md").exists()
+        assert original_path.exists() is False
+
+        files_response = client.get("/console/tasks/scheduled/files")
+        files = files_response.json()["files"]
+        assert files[0]["file_name"] == "new-name.md"
+        assert files[0]["display_name"] == "新备注"
+
+
+def test_console_delete_scheduled_task_removes_display_name(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    db_path = tmp_path / "org.sqlite"
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.DB_DIR", tmp_path),
+        patch("cli_agent_orchestrator.control_panel.main.DATABASE_FILE", db_path),
+        patch("cli_agent_orchestrator.control_panel.main._request_cao") as mock_request_cao,
+        patch("cli_agent_orchestrator.control_panel.main._response_json_or_text", return_value={"ok": True}),
+    ):
+        control_panel_main._init_organization_db()
+        control_panel_main._upsert_flow_display_name("nightly", "夜间构建")
+        mock_request_cao.return_value = MagicMock()
+
+        response = client.delete("/console/tasks/scheduled/nightly")
+
+        assert response.status_code == 200
+        with sqlite3.connect(str(db_path)) as conn:
+            row = conn.execute(
+                "SELECT display_name FROM flow_display_names WHERE flow_name = ?",
+                ("nightly",),
+            ).fetchone()
+        assert row is None
 
 
 def test_console_delete_scheduled_task_success(client: TestClient) -> None:
