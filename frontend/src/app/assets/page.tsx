@@ -73,6 +73,15 @@ function getFileExtension(path: string): string {
   return fileName.split(".").pop()?.toLowerCase() || "";
 }
 
+function getAncestorPaths(path: string): string[] {
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length <= 1) {
+    return [];
+  }
+
+  return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join("/"));
+}
+
 function formatBytes(value?: number | null): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "-";
@@ -337,7 +346,7 @@ export default function AssetsPage() {
     setError("");
   }
 
-  function toggleTreeDir(path: string, isDir: boolean) {
+  function toggleTreeDir(path: string, isDir: boolean, shouldLoad: boolean = true) {
     if (!selectedTeam) {
       return;
     }
@@ -347,12 +356,14 @@ export default function AssetsPage() {
     }
 
     const teamKey = selectedTeam.leader_id;
-    const nextExpanded = new Set(expandedDirsByPath[teamKey] || []);
-    if (nextExpanded.has(path)) {
-      nextExpanded.delete(path);
+    const previousExpanded = expandedDirsByPath[teamKey] || new Set<string>();
+    let nextExpanded: Set<string>;
+
+    if (previousExpanded.has(path)) {
+      nextExpanded = new Set(getAncestorPaths(path));
     } else {
-      nextExpanded.add(path);
-      if (!treeByPath[path]) {
+      nextExpanded = new Set([...getAncestorPaths(path), path]);
+      if (shouldLoad && !treeByPath[path]) {
         void loadTree(selectedTeam, path);
       }
     }
@@ -430,7 +441,8 @@ export default function AssetsPage() {
             onClick={() => {
               onClickEntry(entry);
               if (entry.is_dir) {
-                toggleTreeDir(entry.path, entry.is_dir);
+                toggleTreeDir(entry.path, entry.is_dir, false);
+                openDirectory(entry.path);
               }
             }}
             onDoubleClick={() => onDoubleClickEntry(entry)}
