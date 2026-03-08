@@ -35,6 +35,7 @@ from cli_agent_orchestrator.constants import (
     DEFAULT_PROVIDER,
 )
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.services import terminal_service
 
 logger = logging.getLogger(__name__)
 
@@ -1183,6 +1184,10 @@ class WsTokenResponse(BaseModel):
     expires_in: int
 
 
+class ConsoleCreateShellTerminalRequest(BaseModel):
+    working_directory: Optional[str] = None
+
+
 class InboxMessageRequest(BaseModel):
     message: str = Field(min_length=1)
     sender_id: Optional[str] = None
@@ -2165,6 +2170,30 @@ async def logout(request: Request) -> JSONResponse:
 async def create_console_ws_token() -> WsTokenResponse:
     token = _create_ws_token()
     return WsTokenResponse(token=token, expires_in=WS_TOKEN_TTL_SECONDS)
+
+
+@app.post("/console/terminals/shell")
+async def console_create_shell_terminal(
+    payload: Optional[ConsoleCreateShellTerminalRequest] = None,
+) -> Dict[str, Any]:
+    try:
+        terminal = await asyncio.to_thread(
+            terminal_service.create_shell_terminal,
+            None,
+            payload.working_directory if payload else None,
+        )
+        working_directory = await asyncio.to_thread(terminal_service.get_working_directory, terminal.id)
+        return {
+            "ok": True,
+            "terminal_id": terminal.id,
+            "session_name": terminal.session_name,
+            "provider": terminal.provider,
+            "working_directory": working_directory,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to create shell terminal: {exc}")
 
 
 @app.get("/auth/me")

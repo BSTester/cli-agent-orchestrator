@@ -384,6 +384,39 @@ def test_console_ws_token_creation(client: TestClient) -> None:
     assert body["expires_in"] > 0
 
 
+def test_console_create_shell_terminal_success(client: TestClient) -> None:
+    login(client)
+
+    fake_terminal = MagicMock(
+        id="shell1234",
+        session_name="cao-shell-session",
+        provider="shell",
+    )
+
+    with (
+        patch(
+            "cli_agent_orchestrator.control_panel.main.terminal_service.create_shell_terminal",
+            return_value=fake_terminal,
+        ) as mock_create,
+        patch(
+            "cli_agent_orchestrator.control_panel.main.terminal_service.get_working_directory",
+            return_value="/home/penn/workspace",
+        ) as mock_get_workdir,
+    ):
+        response = client.post("/console/terminals/shell", json={})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "terminal_id": "shell1234",
+        "session_name": "cao-shell-session",
+        "provider": "shell",
+        "working_directory": "/home/penn/workspace",
+    }
+    mock_create.assert_called_once_with(None, None)
+    mock_get_workdir.assert_called_once_with("shell1234")
+
+
 def test_console_agent_tmux_input_and_output(client: TestClient) -> None:
     login(client)
 

@@ -192,6 +192,82 @@ def create_terminal(
         raise
 
 
+def create_shell_terminal(
+    session_name: Optional[str] = None,
+    working_directory: Optional[str] = None,
+) -> Terminal:
+    """Create a plain shell terminal without launching any agent provider CLI."""
+    terminal_id = None
+    try:
+        terminal_id = generate_terminal_id()
+
+        if not session_name:
+            session_name = generate_session_name()
+
+        window_name = generate_window_name("shell")
+
+        if not session_name.startswith(SESSION_PREFIX):
+            session_name = f"{SESSION_PREFIX}{session_name}"
+
+        if tmux_client.session_exists(session_name):
+            raise ValueError(f"Session '{session_name}' already exists")
+
+        tmux_client.create_session(session_name, window_name, terminal_id, working_directory)
+
+        db_create_terminal(
+            terminal_id,
+            session_name,
+            window_name,
+            ProviderType.SHELL.value,
+            None,
+        )
+
+        provider_instance = provider_manager.create_provider(
+            ProviderType.SHELL.value,
+            terminal_id,
+            session_name,
+            window_name,
+            None,
+        )
+        provider_instance.initialize()
+
+        log_path = TERMINAL_LOG_DIR / f"{terminal_id}.log"
+        log_path.touch()
+        tmux_client.pipe_pane(session_name, window_name, str(log_path))
+
+        terminal = Terminal(
+            id=terminal_id,
+            name=window_name,
+            provider=ProviderType.SHELL,
+            session_name=session_name,
+            agent_profile=None,
+            status=TerminalStatus.IDLE,
+            last_active=datetime.now(),
+        )
+
+        logger.info("Created shell terminal: %s in session: %s", terminal_id, session_name)
+        return terminal
+
+    except Exception as e:
+        logger.error(f"Failed to create shell terminal: {e}")
+        try:
+            if terminal_id:
+                provider_manager.cleanup_provider(terminal_id)
+        except Exception:
+            pass
+        try:
+            if session_name:
+                tmux_client.kill_session(session_name)
+        except Exception:
+            pass
+        try:
+            if terminal_id:
+                db_delete_terminal(terminal_id)
+        except Exception:
+            pass
+        raise
+
+
 def get_terminal(terminal_id: str) -> Dict:
     """Get terminal data."""
     try:

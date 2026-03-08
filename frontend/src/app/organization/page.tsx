@@ -35,8 +35,10 @@ import {
   UpdateAgentProfileResponse,
   ConsoleOrganization,
   InstallAgentProfileResponse,
+  ConsoleShellTerminalResponse,
 } from "@/lib/cao";
 import { isStatusActive, toStatusLabel } from "@/lib/status";
+import TerminalDrawer from "@/components/TerminalDrawer";
 
 const builtInProfiles = ["code_supervisor", "developer", "reviewer"];
 
@@ -191,6 +193,10 @@ export default function OrganizationPage() {
     sessionName: string;
     memberIds: string[];
   } | null>(null);
+  const [shellTerminalId, setShellTerminalId] = useState("");
+  const [shellTerminalSessionName, setShellTerminalSessionName] = useState("");
+  const [shellTerminalWorkdir, setShellTerminalWorkdir] = useState("");
+  const [openingShellTerminal, setOpeningShellTerminal] = useState(false);
 
   function extractErrorDetail(payload: unknown): string {
     if (!payload || typeof payload !== "object") {
@@ -455,6 +461,47 @@ export default function OrganizationPage() {
     setNotice(`已解散团队：${currentTarget.leaderName}${currentTarget.sessionName ? `（${currentTarget.sessionName}）` : ""}`);
 
     await loadOrganization();
+  }
+
+  async function openShellTerminalDrawer() {
+    if (openingShellTerminal || shellTerminalId) {
+      return;
+    }
+
+    setOpeningShellTerminal(true);
+    setError("");
+    setNotice("");
+
+    const result = await caoRequest<ConsoleShellTerminalResponse>("POST", "/console/terminals/shell");
+    if (!result.ok || !result.data?.terminal_id) {
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `打开 Linux 控制台失败：${detail}` : "打开 Linux 控制台失败");
+      setOpeningShellTerminal(false);
+      return;
+    }
+
+    setShellTerminalId(result.data.terminal_id);
+    setShellTerminalSessionName(result.data.session_name || "");
+    setShellTerminalWorkdir(result.data.working_directory || "");
+    setOpeningShellTerminal(false);
+  }
+
+  async function closeShellTerminalDrawer() {
+    const terminalId = shellTerminalId;
+
+    setShellTerminalId("");
+    setShellTerminalSessionName("");
+    setShellTerminalWorkdir("");
+
+    if (!terminalId) {
+      return;
+    }
+
+    const result = await caoRequest("DELETE", `/terminals/${terminalId}`);
+    if (!result.ok) {
+      const detail = extractErrorDetail(result.data);
+      setError(detail ? `关闭 Linux 控制台失败：${detail}` : "关闭 Linux 控制台失败");
+    }
   }
 
   async function onboardNewEmployee(event: FormEvent<HTMLFormElement>) {
@@ -990,7 +1037,7 @@ export default function OrganizationPage() {
             )}
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: showTeamCard ? 8 : 0 }}>
               <SectionTitle title="团队编制管理" />
               <SecondaryButton
@@ -1009,7 +1056,7 @@ export default function OrganizationPage() {
               </SecondaryButton>
             </div>
             {showTeamCard ? (
-              <>
+              <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
                 <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
                   {editingLeaderTarget ? "编辑负责人" : "新增负责人"}
                 </div>
@@ -1168,7 +1215,117 @@ export default function OrganizationPage() {
                     </SuccessButton>
                   </div>
                 </form>
-              </>
+
+                <div style={{ flex: 1, minHeight: 0 }} />
+
+                <div style={{ height: 1, background: "var(--border)", margin: "14px 0" }} />
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                    gap: 10,
+                    alignItems: "stretch",
+                    justifyContent: "center",
+                    width: "min(100%, 560px)",
+                    margin: "0 auto",
+                  }}
+                >
+                  <a
+                    href="https://claude-plugins.dev/"
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 12,
+                      background: "var(--surface2)",
+                      textDecoration: "none",
+                      color: "inherit",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      aspectRatio: "1 / 1",
+                      maxHeight: 168,
+                      minHeight: 110,
+                      textAlign: "center",
+                    }}
+                  >
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700, fontSize: 18, lineHeight: 1.25 }}>
+                      Claude Code Plugins
+                    </div>
+                    <div style={{ color: "var(--text-dim)", fontSize: 12, lineHeight: 1.5, maxWidth: 144 }}>
+                      打开插件目录站点，在新标签页浏览可用插件。
+                    </div>
+                  </a>
+
+                  <a
+                    href="https://skills.sh/"
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 12,
+                      background: "var(--surface2)",
+                      textDecoration: "none",
+                      color: "inherit",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      aspectRatio: "1 / 1",
+                      maxHeight: 168,
+                      minHeight: 110,
+                      textAlign: "center",
+                    }}
+                  >
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700, fontSize: 18, lineHeight: 1.25 }}>
+                      Skills
+                    </div>
+                    <div style={{ color: "var(--text-dim)", fontSize: 12, lineHeight: 1.5, maxWidth: 144 }}>
+                      打开技能目录站点，在新标签页查看可安装能力。
+                    </div>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => void openShellTerminalDrawer()}
+                    disabled={openingShellTerminal || Boolean(shellTerminalId)}
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 12,
+                      background: "var(--surface2)",
+                      color: "inherit",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      textAlign: "center",
+                      cursor: openingShellTerminal || shellTerminalId ? "wait" : "pointer",
+                      aspectRatio: "1 / 1",
+                      maxHeight: 168,
+                      minHeight: 110,
+                    }}
+                  >
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700, fontSize: 18, lineHeight: 1.25 }}>
+                      Linux Terminal
+                    </div>
+                    <div style={{ color: "var(--text-dim)", fontSize: 12, lineHeight: 1.5, maxWidth: 144 }}>
+                      {openingShellTerminal
+                        ? "正在创建纯 shell 控制台..."
+                        : shellTerminalId
+                          ? "控制台已打开，点击右侧抽屉继续操作。"
+                          : "打开一个不启动任何 agent 的 Linux 终端，用于安装插件和 skills。"}
+                    </div>
+                  </button>
+                </div>
+              </div>
             ) : (
               <div style={{ color: "var(--text-dim)", fontSize: 12 }}>点击展开配置后创建或加入团队</div>
             )}
@@ -1414,6 +1571,21 @@ export default function OrganizationPage() {
             </div>
           </div>
         )}
+
+        {shellTerminalId ? (
+          <TerminalDrawer
+            terminalId={shellTerminalId}
+            title="Linux Terminal"
+            subtitle={
+              shellTerminalWorkdir
+                ? `${shellTerminalSessionName || "临时会话"} · ${shellTerminalWorkdir}`
+                : shellTerminalSessionName || "临时会话"
+            }
+            onClose={() => {
+              void closeShellTerminalDrawer();
+            }}
+          />
+        ) : null}
       </PageShell>
     </RequireAuth>
   );

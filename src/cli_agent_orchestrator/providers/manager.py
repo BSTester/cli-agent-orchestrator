@@ -13,6 +13,7 @@ from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.kiro_cli import KiroCliProvider
 from cli_agent_orchestrator.providers.qoder_cli import QoderCliProvider
 from cli_agent_orchestrator.providers.q_cli import QCliProvider
+from cli_agent_orchestrator.providers.shell import ShellProvider
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,9 @@ class ProviderManager:
         """Create and store provider instance."""
         try:
             provider: BaseProvider
-            if provider_type == ProviderType.Q_CLI.value:
+            if provider_type == ProviderType.SHELL.value:
+                provider = ShellProvider(terminal_id, tmux_session, tmux_window)
+            elif provider_type == ProviderType.Q_CLI.value:
                 if not agent_profile:
                     raise ValueError("Q CLI provider requires agent_profile parameter")
                 provider = QCliProvider(terminal_id, tmux_session, tmux_window, agent_profile)

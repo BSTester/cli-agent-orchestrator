@@ -23,8 +23,8 @@ SESSION_PREFIX = "cao-"
 # =============================================================================
 # Provider Configuration
 # =============================================================================
-# Available CLI providers - derived from the ProviderType enum for consistency
-PROVIDERS = [p.value for p in ProviderType]
+# Available agent CLI providers exposed to launch/install flows.
+PROVIDERS = [p.value for p in ProviderType if p is not ProviderType.SHELL]
 
 # Default provider used when --provider flag is not specified
 # Kiro CLI is the recommended provider for new projects

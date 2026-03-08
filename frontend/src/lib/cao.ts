@@ -184,6 +184,14 @@ export interface ConsoleEnsureOnlineResponse {
   leader: ConsoleAgent;
 }
 
+export interface ConsoleShellTerminalResponse {
+  ok: boolean;
+  terminal_id: string;
+  session_name: string;
+  provider: string;
+  working_directory?: string | null;
+}
+
 export interface ConsoleAssetTeam {
   leader_id: string;
   team_name: string;

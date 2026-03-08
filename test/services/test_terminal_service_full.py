@@ -10,6 +10,7 @@ from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services.terminal_service import (
     OutputMode,
+    create_shell_terminal,
     create_terminal,
     delete_terminal,
     get_output,
@@ -235,6 +236,88 @@ class TestCreateTerminal:
         mock_provider_manager.cleanup_provider.assert_called_once_with("test1234")
         mock_tmux.kill_session.assert_called_once_with("cao-session")
         mock_db_delete.assert_called_once_with("test1234")
+
+
+class TestCreateShellTerminal:
+    """Tests for create_shell_terminal function."""
+
+    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
+    def test_create_shell_terminal_success(
+        self,
+        mock_gen_id,
+        mock_gen_session,
+        mock_gen_window,
+        mock_tmux,
+        mock_db_create,
+        mock_provider_manager,
+        mock_log_dir,
+    ):
+        mock_gen_id.return_value = "shell123"
+        mock_gen_session.return_value = "shell-session"
+        mock_gen_window.return_value = "shell-abcd"
+        mock_tmux.session_exists.return_value = False
+        mock_provider = MagicMock()
+        mock_provider_manager.create_provider.return_value = mock_provider
+        mock_log_path = MagicMock()
+        mock_log_dir.__truediv__.return_value = mock_log_path
+
+        result = create_shell_terminal()
+
+        assert result.id == "shell123"
+        assert result.provider == ProviderType.SHELL.value
+        assert result.agent_profile is None
+        mock_tmux.create_session.assert_called_once_with(
+            "cao-shell-session", "shell-abcd", "shell123", None
+        )
+        mock_db_create.assert_called_once_with(
+            "shell123", "cao-shell-session", "shell-abcd", ProviderType.SHELL.value, None
+        )
+        mock_provider_manager.create_provider.assert_called_once_with(
+            ProviderType.SHELL.value,
+            "shell123",
+            "cao-shell-session",
+            "shell-abcd",
+            None,
+        )
+        mock_provider.initialize.assert_called_once()
+
+    @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
+    def test_create_shell_terminal_cleans_up_on_failure(
+        self,
+        mock_gen_id,
+        mock_gen_session,
+        mock_gen_window,
+        mock_tmux,
+        mock_provider_manager,
+        mock_db_create,
+        mock_db_delete,
+    ):
+        mock_gen_id.return_value = "shell123"
+        mock_gen_session.return_value = "shell-session"
+        mock_gen_window.return_value = "shell-abcd"
+        mock_tmux.session_exists.return_value = False
+        mock_provider = MagicMock()
+        mock_provider.initialize.side_effect = RuntimeError("shell init failed")
+        mock_provider_manager.create_provider.return_value = mock_provider
+
+        with pytest.raises(RuntimeError, match="shell init failed"):
+            create_shell_terminal()
+
+        mock_provider_manager.cleanup_provider.assert_called_once_with("shell123")
+        mock_tmux.kill_session.assert_called_once_with("cao-shell-session")
+        mock_db_delete.assert_called_once_with("shell123")
 
 
 class TestGetTerminal:
