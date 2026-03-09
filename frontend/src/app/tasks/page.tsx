@@ -68,6 +68,28 @@ function SearchableDatalistInput(
   );
 }
 
+function formatAgentDisplayName(agentId: string, alias?: string): string {
+  const normalizedAlias = (alias || "").trim();
+  if (!normalizedAlias || normalizedAlias === agentId) {
+    return agentId;
+  }
+  return `${agentId}（${normalizedAlias}）`;
+}
+
+function formatTeamDisplayName(
+  leaderId: string,
+  leaderAlias?: string,
+  teamAlias?: string,
+  sessionName?: string
+): string {
+  const normalizedTeamAlias = (teamAlias || "").trim();
+  const leaderDisplayName = formatAgentDisplayName(leaderId, leaderAlias) || sessionName || leaderId;
+  if (!normalizedTeamAlias) {
+    return leaderDisplayName;
+  }
+  return `${normalizedTeamAlias} · ${leaderDisplayName}`;
+}
+
 export default function TasksPage() {
   const [data, setData] = useState<ConsoleTasksResponse | null>(null);
   const [flowFiles, setFlowFiles] = useState<ConsoleScheduledTaskFilesResponse["files"]>([]);
@@ -273,12 +295,16 @@ Share one interesting world trivia for today.
   const teams = data?.teams || [];
   const teamOptions = teams.map((team) => {
     const leader = team.leader;
-    const teamAlias = (team.team_alias || "").trim();
-    const primary = teamAlias || leader.alias || leader.session_name || leader.id;
+    const teamDisplayName = formatTeamDisplayName(
+      leader.id,
+      leader.alias,
+      team.team_alias,
+      leader.session_name
+    );
     return {
       leaderId: leader.id,
       sessionName: leader.session_name || "",
-      label: `${primary} · ${leader.agent_profile || "unknown"} · ${leader.id}`,
+      label: `${teamDisplayName} · ${leader.agent_profile || "unknown"}`,
     };
   });
   const selectedLeaderOption = teamOptions.find((item) => item.leaderId === leaderId);
@@ -431,87 +457,102 @@ Share one interesting world trivia for today.
         {teams.length === 0 ? (
           <EmptyState text="暂无团队任务数据" />
         ) : (
-          teams.map((team) => (
-            <SectionCard key={team.leader.id}>
-              <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>
-                团队：{team.team_alias || team.leader.session_name || team.leader.id}
-              </div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-                <StatusPill text={`即时 ${team.instant_tasks.length}`} active={team.instant_tasks.length > 0} />
-                <StatusPill text={`定时 ${team.scheduled_tasks.length}`} active={team.scheduled_tasks.length > 0} />
-              </div>
+          teams.map((team) => {
+            const aliasByAgentId = new Map<string, string>();
+            for (const agent of [team.leader, ...team.members]) {
+              const agentId = String(agent.id || "");
+              const agentAlias = String(agent.alias || "").trim();
+              if (agentId && agentAlias) {
+                aliasByAgentId.set(agentId, agentAlias);
+              }
+            }
 
-              <CardGrid minWidth={260} gap={10}>
-                <div
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: 10,
-                    background: "var(--surface2)",
-                    minHeight: 220,
-                  }}
-                >
-                  <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
-                    即时任务
-                  </div>
-                  {team.instant_tasks.length === 0 ? (
-                    <div style={{ color: "var(--text-dim)", fontSize: 13 }}>当前无执行中的即时任务</div>
-                  ) : (
-                    team.instant_tasks.map((task) => (
-                      <div
-                        key={task.terminal_id}
-                        style={{
-                          border: "1px solid var(--border)",
-                          borderRadius: 8,
-                          padding: 8,
-                          marginBottom: 8,
-                          background: "var(--surface)",
-                        }}
-                      >
-                        {task.task_title ? (
-                          <div
-                            title={task.task_title}
-                            style={{
-                              color: "var(--text-bright)",
-                              fontWeight: 700,
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                            }}
-                          >
-                            当前任务：{task.task_title}
-                          </div>
-                        ) : null}
-                        <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 4 }}>
-                          {task.agent_profile || "unknown"} · {task.terminal_id}
-                        </div>
-                        <div style={{ display: "flex" }}>
-                          <StatusPill
-                            text={toStatusLabel(task.status || "unknown")}
-                            active={isStatusActive(task.status)}
-                          />
-                        </div>
-                      </div>
-                    ))
+            return (
+              <SectionCard key={team.leader.id}>
+                <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 10 }}>
+                  团队：{formatTeamDisplayName(
+                    team.leader.id,
+                    team.leader.alias,
+                    team.team_alias,
+                    team.leader.session_name
                   )}
                 </div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                  <StatusPill text={`即时 ${team.instant_tasks.length}`} active={team.instant_tasks.length > 0} />
+                  <StatusPill text={`定时 ${team.scheduled_tasks.length}`} active={team.scheduled_tasks.length > 0} />
+                </div>
 
-                <div
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: 10,
-                    background: "var(--surface2)",
-                    minHeight: 220,
-                  }}
-                >
-                  <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
-                    定时任务
+                <CardGrid minWidth={260} gap={10}>
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 10,
+                      background: "var(--surface2)",
+                      minHeight: 220,
+                    }}
+                  >
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
+                      即时任务
+                    </div>
+                    {team.instant_tasks.length === 0 ? (
+                      <div style={{ color: "var(--text-dim)", fontSize: 13 }}>当前无执行中的即时任务</div>
+                    ) : (
+                      team.instant_tasks.map((task) => (
+                        <div
+                          key={task.terminal_id}
+                          style={{
+                            border: "1px solid var(--border)",
+                            borderRadius: 8,
+                            padding: 8,
+                            marginBottom: 8,
+                            background: "var(--surface)",
+                          }}
+                        >
+                          {task.task_title ? (
+                            <div
+                              title={task.task_title}
+                              style={{
+                                color: "var(--text-bright)",
+                                fontWeight: 700,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              当前任务：{task.task_title}
+                            </div>
+                          ) : null}
+                          <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 4 }}>
+                            {task.agent_profile || "unknown"} · {formatAgentDisplayName(task.terminal_id, aliasByAgentId.get(task.terminal_id))}
+                          </div>
+                          <div style={{ display: "flex" }}>
+                            <StatusPill
+                              text={toStatusLabel(task.status || "unknown")}
+                              active={isStatusActive(task.status)}
+                            />
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
-                  {team.scheduled_tasks.length === 0 ? (
-                    <div style={{ color: "var(--text-dim)", fontSize: 13 }}>当前无定时任务</div>
-                  ) : (
-                    team.scheduled_tasks.map((task) => {
+
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 10,
+                      background: "var(--surface2)",
+                      minHeight: 220,
+                    }}
+                  >
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700, marginBottom: 8 }}>
+                      定时任务
+                    </div>
+                    {team.scheduled_tasks.length === 0 ? (
+                      <div style={{ color: "var(--text-dim)", fontSize: 13 }}>当前无定时任务</div>
+                    ) : (
+                      team.scheduled_tasks.map((task) => {
                         const isRunning = Boolean(taskActionLoading[`run:${task.name}`]);
                         const isToggling = Boolean(taskActionLoading[`toggle:${task.name}`]);
                         const isDeleting = Boolean(taskActionLoading[`delete:${task.name}`]);
@@ -565,11 +606,12 @@ Share one interesting world trivia for today.
                           </div>
                         );
                       })
-                  )}
-                </div>
-              </CardGrid>
-            </SectionCard>
-          ))
+                    )}
+                  </div>
+                </CardGrid>
+              </SectionCard>
+            );
+          })
         )}
 
         {!!data?.unassigned_scheduled_tasks?.length && (
