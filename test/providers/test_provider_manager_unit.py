@@ -9,6 +9,7 @@ from cli_agent_orchestrator.providers.codebuddy import CodeBuddyProvider
 from cli_agent_orchestrator.providers.copilot import CopilotProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.manager import ProviderManager
+from cli_agent_orchestrator.providers.openclaw import OpenClawProvider
 from cli_agent_orchestrator.providers.qoder_cli import QoderCliProvider
 
 
@@ -189,7 +190,11 @@ def test_create_provider_qoder_cli():
 @patch("cli_agent_orchestrator.providers.codebuddy.load_agent_profile")
 def test_create_provider_codebuddy(mock_load_profile):
     mock_profile = MagicMock()
+    mock_profile.description = "Helper"
     mock_profile.system_prompt = "You are a helper."
+    mock_profile.tools = None
+    mock_profile.model = None
+    mock_profile.mcpServers = None
     mock_load_profile.return_value = mock_profile
 
     manager = ProviderManager()
@@ -215,6 +220,19 @@ def test_create_provider_copilot():
     )
 
     assert isinstance(provider, CopilotProvider)
+
+
+def test_create_provider_openclaw():
+    manager = ProviderManager()
+    provider = manager.create_provider(
+        ProviderType.OPENCLAW.value,
+        terminal_id="t1",
+        tmux_session="s1",
+        tmux_window="w1",
+        agent_profile="developer",
+    )
+
+    assert isinstance(provider, OpenClawProvider)
 
 
 @patch("cli_agent_orchestrator.providers.manager.QoderCliProvider")
@@ -251,3 +269,21 @@ def test_create_provider_copilot_forwards_agent_profile(mock_copilot_provider):
 
     assert provider is mock_instance
     mock_copilot_provider.assert_called_once_with("t1", "s1", "w1", "code_supervisor")
+
+
+@patch("cli_agent_orchestrator.providers.manager.OpenClawProvider")
+def test_create_provider_openclaw_forwards_agent_profile(mock_openclaw_provider):
+    manager = ProviderManager()
+    mock_instance = MagicMock()
+    mock_openclaw_provider.return_value = mock_instance
+
+    provider = manager.create_provider(
+        ProviderType.OPENCLAW.value,
+        terminal_id="t1",
+        tmux_session="s1",
+        tmux_window="w1",
+        agent_profile="code_supervisor",
+    )
+
+    assert provider is mock_instance
+    mock_openclaw_provider.assert_called_once_with("t1", "s1", "w1", "code_supervisor")

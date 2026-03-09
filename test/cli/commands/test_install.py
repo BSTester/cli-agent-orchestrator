@@ -364,6 +364,7 @@ class TestInstallCommand:
             assert "qoder_cli agent" in result.output
             assert "copilot agent" in result.output
             assert "Installed for providers" in result.output
+            assert "openclaw" not in result.output
             assert "claude_code" not in result.output
             assert "codex" not in result.output
             assert "codebuddy" not in result.output
@@ -477,3 +478,37 @@ class TestInstallCommand:
 
             assert result.exit_code == 0
             assert "copilot agent" in result.output
+
+    @patch("cli_agent_orchestrator.cli.commands.install.load_agent_profile")
+    @patch("cli_agent_orchestrator.cli.commands.install.AGENT_CONTEXT_DIR")
+    @patch("cli_agent_orchestrator.cli.commands.install.LOCAL_AGENT_STORE_DIR")
+    def test_install_openclaw_provider_uses_runtime_injection(
+        self,
+        mock_local_store,
+        mock_context_dir,
+        mock_load,
+        runner,
+        mock_agent_profile,
+    ):
+        """Test installing agent for openclaw provider without creating local agent file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            local_path = tmppath / "local"
+            local_path.mkdir(parents=True, exist_ok=True)
+            local_profile = local_path / "test-agent.md"
+            local_profile.write_text("# Test\nname: test-agent")
+
+            mock_local_store.__truediv__ = lambda self, x: local_path / x
+            mock_context_dir.__truediv__ = lambda self, x: tmppath / "context" / x
+            mock_context_dir.mkdir = MagicMock()
+
+            mock_load.return_value = mock_agent_profile
+
+            (tmppath / "context").mkdir(parents=True, exist_ok=True)
+
+            result = runner.invoke(install, ["test-agent", "--provider", "openclaw"])
+
+            assert result.exit_code == 0
+            assert "Runtime-injected providers" in result.output
+            assert "openclaw" in result.output

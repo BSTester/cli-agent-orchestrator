@@ -4,12 +4,13 @@ from unittest.mock import MagicMock, patch
 
 from cli_agent_orchestrator.providers.codebuddy import CodeBuddyProvider
 from cli_agent_orchestrator.providers.copilot import CopilotProvider
+from cli_agent_orchestrator.providers.openclaw import OpenClawProvider
 from cli_agent_orchestrator.providers.qoder_cli import QoderCliProvider
 
 
 def test_qoder_cli_start_command_uses_yolo() -> None:
     provider = QoderCliProvider("t1", "s1", "w1")
-    assert provider._start_command == "qodercli --yolo"
+    assert provider._start_command == "qodercli --yolo --dangerously-skip-permissions --with-claude-config"
 
 
 def test_qoder_cli_exit_command_is_quit() -> None:
@@ -34,12 +35,13 @@ def test_qoder_cli_start_command_with_agent_profile(mock_load_profile) -> None:
 
     provider = QoderCliProvider("term123", "s1", "w1", "code_supervisor")
 
-    assert "qodercli mcp remove cao-mcp-server --scope project" in provider._start_command
+    assert "qodercli mcp remove cao-mcp-server" in provider._start_command
+    assert "qodercli mcp remove cao-mcp-server --scope project" not in provider._start_command
     assert "qodercli mcp add cao-mcp-server -- uvx cao-mcp-server --scope project" in provider._start_command
     assert "--transport" not in provider._start_command
     assert "--scope project" in provider._start_command
     assert "--env CAO_TERMINAL_ID=term123" in provider._start_command
-    assert " && qodercli --yolo" in provider._start_command
+    assert " && qodercli --yolo --dangerously-skip-permissions --with-claude-config" in provider._start_command
     assert "--agents" in provider._start_command
     assert "--model gmodel" in provider._start_command
     assert "code_supervisor" in provider._start_command
@@ -93,6 +95,12 @@ def test_codebuddy_start_command_includes_profile_prompt_and_mcp(mock_load_profi
 def test_copilot_start_command_allows_all_without_ask_user() -> None:
     provider = CopilotProvider("t1", "s1", "w1")
     assert provider._start_command == "copilot --allow-all --no-ask-user --no-alt-screen"
+
+
+def test_openclaw_start_command_uses_tui_mode() -> None:
+    provider = OpenClawProvider("t1", "s1", "w1")
+    assert provider._start_command == "openclaw tui"
+    assert provider.exit_cli() == "C-c"
 
 
 @patch("cli_agent_orchestrator.providers.copilot.load_agent_profile")

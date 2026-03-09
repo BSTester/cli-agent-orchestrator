@@ -26,6 +26,7 @@ RUNTIME_INJECTED_PROVIDERS = {
     ProviderType.CLAUDE_CODE.value,
     ProviderType.CODEX.value,
     ProviderType.CODEBUDDY.value,
+    ProviderType.OPENCLAW.value,
 }
 
 DEFAULT_GLOBAL_INSTALL_PROVIDERS = [

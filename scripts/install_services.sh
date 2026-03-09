@@ -294,6 +294,19 @@ install_agent_clis() {
       print_manual_install_command "copilot" "npm install -g @github/copilot"
     fi
   fi
+
+  if has_cmd openclaw; then
+    info "openclaw 已安装，跳过。"
+  else
+    info "安装 openclaw（官方方式）..."
+    if ! npm install -g openclaw@latest; then
+      print_manual_install_command "openclaw" "npm install -g openclaw@latest"
+    fi
+    ensure_tool_path
+    if ! has_cmd openclaw; then
+      print_manual_install_command "openclaw" "npm install -g openclaw@latest"
+    fi
+  fi
 }
 
 install_skills_discovery_for_all_agents() {

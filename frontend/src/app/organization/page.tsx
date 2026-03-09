@@ -50,6 +50,7 @@ const providers = [
   "qoder_cli",
   "codebuddy",
   "copilot",
+  "openclaw",
 ];
 
 const defaultProfileTemplate = `---

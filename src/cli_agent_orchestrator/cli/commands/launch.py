@@ -18,6 +18,7 @@ PROVIDERS_REQUIRING_WORKSPACE_ACCESS = {
     "qoder_cli",
     "codebuddy",
     "copilot",
+    "openclaw",
 }
 
 

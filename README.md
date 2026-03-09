@@ -149,6 +149,7 @@ uv run cao --help   # 校验安装
 | **Qoder CLI** | [Installation](https://www.npmjs.com/package/@qoder-ai/qodercli) | Qoder 账号/令牌 |
 | **CodeBuddy CLI** | [CLI docs](https://www.codebuddy.ai/docs/cli/cli-reference) | CodeBuddy 账号/令牌 |
 | **GitHub Copilot CLI** | [Getting started](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started) | GitHub Copilot 权限 |
+| **OpenClaw CLI** | [Installation](https://www.npmjs.com/package/openclaw) | OpenClaw 账号/令牌 |
 
 ## 快速开始
 
@@ -169,6 +170,7 @@ cao install code_supervisor --provider kiro_cli
 cao install code_supervisor --provider qoder_cli
 cao install code_supervisor --provider codebuddy
 cao install code_supervisor --provider copilot
+cao install code_supervisor --provider openclaw
 ```
 
 可选安装额外工作 Agent：
@@ -228,6 +230,7 @@ cao launch --agents code_supervisor --provider codex
 cao launch --agents code_supervisor --provider qoder_cli
 cao launch --agents code_supervisor --provider codebuddy
 cao launch --agents code_supervisor --provider copilot
+cao launch --agents code_supervisor --provider openclaw
 
 # 跳过工作区信任确认
 cao launch --agents code_supervisor --yolo

@@ -11,6 +11,7 @@ from cli_agent_orchestrator.providers.codebuddy import CodeBuddyProvider
 from cli_agent_orchestrator.providers.copilot import CopilotProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.kiro_cli import KiroCliProvider
+from cli_agent_orchestrator.providers.openclaw import OpenClawProvider
 from cli_agent_orchestrator.providers.qoder_cli import QoderCliProvider
 from cli_agent_orchestrator.providers.q_cli import QCliProvider
 from cli_agent_orchestrator.providers.shell import ShellProvider
@@ -55,6 +56,8 @@ class ProviderManager:
                 provider = CodeBuddyProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             elif provider_type == ProviderType.COPILOT.value:
                 provider = CopilotProvider(terminal_id, tmux_session, tmux_window, agent_profile)
+            elif provider_type == ProviderType.OPENCLAW.value:
+                provider = OpenClawProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             else:
                 raise ValueError(f"Unknown provider type: {provider_type}")
 

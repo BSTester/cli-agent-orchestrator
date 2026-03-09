@@ -41,6 +41,7 @@ exit 0
         "qodercli",
         "codebuddy",
         "copilot",
+        "openclaw",
         "cao",
         "cao-server",
         "cao-control-panel",
@@ -211,6 +212,42 @@ exit 0
 
     assert result.returncode == 0
     assert "copilot 自动安装失败，请手动执行：npm install -g @github/copilot" in result.stderr
+
+
+def test_openclaw_cli_install_failure_prints_manual_command(tmp_path: Path) -> None:
+        script_path = _script_path()
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        _prepare_stub_tools(bin_dir, tmp_path)
+        (bin_dir / "openclaw").unlink()
+        _make_stub_command(
+                bin_dir / "npm",
+                """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1-}" == "config" && "${2-}" == "get" && "${3-}" == "prefix" ]]; then
+    echo "$HOME/.npm-global"
+    exit 0
+fi
+if [[ "${1-}" == "install" && "${2-}" == "-g" && "${3-}" == "openclaw@latest" ]]; then
+    exit 1
+fi
+exit 0
+""",
+        )
+
+        result = subprocess.run(
+                ["bash", str(script_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={
+                        "PATH": f"{bin_dir}:/usr/bin:/bin",
+                        "HOME": str(tmp_path),
+                },
+        )
+
+        assert result.returncode == 0
+        assert "openclaw 自动安装失败，请手动执行：npm install -g openclaw@latest" in result.stderr
 
 
 def test_skips_codex_claude_and_codebuddy_auto_install(tmp_path: Path) -> None:

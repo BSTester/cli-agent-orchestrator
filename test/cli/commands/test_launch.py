@@ -264,6 +264,30 @@ def test_launch_workspace_confirmation_for_default_provider():
         assert "Do you trust all the actions in this folder?" in result.output
 
 
+def test_launch_workspace_confirmation_for_openclaw_provider():
+    """Test that openclaw also triggers workspace confirmation."""
+    runner = CliRunner()
+
+    with (
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.subprocess.run"),
+    ):
+        mock_post.return_value.json.return_value = {
+            "session_name": "test-session",
+            "name": "test-terminal",
+        }
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = runner.invoke(
+            launch,
+            ["--agents", "test-agent", "--provider", "openclaw", "--headless"],
+            input="y\n",
+        )
+
+        assert result.exit_code == 0
+        assert "provider (openclaw) will be trusted to perform all actions" in result.output
+
+
 def test_launch_uses_provider_from_agent_profile_when_not_explicit():
     """Test that launch resolves provider from profile when --provider is omitted."""
     runner = CliRunner()

@@ -12,3 +12,4 @@ class ProviderType(str, Enum):
     QODER_CLI = "qoder_cli"
     CODEBUDDY = "codebuddy"
     COPILOT = "copilot"
+    OPENCLAW = "openclaw"
