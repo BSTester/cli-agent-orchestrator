@@ -84,11 +84,22 @@ def _contains_openclaw_agent_id(output: str, agent_name: str) -> bool:
 class OpenClawProvider(SimpleTuiProvider):
     """Provider for OpenClaw CLI (`openclaw`)."""
 
+    _RUNNING_STATUS_BAR_PATTERN = r"^\s*(?:[⠁-⣿]\s+)?running\s+[•·].*\|\s*connected\s*$"
     _IDLE_PROMPT_PATTERN = (
         r"(?:^[ \t]*[oO]pen[cC]law[ \t]*[>❯›][ \t]*$|"
         r"[>❯›][ \t]+Type your message|"
+        r"gateway\s+connected\s*\|\s*idle|"
         r"ctrl\+j[ \t]+for[ \t]+newline|"
         r"shift\+tab\s+switch\s+mode)"
+    )
+    _PROCESSING_PATTERNS = (
+        r"thinking",
+        r"working",
+        r"analyzing",
+        r"processing",
+        r"generating",
+        r"esc to interrupt",
+        _RUNNING_STATUS_BAR_PATTERN,
     )
 
     def __init__(
@@ -107,6 +118,7 @@ class OpenClawProvider(SimpleTuiProvider):
             start_command=_build_openclaw_command(agent_profile),
             idle_prompt_pattern=self._IDLE_PROMPT_PATTERN,
             idle_prompt_pattern_log=self._IDLE_PROMPT_PATTERN,
+            processing_patterns=self._PROCESSING_PATTERNS,
             exit_command="C-c",
         )
 
