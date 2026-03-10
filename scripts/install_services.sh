@@ -4,6 +4,11 @@ set -euo pipefail
 CAO_REPO_REF="${CAO_REPO_REF:-main}"
 CAO_REPO_URL="${CAO_REPO_URL:-https://github.com/BSTester/cli-agent-orchestrator.git}"
 CAO_TOOL_SPEC="git+${CAO_REPO_URL}@${CAO_REPO_REF}"
+OPENCLAW_INSTALL_METHOD="${OPENCLAW_INSTALL_METHOD:-npm}"
+OPENCLAW_NO_PROMPT="${OPENCLAW_NO_PROMPT:-1}"
+OPENCLAW_NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-1}"
+OPENCLAW_NPM_LOGLEVEL="${OPENCLAW_NPM_LOGLEVEL:-error}"
+SHARP_IGNORE_GLOBAL_LIBVIPS="${SHARP_IGNORE_GLOBAL_LIBVIPS:-1}"
 
 # Skills discovery integration
 SKILLS_DISCOVERY_SPEC="${SKILLS_DISCOVERY_SPEC:-@Kamalnrf/claude-plugins/skills-discovery}"
@@ -252,6 +257,16 @@ ensure_tool_path() {
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$(npm config get prefix 2>/dev/null || echo "$HOME/.npm-global")/bin:$PATH"
 }
 
+build_openclaw_install_cmd() {
+  printf \
+    'env OPENCLAW_INSTALL_METHOD=%q OPENCLAW_NO_PROMPT=%q OPENCLAW_NO_ONBOARD=%q OPENCLAW_NPM_LOGLEVEL=%q SHARP_IGNORE_GLOBAL_LIBVIPS=%q npm install -g openclaw@latest' \
+    "$OPENCLAW_INSTALL_METHOD" \
+    "$OPENCLAW_NO_PROMPT" \
+    "$OPENCLAW_NO_ONBOARD" \
+    "$OPENCLAW_NPM_LOGLEVEL" \
+    "$SHARP_IGNORE_GLOBAL_LIBVIPS"
+}
+
 install_agent_clis() {
   ensure_nodejs
   ensure_tool_path
@@ -298,13 +313,14 @@ install_agent_clis() {
   if has_cmd openclaw; then
     info "openclaw 已安装，跳过。"
   else
-    info "安装 openclaw（官方方式）..."
-    if ! npm install -g openclaw@latest; then
-      print_manual_install_command "openclaw" "npm install -g openclaw@latest"
+    local openclaw_install_cmd="${OPENCLAW_INSTALL_CMD:-$(build_openclaw_install_cmd)}"
+    info "安装 openclaw（静默模式，跳过引导配置）..."
+    if ! bash -lc "$openclaw_install_cmd"; then
+      print_manual_install_command "openclaw" "$openclaw_install_cmd"
     fi
     ensure_tool_path
     if ! has_cmd openclaw; then
-      print_manual_install_command "openclaw" "npm install -g openclaw@latest"
+      print_manual_install_command "openclaw" "$openclaw_install_cmd"
     fi
   fi
 }
