@@ -34,7 +34,10 @@ for name in (
     try:
         content = urlopen(f"{base_url}/{name}", timeout=30).read().decode("utf-8")
     except Exception as exc:
-        raise SystemExit(f"failed to download {name} from {base_url}: {exc}") from exc
+        raise SystemExit(
+            f"failed to download script {name} from {base_url}/{name}: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
     path = script_dir / name
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)

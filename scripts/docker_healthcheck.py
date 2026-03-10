@@ -18,7 +18,7 @@ def main() -> int:
                         file=sys.stderr,
                     )
                     return 1
-        except Exception as exc:  # pragma: no cover - exercised by Docker runtime
+        except OSError as exc:  # pragma: no cover - exercised by Docker runtime
             print(f"healthcheck failed: {url}: {exc}", file=sys.stderr)
             return 1
         print(f"healthcheck ok: {url}", file=sys.stderr)
