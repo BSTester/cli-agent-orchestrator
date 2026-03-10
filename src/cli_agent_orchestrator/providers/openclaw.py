@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import shlex
 import subprocess
 from typing import Any, Optional
 
@@ -23,7 +24,7 @@ class ProviderError(Exception):
     pass
 
 
-def _build_openclaw_command(agent_profile: Optional[str]) -> str:
+def _build_openclaw_command(terminal_id: str, agent_profile: Optional[str]) -> str:
     """Build the OpenClaw launch command.
 
     OpenClaw currently owns its own agent/runtime prompt composition. CAO's
@@ -32,7 +33,9 @@ def _build_openclaw_command(agent_profile: Optional[str]) -> str:
     injection parity with other providers.
     """
     _ = agent_profile
-    return "openclaw tui"
+    # Explicitly export CAO_TERMINAL_ID in the command process environment so
+    # OpenClaw and child tools can always resolve the current terminal identity.
+    return f"CAO_TERMINAL_ID={shlex.quote(terminal_id)} openclaw tui"
 
 
 def _normalize_openclaw_agent_name(agent_name: str) -> str:
@@ -115,7 +118,7 @@ class OpenClawProvider(SimpleTuiProvider):
             terminal_id=terminal_id,
             session_name=session_name,
             window_name=window_name,
-            start_command=_build_openclaw_command(agent_profile),
+            start_command=_build_openclaw_command(terminal_id, agent_profile),
             idle_prompt_pattern=self._IDLE_PROMPT_PATTERN,
             idle_prompt_pattern_log=self._IDLE_PROMPT_PATTERN,
             processing_patterns=self._PROCESSING_PATTERNS,

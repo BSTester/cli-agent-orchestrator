@@ -156,7 +156,7 @@ class TestOpenClawProviderInitialization:
             ),
         ]
         assert mock_simple_tmux.send_keys.call_args_list == [
-            call("s1", "w1", "openclaw tui"),
+            call("s1", "w1", "CAO_TERMINAL_ID=t1 openclaw tui"),
         ]
         assert mock_tmux.send_keys.call_args_list == [
             call("s1", "w1", "/agent ceo"),
@@ -209,7 +209,9 @@ class TestOpenClawProviderInitialization:
             check=True,
         )
         # OpenClaw agent IDs use normalized kebab-case names.
-        mock_simple_tmux.send_keys.assert_called_once_with("s1", "w1", "openclaw tui")
+        mock_simple_tmux.send_keys.assert_called_once_with(
+            "s1", "w1", "CAO_TERMINAL_ID=t1 openclaw tui"
+        )
         mock_tmux.send_keys.assert_called_once_with("s1", "w1", "/agent code-supervisor")
 
     @patch("cli_agent_orchestrator.providers.openclaw.subprocess.run")

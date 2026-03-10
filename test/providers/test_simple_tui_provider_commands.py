@@ -99,7 +99,7 @@ def test_copilot_start_command_allows_all_without_ask_user() -> None:
 
 def test_openclaw_start_command_uses_tui_mode() -> None:
     provider = OpenClawProvider("t1", "s1", "w1")
-    assert provider._start_command == "openclaw tui"
+    assert provider._start_command == "CAO_TERMINAL_ID=t1 openclaw tui"
     assert provider.exit_cli() == "C-c"
 
 
