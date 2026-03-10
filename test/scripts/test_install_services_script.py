@@ -215,14 +215,14 @@ exit 0
 
 
 def test_openclaw_cli_install_failure_prints_manual_command(tmp_path: Path) -> None:
-        script_path = _script_path()
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        _prepare_stub_tools(bin_dir, tmp_path)
-        (bin_dir / "openclaw").unlink()
-        _make_stub_command(
-                bin_dir / "npm",
-                """#!/usr/bin/env bash
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir, tmp_path)
+    (bin_dir / "openclaw").unlink()
+    _make_stub_command(
+        bin_dir / "npm",
+        """#!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1-}" == "config" && "${2-}" == "get" && "${3-}" == "prefix" ]]; then
     echo "$HOME/.npm-global"
@@ -233,21 +233,72 @@ if [[ "${1-}" == "install" && "${2-}" == "-g" && "${3-}" == "openclaw@latest" ]]
 fi
 exit 0
 """,
-        )
+    )
 
-        result = subprocess.run(
-                ["bash", str(script_path)],
-                capture_output=True,
-                text=True,
-                check=False,
-                env={
-                        "PATH": f"{bin_dir}:/usr/bin:/bin",
-                        "HOME": str(tmp_path),
-                },
-        )
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        },
+    )
 
-        assert result.returncode == 0
-        assert "openclaw 自动安装失败，请手动执行：npm install -g openclaw@latest" in result.stderr
+    assert result.returncode == 0
+    assert (
+        "openclaw 自动安装失败，请手动执行：env OPENCLAW_INSTALL_METHOD=npm "
+        "OPENCLAW_NO_PROMPT=1 OPENCLAW_NO_ONBOARD=1 OPENCLAW_NPM_LOGLEVEL=error "
+        "SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@latest"
+    ) in result.stderr
+
+
+def test_openclaw_cli_install_uses_non_interactive_flags(tmp_path: Path) -> None:
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir, tmp_path)
+    (bin_dir / "openclaw").unlink()
+    npm_log = tmp_path / "npm.log"
+    _make_stub_command(
+        bin_dir / "npm",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${{1-}}" == "config" && "${{2-}}" == "get" && "${{3-}}" == "prefix" ]]; then
+  echo "$HOME/.npm-global"
+  exit 0
+fi
+echo "OPENCLAW_INSTALL_METHOD=${{OPENCLAW_INSTALL_METHOD-unset}}" >> "{npm_log}"
+echo "OPENCLAW_NO_PROMPT=${{OPENCLAW_NO_PROMPT-unset}}" >> "{npm_log}"
+echo "OPENCLAW_NO_ONBOARD=${{OPENCLAW_NO_ONBOARD-unset}}" >> "{npm_log}"
+echo "OPENCLAW_NPM_LOGLEVEL=${{OPENCLAW_NPM_LOGLEVEL-unset}}" >> "{npm_log}"
+echo "SHARP_IGNORE_GLOBAL_LIBVIPS=${{SHARP_IGNORE_GLOBAL_LIBVIPS-unset}}" >> "{npm_log}"
+echo "ARGS=$*" >> "{npm_log}"
+exit 0
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        },
+    )
+
+    assert result.returncode == 0
+    assert npm_log.read_text(encoding="utf-8").splitlines() == [
+        "OPENCLAW_INSTALL_METHOD=npm",
+        "OPENCLAW_NO_PROMPT=1",
+        "OPENCLAW_NO_ONBOARD=1",
+        "OPENCLAW_NPM_LOGLEVEL=error",
+        "SHARP_IGNORE_GLOBAL_LIBVIPS=1",
+        "ARGS=install -g openclaw@latest",
+    ]
 
 
 def test_skips_codex_claude_and_codebuddy_auto_install(tmp_path: Path) -> None:

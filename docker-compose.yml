@@ -1,0 +1,17 @@
+services:
+  cao:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CAO_REPO_REF: ${CAO_REPO_REF:-main}
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 9889
+      CONTROL_PANEL_HOST: 0.0.0.0
+      CONTROL_PANEL_PORT: 8000
+      CAO_SERVER_URL: http://127.0.0.1:9889
+      CAO_CONSOLE_PASSWORD: ${CAO_CONSOLE_PASSWORD:-admin}
+    ports:
+      - "8000:8000"
+      - "9889:9889"

@@ -210,6 +210,27 @@ bash scripts/stop_services.sh
 bash scripts/install_and_start_services.sh
 ```
 
+如需静默安装 OpenClaw CLI（跳过引导/配置阶段），`scripts/install_services.sh` 会自动以非交互模式执行安装。
+
+### 2.1 Docker 启动（无需复制源码到容器）
+
+仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。容器内不会复制当前仓库源码，而是在镜像构建时仅下载 `scripts/*.sh`，并在启动时通过安装脚本完成环境安装与服务启动。
+
+```bash
+docker compose up --build
+```
+
+可选环境变量：
+
+```bash
+CAO_REPO_REF=main CAO_CONSOLE_PASSWORD=change-me docker compose up --build
+```
+
+默认端口映射：
+
+- `8000` → `cao-control-panel`
+- `9889` → `cao-server`
+
 也可手动仅启动后端 API：
 
 ```bash
