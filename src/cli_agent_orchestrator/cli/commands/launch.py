@@ -19,6 +19,7 @@ PROVIDERS_REQUIRING_WORKSPACE_ACCESS = {
     "codebuddy",
     "copilot",
     "openclaw",
+    "gemini_cli",
 }
 
 
@@ -36,6 +37,7 @@ def _resolve_provider(agent_name: str, provider: Optional[str]) -> str:
         pass
 
     return DEFAULT_PROVIDER
+}
 
 
 @click.command()
