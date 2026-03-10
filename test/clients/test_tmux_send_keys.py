@@ -1,10 +1,11 @@
-"""Tests for TmuxClient.send_keys paste-buffer implementation."""
+"""Tests for TmuxClient tmux command helpers."""
 
-from unittest.mock import call, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from cli_agent_orchestrator.clients.tmux import TmuxClient
+from cli_agent_orchestrator.constants import TMUX_HISTORY_LINES
 
 
 @pytest.fixture
@@ -182,3 +183,37 @@ class TestSendKeys:
         """Empty raw input should not invoke tmux commands."""
         client.send_raw_input("sess", "win", "")
         mock_subprocess.run.assert_not_called()
+
+
+class TestGetHistory:
+    def test_falls_back_to_alt_screen_when_primary_screen_is_empty(self, client):
+        pane = MagicMock()
+        pane.cmd.side_effect = [
+            MagicMock(stdout=[]),
+            MagicMock(stdout=["OpenClaw", "❯  Type your message"]),
+        ]
+        window = MagicMock(panes=[pane])
+        session = MagicMock()
+        session.windows.get.return_value = window
+        client.server.sessions.get.return_value = session
+
+        history = client.get_history("sess", "win")
+
+        assert history == "OpenClaw\n❯  Type your message"
+        assert pane.cmd.call_args_list == [
+            call("capture-pane", "-e", "-p", "-S", f"-{TMUX_HISTORY_LINES}"),
+            call("capture-pane", "-a", "-e", "-p", "-S", f"-{TMUX_HISTORY_LINES}"),
+        ]
+
+    def test_uses_primary_screen_without_alt_screen_lookup_when_available(self, client):
+        pane = MagicMock()
+        pane.cmd.return_value = MagicMock(stdout=["shell prompt", "$"])
+        window = MagicMock(panes=[pane])
+        session = MagicMock()
+        session.windows.get.return_value = window
+        client.server.sessions.get.return_value = session
+
+        history = client.get_history("sess", "win")
+
+        assert history == "shell prompt\n$"
+        pane.cmd.assert_called_once_with("capture-pane", "-e", "-p", "-S", f"-{TMUX_HISTORY_LINES}")

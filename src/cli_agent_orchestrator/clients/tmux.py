@@ -491,12 +491,14 @@ class TmuxClient:
             if not window:
                 raise ValueError(f"Window '{window_name}' not found in session '{session_name}'")
 
-            # Use cmd to run capture-pane with -e (escape sequences) and -p (print) flags
             pane = window.panes[0]
             lines = tail_lines if tail_lines is not None else TMUX_HISTORY_LINES
             result = pane.cmd("capture-pane", "-e", "-p", "-S", f"-{lines}")
-            # Join all lines with newlines to get complete output
-            return "\n".join(result.stdout) if result.stdout else ""
+            if result.stdout:
+                return "\n".join(result.stdout)
+
+            alt_result = pane.cmd("capture-pane", "-a", "-e", "-p", "-S", f"-{lines}")
+            return "\n".join(alt_result.stdout) if alt_result.stdout else ""
         except Exception as e:
             logger.error(f"Failed to get history from {session_name}:{window_name}: {e}")
             raise
