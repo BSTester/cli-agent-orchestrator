@@ -1,11 +1,13 @@
 """CLI Agent Orchestrator MCP Server implementation."""
 
+import argparse
 import asyncio
 import logging
 import os
 import subprocess
+import sys
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import requests
 from fastmcp import FastMCP
@@ -981,10 +983,47 @@ async def send_message(
         return {"success": False, "error": str(e)}
 
 
-def main():
+def main(
+    transport: str = "stdio",
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    path: Optional[str] = None,
+) -> None:
     """Main entry point for the MCP server."""
-    mcp.run(show_banner=True, log_level="INFO")
+    run_kwargs: Dict[str, Any] = {"show_banner": True, "log_level": "INFO"}
+
+    if transport != "stdio":
+        run_kwargs["transport"] = transport
+        if host is not None:
+            run_kwargs["host"] = host
+        if port is not None:
+            run_kwargs["port"] = port
+        if path is not None:
+            run_kwargs["path"] = path
+
+    mcp.run(**run_kwargs)
+
+
+def _parse_cli_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    """Parse command line arguments for the standalone MCP server entry point."""
+    parser = argparse.ArgumentParser(description="Start the CAO MCP server.")
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        default="stdio",
+        help="Transport protocol for the MCP server.",
+    )
+    parser.add_argument("--host", help="HTTP host to bind when --transport=http.")
+    parser.add_argument("--port", type=int, help="HTTP port to bind when --transport=http.")
+    parser.add_argument("--path", help="HTTP path to mount when --transport=http.")
+    return parser.parse_args(argv)
+
+
+def cli_main(argv: Optional[Sequence[str]] = None) -> None:
+    """CLI entry point for the standalone MCP server executable."""
+    args = _parse_cli_args(argv if argv is not None else sys.argv[1:])
+    main(transport=args.transport, host=args.host, port=args.port, path=args.path)
 
 
 if __name__ == "__main__":
-    main()
+    cli_main()
