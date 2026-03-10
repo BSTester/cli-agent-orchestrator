@@ -223,10 +223,10 @@ docker compose up --build
 可选环境变量：
 
 ```bash
-CAO_REPO_REF=main CAO_CONSOLE_PASSWORD=change-me docker compose up --build
+CAO_CONSOLE_PASSWORD=change-me docker compose up --build
 ```
 
-> 建议将 `CAO_REPO_REF` 固定为具体 commit SHA，以获得更可重现的镜像构建结果。当前仓库尚未提供可直接固定的 release tag。
+> `CAO_REPO_REF` 默认就是 `main`。如需验证特定提交或临时切换分支，可显式覆盖该变量；为了获得更可重现的镜像构建结果，建议固定为具体 commit SHA。当前仓库尚未提供可直接固定的 release tag。
 
 默认端口映射：
 
