@@ -13,6 +13,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /opt/cao
 
+COPY extensions/openclaw-cao-tools /opt/cao/extensions/openclaw-cao-tools
+
 RUN python - <<'PY'
 import os
 from pathlib import Path

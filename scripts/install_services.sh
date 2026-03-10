@@ -9,6 +9,8 @@ OPENCLAW_NO_PROMPT="${OPENCLAW_NO_PROMPT:-1}"
 OPENCLAW_NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-1}"
 OPENCLAW_NPM_LOGLEVEL="${OPENCLAW_NPM_LOGLEVEL:-error}"
 SHARP_IGNORE_GLOBAL_LIBVIPS="${SHARP_IGNORE_GLOBAL_LIBVIPS:-1}"
+OPENCLAW_CAO_PLUGIN_ENABLE="${OPENCLAW_CAO_PLUGIN_ENABLE:-1}"
+OPENCLAW_CAO_PLUGIN_ID="${OPENCLAW_CAO_PLUGIN_ID:-cao-tools}"
 
 # Skills discovery integration
 SKILLS_DISCOVERY_SPEC="${SKILLS_DISCOVERY_SPEC:-@Kamalnrf/claude-plugins/skills-discovery}"
@@ -257,6 +259,16 @@ ensure_tool_path() {
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$(npm config get prefix 2>/dev/null || echo "$HOME/.npm-global")/bin:$PATH"
 }
 
+openclaw_config_path() {
+  echo "${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}"
+}
+
+openclaw_plugin_source_dir() {
+  local root_dir
+  root_dir="$(pwd)"
+  echo "$root_dir/extensions/openclaw-cao-tools"
+}
+
 build_openclaw_install_cmd() {
   printf \
     'env OPENCLAW_INSTALL_METHOD=%q OPENCLAW_NO_PROMPT=%q OPENCLAW_NO_ONBOARD=%q OPENCLAW_NPM_LOGLEVEL=%q SHARP_IGNORE_GLOBAL_LIBVIPS=%q npm install -g openclaw@latest' \
@@ -325,6 +337,142 @@ install_agent_clis() {
   fi
 }
 
+merge_openclaw_plugin_config() {
+  local config_path="$1"
+
+  node - "$config_path" "$OPENCLAW_CAO_PLUGIN_ID" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const configPath = process.argv[2];
+const pluginId = process.argv[3];
+
+const defaultConfig = {
+  plugins: {
+    enabled: true,
+    entries: {
+      [pluginId]: {
+        enabled: true,
+        config: {
+          baseUrl: process.env.CAO_SERVER_URL || "http://localhost:9889",
+          defaultProvider: "openclaw",
+        },
+      },
+    },
+  },
+  tools: {
+    allow: ["group:openclaw", "group:plugins", "cao_handoff", "cao_assign", "cao_send_message"],
+  },
+};
+
+function ensureObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+let cfg = {};
+if (fs.existsSync(configPath)) {
+  const raw = fs.readFileSync(configPath, "utf8").trim();
+  if (raw.length > 0) {
+    try {
+      cfg = JSON.parse(raw);
+    } catch (err) {
+      process.stderr.write(
+        `OPENCLAW_CONFIG_PARSE_ERROR:${configPath}: ${String(err && err.message ? err.message : err)}\n`,
+      );
+      process.exit(2);
+    }
+  }
+}
+
+cfg = ensureObject(cfg);
+cfg.plugins = ensureObject(cfg.plugins);
+cfg.plugins.enabled = true;
+cfg.plugins.entries = ensureObject(cfg.plugins.entries);
+
+const currentEntry = ensureObject(cfg.plugins.entries[pluginId]);
+const currentPluginConfig = ensureObject(currentEntry.config);
+cfg.plugins.entries[pluginId] = {
+  ...currentEntry,
+  enabled: true,
+  config: {
+    baseUrl: currentPluginConfig.baseUrl || defaultConfig.plugins.entries[pluginId].config.baseUrl,
+    defaultProvider:
+      currentPluginConfig.defaultProvider ||
+      defaultConfig.plugins.entries[pluginId].config.defaultProvider,
+    ...currentPluginConfig,
+  },
+};
+
+cfg.tools = ensureObject(cfg.tools);
+const allow = Array.isArray(cfg.tools.allow) ? cfg.tools.allow.map(String) : [];
+const requiredAllow = defaultConfig.tools.allow;
+for (const item of requiredAllow) {
+  if (!allow.includes(item)) {
+    allow.push(item);
+  }
+}
+cfg.tools.allow = allow;
+
+const dir = path.dirname(configPath);
+fs.mkdirSync(dir, { recursive: true });
+fs.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+NODE
+}
+
+install_openclaw_cao_plugin() {
+  if [[ "$OPENCLAW_CAO_PLUGIN_ENABLE" != "1" ]]; then
+    info "已跳过 OpenClaw CAO 插件安装（OPENCLAW_CAO_PLUGIN_ENABLE=$OPENCLAW_CAO_PLUGIN_ENABLE）。"
+    return
+  fi
+
+  if ! has_cmd openclaw; then
+    warn "未检测到 openclaw，跳过 CAO 插件安装。"
+    return
+  fi
+
+  local plugin_source_dir
+  plugin_source_dir="$(openclaw_plugin_source_dir)"
+  if [[ ! -d "$plugin_source_dir" ]]; then
+    warn "未找到 OpenClaw 插件目录，跳过: $plugin_source_dir"
+    return
+  fi
+
+  # OpenClaw blocks plugin candidates from world-writable paths (common in
+  # mounted Windows/WSL workspaces like /mnt/* with mode 777). Stage a safe
+  # local copy under ~/.openclaw/extensions before installing in link mode.
+  local staged_plugin_dir
+  staged_plugin_dir="$HOME/.openclaw/extensions/${OPENCLAW_CAO_PLUGIN_ID}-local"
+  mkdir -p "$staged_plugin_dir"
+  cp -f "$plugin_source_dir/index.js" "$staged_plugin_dir/index.js"
+  cp -f "$plugin_source_dir/openclaw.plugin.json" "$staged_plugin_dir/openclaw.plugin.json"
+  if [[ -f "$plugin_source_dir/package.json" ]]; then
+    cp -f "$plugin_source_dir/package.json" "$staged_plugin_dir/package.json"
+  fi
+  chmod 755 "$staged_plugin_dir"
+  chmod 644 "$staged_plugin_dir/index.js" "$staged_plugin_dir/openclaw.plugin.json"
+  if [[ -f "$staged_plugin_dir/package.json" ]]; then
+    chmod 644 "$staged_plugin_dir/package.json"
+  fi
+
+  info "安装 OpenClaw CAO 插件（link 模式）: $staged_plugin_dir"
+  if ! openclaw plugins install -l "$staged_plugin_dir"; then
+    print_manual_install_command "OpenClaw CAO 插件" "openclaw plugins install -l \"$staged_plugin_dir\""
+    warn "OpenClaw CAO 插件安装失败，后续配置步骤跳过。"
+    return
+  fi
+
+  local config_path
+  config_path="$(openclaw_config_path)"
+  info "写入 OpenClaw 配置（启用 $OPENCLAW_CAO_PLUGIN_ID + 工具 allowlist）: $config_path"
+  if ! merge_openclaw_plugin_config "$config_path"; then
+    print_manual_install_command "OpenClaw 配置合并" "请手工在 $(openclaw_config_path) 中启用插件 '$OPENCLAW_CAO_PLUGIN_ID' 并将 tools.allow 加入 cao_handoff/cao_assign/cao_send_message"
+    warn "OpenClaw 配置自动合并失败，可能是现有配置为 JSON5（含注释/尾逗号）导致。"
+    return
+  fi
+
+  info "OpenClaw CAO 插件安装并配置完成。"
+}
+
 install_skills_discovery_for_all_agents() {
   ensure_nodejs
   info "安装 skills-discovery 服务（所有支持 skills 的 agent 共用）: $SKILLS_DISCOVERY_SPEC"
@@ -379,6 +527,7 @@ main() {
   install_cao_tool
   install_default_agent_profiles
   install_agent_clis
+  install_openclaw_cao_plugin
   install_skills_discovery_for_all_agents
 
   info "安装流程完成。"

@@ -212,9 +212,15 @@ bash scripts/install_and_start_services.sh
 
 如需静默安装 OpenClaw CLI（跳过引导/配置阶段），`scripts/install_services.sh` 会自动以非交互模式执行安装。
 
+默认情况下，`scripts/install_services.sh` 还会自动安装并启用仓库内置的 OpenClaw 插件 `cao-tools`（link 模式），并将 `cao_handoff`、`cao_assign`、`cao_send_message` 写入 `tools.allow`。如需跳过该步骤，可设置：
+
+```bash
+OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
+```
+
 ### 2.1 Docker 启动
 
-仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。容器内不会复制当前仓库源码，而是在镜像构建时仅下载 `scripts/*.sh`，并在启动时通过安装脚本完成环境安装与服务启动。
+仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。镜像构建时会在线下载 `scripts/*.sh`，并复制本地 `extensions/openclaw-cao-tools/` 到容器；启动时通过安装脚本完成环境安装与服务启动（包含 OpenClaw `cao-tools` 插件自动安装）。
 
 ```bash
 docker compose up --build

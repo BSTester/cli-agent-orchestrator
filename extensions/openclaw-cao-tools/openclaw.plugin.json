@@ -1,0 +1,32 @@
+{
+  "id": "cao-tools",
+  "name": "CAO Tools",
+  "description": "Expose CAO handoff/assign/send_message tools to OpenClaw agents",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseUrl": {
+        "type": "string",
+        "description": "CAO API base URL",
+        "default": "http://localhost:9889"
+      },
+      "defaultProvider": {
+        "type": "string",
+        "description": "Default CAO provider for worker terminals",
+        "default": "openclaw"
+      },
+      "requestTimeoutMs": {
+        "type": "number",
+        "description": "HTTP request timeout in milliseconds",
+        "default": 15000,
+        "minimum": 1000,
+        "maximum": 120000
+      },
+      "senderTerminalId": {
+        "type": "string",
+        "description": "Fallback sender terminal id for send_message/assign/handoff"
+      }
+    }
+  }
+}
