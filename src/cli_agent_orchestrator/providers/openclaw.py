@@ -88,7 +88,7 @@ class OpenClawProvider(SimpleTuiProvider):
     _IDLE_PROMPT_PATTERN = (
         r"(?:^[ \t]*[oO]pen[cC]law[ \t]*[>❯›][ \t]*$|"
         r"[>❯›][ \t]+Type your message|"
-        r"gateway\s+connected\s*\|\s*idle|"
+        r"(?:gateway\s+)?connected\s*\|\s*idle|"
         r"ctrl\+j[ \t]+for[ \t]+newline|"
         r"shift\+tab\s+switch\s+mode)"
     )

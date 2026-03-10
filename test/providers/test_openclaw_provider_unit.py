@@ -48,6 +48,22 @@ def test_openclaw_status_bar_idle_detected_as_idle(mock_tmux) -> None:
 
 
 @patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_openclaw_status_bar_idle_without_gateway_detected_as_idle(mock_tmux) -> None:
+    mock_tmux.get_history.return_value = (
+        "你想怎么用 MCP？ 告诉我你的场景，我可以推荐最佳方案：\n"
+        "- 是想在 Claude Desktop 中使用 CAO 工具？\n"
+        "- 还是想让我帮你执行某些 CAO 功能？\n"
+        "- 或者是其他需求？\n"
+        "connected | idle\n"
+        "agent cto (cto) | session main (openclaw-tui) | moonshot/kimi-k2.5 | tokens ?/256k\n"
+    )
+
+    provider = OpenClawProvider("t3b", "s3", "w3")
+
+    assert provider.get_status() == TerminalStatus.IDLE
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
 def test_openclaw_running_status_bar_detected_as_processing(mock_tmux) -> None:
     mock_tmux.get_history.return_value = (
         "❯  Type your message\n"
