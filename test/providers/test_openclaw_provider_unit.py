@@ -1,5 +1,6 @@
 """Unit tests for OpenClaw provider behavior."""
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
@@ -45,6 +46,25 @@ def test_openclaw_status_bar_idle_detected_as_idle(mock_tmux) -> None:
     provider = OpenClawProvider("t3", "s3", "w3")
 
     assert provider.get_status() == TerminalStatus.IDLE
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_openclaw_running_status_bar_detected_as_processing(mock_tmux) -> None:
+    mock_tmux.get_history.return_value = (
+        "❯  Type your message\n"
+        "shift+tab switch mode\n"
+        "\n"
+        "shei\n"
+        "\n"
+        "⠼ running • 2s | connected\n"
+        "agent ceo (ceo) | session main (openclaw-tui) | moonshot/kimi-k2.5 | tokens ?/256k\n"
+    )
+
+    provider = OpenClawProvider("t4", "s4", "w4")
+    provider._input_received = True
+    provider._input_received_at = time.time() - 10.0
+
+    assert provider.get_status() == TerminalStatus.PROCESSING
 
 
 class TestOpenClawProviderInitialization:
