@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.openclaw import OpenClawProvider, ProviderError
+from cli_agent_orchestrator.providers.openclaw import (
+    OpenClawProvider,
+    ProviderError,
+    _build_openclaw_soul,
+)
 
 
 @patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
@@ -32,6 +36,15 @@ def test_openclaw_hint_detected_as_idle(mock_tmux) -> None:
 
 
 class TestOpenClawProviderInitialization:
+    def test_build_openclaw_soul_falls_back_through_profile_fields(self) -> None:
+        profile = MagicMock()
+        profile.name = "ceo"
+        profile.system_prompt = None
+        profile.prompt = None
+        profile.description = "Lead the company"
+
+        assert _build_openclaw_soul(profile) == "Lead the company"
+
     @patch("cli_agent_orchestrator.providers.openclaw.wait_until_status")
     @patch("cli_agent_orchestrator.providers.openclaw.load_agent_profile")
     @patch("cli_agent_orchestrator.providers.openclaw.subprocess.run")
@@ -148,14 +161,16 @@ class TestOpenClawProviderInitialization:
             text=True,
             check=True,
         )
+        # OpenClaw agent IDs use normalized kebab-case names.
         mock_simple_tmux.send_keys.assert_called_once_with("s1", "w1", "openclaw tui")
         mock_tmux.send_keys.assert_called_once_with("s1", "w1", "/agent code-supervisor")
 
     @patch("cli_agent_orchestrator.providers.openclaw.subprocess.run")
     @patch("cli_agent_orchestrator.providers.openclaw.load_agent_profile")
     def test_initialize_raises_provider_error_on_invalid_agent_profile(
-        self, mock_load_profile, _mock_subprocess
+        self, mock_load_profile, mock_subprocess
     ) -> None:
+        mock_subprocess.return_value = MagicMock(stdout="", stderr="")
         mock_load_profile.side_effect = RuntimeError("missing profile")
         provider = OpenClawProvider("t1", "s1", "w1", "missing")
 

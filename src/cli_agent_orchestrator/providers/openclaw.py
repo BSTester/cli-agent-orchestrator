@@ -1,9 +1,9 @@
 """OpenClaw CLI provider implementation."""
 
 import json
+import logging
 import re
 import subprocess
-from pathlib import Path
 from typing import Any, Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
@@ -13,6 +13,8 @@ from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.simple_tui import SimpleTuiProvider
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.terminal import wait_until_status
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderError(Exception):
@@ -43,7 +45,15 @@ def _normalize_openclaw_agent_name(agent_name: str) -> str:
 
 def _build_openclaw_soul(profile: AgentProfile) -> str:
     """Build SOUL.md content for an OpenClaw agent workspace."""
-    soul = (profile.system_prompt or profile.prompt or profile.description).strip()
+    if profile.system_prompt is not None:
+        raw_soul = profile.system_prompt
+    elif profile.prompt is not None:
+        raw_soul = profile.prompt
+    elif profile.description is not None:
+        raw_soul = profile.description
+    else:
+        raw_soul = profile.name
+    soul = raw_soul.strip()
     if not soul:
         raise ProviderError(f"Agent profile '{profile.name}' does not contain any prompt content")
     return soul
@@ -64,6 +74,11 @@ def _extract_openclaw_agent_ids(payload: Any) -> set[str]:
             list_ids.update(_extract_openclaw_agent_ids(item))
         return list_ids
     return set()
+
+
+def _contains_openclaw_agent_id(output: str, agent_name: str) -> bool:
+    """Match whole OpenClaw agent ids in plain-text `agents list` output."""
+    return bool(re.search(rf"(?<![a-z0-9-]){re.escape(agent_name)}(?![a-z0-9-])", output))
 
 
 class OpenClawProvider(SimpleTuiProvider):
@@ -125,7 +140,8 @@ class OpenClawProvider(SimpleTuiProvider):
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError:
-            return agent_name in result.stdout
+            logger.warning("OpenClaw agents list did not return JSON; falling back to text parsing")
+            return _contains_openclaw_agent_id(result.stdout, agent_name)
 
         return agent_name in _extract_openclaw_agent_ids(payload)
 
@@ -145,6 +161,8 @@ class OpenClawProvider(SimpleTuiProvider):
         workspace_dir.mkdir(parents=True, exist_ok=True)
         (workspace_dir / "SOUL.md").write_text(_build_openclaw_soul(profile))
 
+        # Prevent OpenClaw from blocking CAO startup with interactive prompts while
+        # registering the agent workspace for automated launch flows.
         self._run_openclaw_command(
             [
                 "openclaw",
