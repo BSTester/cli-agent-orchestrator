@@ -1,6 +1,5 @@
 """Unit tests for OpenClaw provider behavior."""
 
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
@@ -62,7 +61,7 @@ def test_openclaw_running_status_bar_detected_as_processing(mock_tmux) -> None:
 
     provider = OpenClawProvider("t4", "s4", "w4")
     provider._input_received = True
-    provider._input_received_at = time.time() - 10.0
+    provider._input_received_at = 1_234_567_890.0
 
     assert provider.get_status() == TerminalStatus.PROCESSING
 
