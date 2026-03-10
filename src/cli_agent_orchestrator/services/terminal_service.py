@@ -18,6 +18,7 @@ Terminal Workflow:
 """
 
 import logging
+import threading
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
@@ -29,10 +30,11 @@ from cli_agent_orchestrator.clients.database import (
     update_last_active,
 )
 from cli_agent_orchestrator.clients.tmux import tmux_client
-from cli_agent_orchestrator.constants import SESSION_PREFIX, TERMINAL_LOG_DIR
+from cli_agent_orchestrator.constants import DEFAULT_PROVIDER, SESSION_PREFIX, TERMINAL_LOG_DIR
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.terminal import (
     generate_session_name,
     generate_terminal_id,
@@ -40,6 +42,9 @@ from cli_agent_orchestrator.utils.terminal import (
 )
 
 logger = logging.getLogger(__name__)
+
+_off_duty_terminals: set[str] = set()
+_off_duty_lock = threading.Lock()
 
 
 class OutputMode(str, Enum):
@@ -53,8 +58,24 @@ class OutputMode(str, Enum):
     LAST = "last"
 
 
+def _resolve_provider(agent_profile: str, provider: Optional[str]) -> str:
+    """Resolve provider from explicit input -> profile field -> default."""
+    if provider:
+        return provider
+
+    try:
+        profile = load_agent_profile(agent_profile)
+        if profile.provider is not None:
+            return profile.provider.value
+    except Exception:
+        # Keep backward-compatible behavior if profile cannot be loaded.
+        pass
+
+    return DEFAULT_PROVIDER
+
+
 def create_terminal(
-    provider: str,
+    provider: Optional[str],
     agent_profile: str,
     session_name: Optional[str] = None,
     new_session: bool = False,
@@ -70,7 +91,7 @@ def create_terminal(
     5. Set up terminal logging via tmux pipe-pane
 
     Args:
-        provider: Provider type string (e.g., "kiro_cli", "claude_code")
+        provider: Optional provider type string (e.g., "kiro_cli", "claude_code")
         agent_profile: Name of the agent profile to use
         session_name: Optional custom session name. If not provided, auto-generated.
         new_session: If True, creates a new tmux session. If False, adds to existing.
@@ -83,7 +104,11 @@ def create_terminal(
         ValueError: If session already exists (new_session=True) or not found (new_session=False)
         TimeoutError: If provider initialization times out
     """
+    terminal_id = None
+    window_name = None
     try:
+        resolved_provider = _resolve_provider(agent_profile, provider)
+
         # Step 1: Generate unique identifiers
         terminal_id = generate_terminal_id()
 
@@ -113,12 +138,12 @@ def create_terminal(
             )
 
         # Step 3: Persist terminal metadata to database
-        db_create_terminal(terminal_id, session_name, window_name, provider, agent_profile)
+        db_create_terminal(terminal_id, session_name, window_name, resolved_provider, agent_profile)
 
         # Step 4: Create and initialize the CLI provider
         # This starts the agent (e.g., runs "kiro-cli chat --agent developer")
         provider_instance = provider_manager.create_provider(
-            provider, terminal_id, session_name, window_name, agent_profile
+            resolved_provider, terminal_id, session_name, window_name, agent_profile
         )
         provider_instance.initialize()
 
@@ -132,7 +157,7 @@ def create_terminal(
         terminal = Terminal(
             id=terminal_id,
             name=window_name,
-            provider=ProviderType(provider),
+            provider=ProviderType(resolved_provider),
             session_name=session_name,
             agent_profile=agent_profile,
             status=TerminalStatus.IDLE,
@@ -151,11 +176,95 @@ def create_terminal(
             provider_manager.cleanup_provider(terminal_id)
         except Exception:
             pass  # Ignore cleanup errors
-        if new_session and session_name:
-            try:
+        try:
+            if session_name:
+                if new_session:
+                    tmux_client.kill_session(session_name)
+                elif window_name:
+                    tmux_client.kill_window(session_name, window_name)
+        except Exception:
+            pass  # Ignore cleanup errors
+        try:
+            if terminal_id:
+                db_delete_terminal(terminal_id)
+        except Exception:
+            pass  # Ignore cleanup errors
+        raise
+
+
+def create_shell_terminal(
+    session_name: Optional[str] = None,
+    working_directory: Optional[str] = None,
+) -> Terminal:
+    """Create a plain shell terminal without launching any agent provider CLI."""
+    terminal_id = None
+    try:
+        terminal_id = generate_terminal_id()
+
+        if not session_name:
+            session_name = generate_session_name()
+
+        window_name = generate_window_name("shell")
+
+        if not session_name.startswith(SESSION_PREFIX):
+            session_name = f"{SESSION_PREFIX}{session_name}"
+
+        if tmux_client.session_exists(session_name):
+            raise ValueError(f"Session '{session_name}' already exists")
+
+        tmux_client.create_session(session_name, window_name, terminal_id, working_directory)
+
+        db_create_terminal(
+            terminal_id,
+            session_name,
+            window_name,
+            ProviderType.SHELL.value,
+            None,
+        )
+
+        provider_instance = provider_manager.create_provider(
+            ProviderType.SHELL.value,
+            terminal_id,
+            session_name,
+            window_name,
+            None,
+        )
+        provider_instance.initialize()
+
+        log_path = TERMINAL_LOG_DIR / f"{terminal_id}.log"
+        log_path.touch()
+        tmux_client.pipe_pane(session_name, window_name, str(log_path))
+
+        terminal = Terminal(
+            id=terminal_id,
+            name=window_name,
+            provider=ProviderType.SHELL,
+            session_name=session_name,
+            agent_profile=None,
+            status=TerminalStatus.IDLE,
+            last_active=datetime.now(),
+        )
+
+        logger.info("Created shell terminal: %s in session: %s", terminal_id, session_name)
+        return terminal
+
+    except Exception as e:
+        logger.error(f"Failed to create shell terminal: {e}")
+        try:
+            if terminal_id:
+                provider_manager.cleanup_provider(terminal_id)
+        except Exception:
+            pass
+        try:
+            if session_name:
                 tmux_client.kill_session(session_name)
-            except:
-                pass  # Ignore cleanup errors
+        except Exception:
+            pass
+        try:
+            if terminal_id:
+                db_delete_terminal(terminal_id)
+        except Exception:
+            pass
         raise
 
 
@@ -166,11 +275,17 @@ def get_terminal(terminal_id: str) -> Dict:
         if not metadata:
             raise ValueError(f"Terminal '{terminal_id}' not found")
 
-        # Get status from provider
-        provider = provider_manager.get_provider(terminal_id)
-        if provider is None:
-            raise ValueError(f"Provider not found for terminal {terminal_id}")
-        status = provider.get_status().value
+        with _off_duty_lock:
+            is_off_duty = terminal_id in _off_duty_terminals
+
+        if is_off_duty:
+            status = TerminalStatus.OFF_DUTY.value
+        else:
+            # Get status from provider
+            provider = provider_manager.get_provider(terminal_id)
+            if provider is None:
+                raise ValueError(f"Provider not found for terminal {terminal_id}")
+            status = provider.get_status().value
 
         return {
             "id": metadata["id"],
@@ -228,9 +343,14 @@ def send_input(terminal_id: str, message: str) -> bool:
         if not metadata:
             raise ValueError(f"Terminal '{terminal_id}' not found")
 
+        with _off_duty_lock:
+            _off_duty_terminals.discard(terminal_id)
+
         # Check how many Enter keys the provider needs after paste
         provider = provider_manager.get_provider(terminal_id)
         enter_count = provider.paste_enter_count if provider else 1
+        if enter_count < 1:
+            enter_count = 1
 
         tmux_client.send_keys(
             metadata["tmux_session"], metadata["tmux_window"], message, enter_count=enter_count
@@ -309,6 +429,9 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
 def delete_terminal(terminal_id: str) -> bool:
     """Delete terminal."""
     try:
+        with _off_duty_lock:
+            _off_duty_terminals.discard(terminal_id)
+
         # Get metadata before deletion
         metadata = get_terminal_metadata(terminal_id)
 
@@ -328,3 +451,9 @@ def delete_terminal(terminal_id: str) -> bool:
     except Exception as e:
         logger.error(f"Failed to delete terminal {terminal_id}: {e}")
         raise
+
+
+def mark_terminal_off_duty(terminal_id: str) -> None:
+    """Mark terminal as off duty after explicit exit command."""
+    with _off_duty_lock:
+        _off_duty_terminals.add(terminal_id)

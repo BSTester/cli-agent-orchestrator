@@ -8,6 +8,8 @@ Codex, Q CLI) through tmux sessions, providing a unified interface
 for agent management.
 """
 
+import os
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from cli_agent_orchestrator.models.provider import ProviderType
@@ -21,8 +23,8 @@ SESSION_PREFIX = "cao-"
 # =============================================================================
 # Provider Configuration
 # =============================================================================
-# Available CLI providers - derived from the ProviderType enum for consistency
-PROVIDERS = [p.value for p in ProviderType]
+# Available agent CLI providers exposed to launch/install flows.
+PROVIDERS = [p.value for p in ProviderType if p is not ProviderType.SHELL]
 
 # Default provider used when --provider flag is not specified
 # Kiro CLI is the recommended provider for new projects
@@ -68,12 +70,19 @@ RETENTION_DAYS = 14
 # Directory for agent context files (shared state between sessions)
 AGENT_CONTEXT_DIR = CAO_HOME_DIR / "agent-context"
 
+# Directory for flow/task definition files managed by control panel
+AGENT_FLOW_DIR = CAO_HOME_DIR / "agent-flow"
+
 # Local agent store for custom agent profiles
 LOCAL_AGENT_STORE_DIR = CAO_HOME_DIR / "agent-store"
+OPENCLAW_AGENT_WORKSPACES_DIR = CAO_HOME_DIR / "openclaw-agents"
 
 # Provider-specific agent directories
 Q_AGENTS_DIR = Path.home() / ".aws" / "amazonq" / "cli-agents"  # Q CLI agents
 KIRO_AGENTS_DIR = Path.home() / ".kiro" / "agents"  # Kiro CLI agents
+QODER_AGENTS_DIR = Path.home() / ".qoder" / "agents"  # Qoder CLI agents
+CODEBUDDY_AGENTS_DIR = Path.home() / ".codebuddy" / "agents"  # CodeBuddy CLI agents
+COPILOT_AGENTS_DIR = Path.home() / ".copilot" / "agents"  # Copilot custom agents
 
 # =============================================================================
 # Database Configuration
@@ -86,9 +95,12 @@ DATABASE_URL = f"sqlite:///{DATABASE_FILE}"
 # Server Configuration
 # =============================================================================
 # FastAPI server settings for the CAO API
-SERVER_HOST = "localhost"
-SERVER_PORT = 9889
-SERVER_VERSION = "0.1.0"
+SERVER_HOST = os.getenv("SERVER_HOST", "localhost")
+SERVER_PORT = int(os.getenv("SERVER_PORT", "9889"))
+try:
+    SERVER_VERSION = version("cli-agent-orchestrator")
+except PackageNotFoundError:
+    SERVER_VERSION = "1.1.0"
 API_BASE_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
 
 # CORS allowed origins for web-based clients

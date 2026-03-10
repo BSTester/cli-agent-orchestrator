@@ -2,10 +2,13 @@
 
 import asyncio
 import logging
+import pathlib
 from contextlib import asynccontextmanager
 from typing import Annotated, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Path, Query, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from watchdog.observers.polling import PollingObserver
 
@@ -13,8 +16,10 @@ from cli_agent_orchestrator.clients.database import (
     create_inbox_message,
     get_inbox_messages,
     init_db,
+    upsert_terminal_latest_task,
 )
 from cli_agent_orchestrator.constants import (
+    CORS_ORIGINS,
     INBOX_POLLING_INTERVAL,
     SERVER_HOST,
     SERVER_PORT,
@@ -74,6 +79,10 @@ class WorkingDirectoryResponse(BaseModel):
     )
 
 
+class FlowCreateRequest(BaseModel):
+    file_path: str = Field(min_length=1, description="Path to flow markdown file")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
@@ -117,16 +126,110 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS — allow browser-based clients (including the bundled console UI)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files for the built-in web console
+_STATIC_DIR = pathlib.Path(__file__).parent.parent / "static"
+app.mount("/ui", StaticFiles(directory=str(_STATIC_DIR), html=True), name="ui")
+
 
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "cli-agent-orchestrator"}
 
 
+@app.get("/flows")
+async def list_flows() -> List[Dict]:
+    try:
+        return [flow.model_dump() for flow in flow_service.list_flows()]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list flows: {str(e)}",
+        )
+
+
+@app.post("/flows", status_code=status.HTTP_201_CREATED)
+async def create_flow(payload: FlowCreateRequest) -> Dict:
+    try:
+        flow = flow_service.add_flow(payload.file_path)
+        return flow.model_dump()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create flow: {str(e)}",
+        )
+
+
+@app.post("/flows/{name}/run")
+async def run_flow(name: str) -> Dict:
+    try:
+        executed = flow_service.execute_flow(name)
+        return {"success": True, "name": name, "executed": executed}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to run flow: {str(e)}",
+        )
+
+
+@app.post("/flows/{name}/enable")
+async def enable_flow(name: str) -> Dict:
+    try:
+        flow_service.enable_flow(name)
+        return {"success": True, "name": name, "enabled": True}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enable flow: {str(e)}",
+        )
+
+
+@app.post("/flows/{name}/disable")
+async def disable_flow(name: str) -> Dict:
+    try:
+        flow_service.disable_flow(name)
+        return {"success": True, "name": name, "enabled": False}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to disable flow: {str(e)}",
+        )
+
+
+@app.delete("/flows/{name}")
+async def delete_flow(name: str) -> Dict:
+    try:
+        flow_service.remove_flow(name)
+        return {"success": True, "name": name}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete flow: {str(e)}",
+        )
+
+
 @app.post("/sessions", response_model=Terminal, status_code=status.HTTP_201_CREATED)
 async def create_session(
-    provider: str,
     agent_profile: str,
+    provider: Optional[str] = None,
     session_name: Optional[str] = None,
     working_directory: Optional[str] = None,
 ) -> Terminal:
@@ -139,6 +242,20 @@ async def create_session(
             new_session=True,
             working_directory=working_directory,
         )
+
+        # Auto-set agent alias based on profile display name
+        try:
+            import os
+            import requests
+            control_panel_port = int(os.getenv("CONTROL_PANEL_PORT", "8000"))
+            requests.post(
+                f"http://localhost:{control_panel_port}/console/internal/agent-alias/auto-set",
+                json={"terminal_id": result.id, "agent_profile": agent_profile},
+                timeout=5,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to auto-set agent alias for terminal {result.id}: {e}")
+
         return result
 
     except ValueError as e:
@@ -195,8 +312,8 @@ async def delete_session(session_name: str) -> Dict:
 )
 async def create_terminal_in_session(
     session_name: str,
-    provider: str,
     agent_profile: str,
+    provider: Optional[str] = None,
     working_directory: Optional[str] = None,
 ) -> Terminal:
     """Create additional terminal in existing session."""
@@ -208,6 +325,20 @@ async def create_terminal_in_session(
             new_session=False,
             working_directory=working_directory,
         )
+
+        # Auto-set agent alias based on profile display name
+        try:
+            import os
+            import requests
+            control_panel_port = int(os.getenv("CONTROL_PANEL_PORT", "8000"))
+            requests.post(
+                f"http://localhost:{control_panel_port}/console/internal/agent-alias/auto-set",
+                json={"terminal_id": result.id, "agent_profile": agent_profile},
+                timeout=5,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to auto-set agent alias for terminal {result.id}: {e}")
+
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -265,6 +396,8 @@ async def get_terminal_working_directory(terminal_id: TerminalId) -> WorkingDire
 async def send_terminal_input(terminal_id: TerminalId, message: str) -> Dict:
     try:
         success = terminal_service.send_input(terminal_id, message)
+        if success:
+            upsert_terminal_latest_task(terminal_id, message)
         return {"success": success}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -272,6 +405,21 @@ async def send_terminal_input(terminal_id: TerminalId, message: str) -> Dict:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send input: {str(e)}",
+        )
+
+
+@app.post("/terminals/{terminal_id}/special-key")
+async def send_terminal_special_key(terminal_id: TerminalId, key: str) -> Dict:
+    """Send a tmux special key sequence to a terminal."""
+    try:
+        success = terminal_service.send_special_key(terminal_id, key)
+        return {"success": success}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send special key: {str(e)}",
         )
 
 
@@ -306,6 +454,7 @@ async def exit_terminal(terminal_id: TerminalId) -> Dict:
             terminal_service.send_special_key(terminal_id, exit_command)
         else:
             terminal_service.send_input(terminal_id, exit_command)
+        terminal_service.mark_terminal_off_duty(terminal_id)
         return {"success": True}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -338,6 +487,7 @@ async def create_inbox_message_endpoint(
     """Create inbox message and attempt immediate delivery."""
     try:
         inbox_msg = create_inbox_message(sender_id, receiver_id, message)
+        upsert_terminal_latest_task(receiver_id, message)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:

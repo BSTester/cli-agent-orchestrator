@@ -7,10 +7,15 @@ from cli_agent_orchestrator.clients.database import get_terminal_metadata
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
+from cli_agent_orchestrator.providers.codebuddy import CodeBuddyProvider
+from cli_agent_orchestrator.providers.copilot import CopilotProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.gemini_cli import GeminiCliProvider
 from cli_agent_orchestrator.providers.kiro_cli import KiroCliProvider
+from cli_agent_orchestrator.providers.openclaw import OpenClawProvider
+from cli_agent_orchestrator.providers.qoder_cli import QoderCliProvider
 from cli_agent_orchestrator.providers.q_cli import QCliProvider
+from cli_agent_orchestrator.providers.shell import ShellProvider
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +37,9 @@ class ProviderManager:
         """Create and store provider instance."""
         try:
             provider: BaseProvider
-            if provider_type == ProviderType.Q_CLI.value:
+            if provider_type == ProviderType.SHELL.value:
+                provider = ShellProvider(terminal_id, tmux_session, tmux_window)
+            elif provider_type == ProviderType.Q_CLI.value:
                 if not agent_profile:
                     raise ValueError("Q CLI provider requires agent_profile parameter")
                 provider = QCliProvider(terminal_id, tmux_session, tmux_window, agent_profile)
@@ -44,6 +51,14 @@ class ProviderManager:
                 provider = ClaudeCodeProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             elif provider_type == ProviderType.CODEX.value:
                 provider = CodexProvider(terminal_id, tmux_session, tmux_window, agent_profile)
+            elif provider_type == ProviderType.QODER_CLI.value:
+                provider = QoderCliProvider(terminal_id, tmux_session, tmux_window, agent_profile)
+            elif provider_type == ProviderType.CODEBUDDY.value:
+                provider = CodeBuddyProvider(terminal_id, tmux_session, tmux_window, agent_profile)
+            elif provider_type == ProviderType.COPILOT.value:
+                provider = CopilotProvider(terminal_id, tmux_session, tmux_window, agent_profile)
+            elif provider_type == ProviderType.OPENCLAW.value:
+                provider = OpenClawProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             elif provider_type == ProviderType.GEMINI_CLI.value:
                 provider = GeminiCliProvider(terminal_id, tmux_session, tmux_window, agent_profile)
             else:

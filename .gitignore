@@ -38,3 +38,16 @@ work/
 
 # Memory
 context/
+
+# Node.js / Next.js frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.swc/
+_bmad
+.kilocode
+.codebuddy
+.cursor
+.github
+.kilocodemodes
+.runtime.next
+.next/

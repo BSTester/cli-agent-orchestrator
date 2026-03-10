@@ -7,6 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 from cli_agent_orchestrator.cli.commands.launch import launch
+from cli_agent_orchestrator.models.provider import ProviderType
 
 
 def test_launch_includes_working_directory():
@@ -38,6 +39,58 @@ def test_launch_includes_working_directory():
 
         assert "working_directory" in params
         assert params["working_directory"] == os.path.realpath(os.getcwd())
+
+
+def test_launch_uses_explicit_working_directory(tmp_path):
+    """Test that launch uses explicitly provided --working-directory."""
+    runner = CliRunner()
+
+    with (
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.subprocess.run"),
+    ):
+        mock_post.return_value.json.return_value = {
+            "session_name": "test-session",
+            "name": "test-terminal",
+        }
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = runner.invoke(
+            launch,
+            [
+                "--agents",
+                "test-agent",
+                "--working-directory",
+                str(tmp_path),
+                "--headless",
+                "--yolo",
+            ],
+        )
+
+        assert result.exit_code == 0
+        params = mock_post.call_args.kwargs["params"]
+        assert params["working_directory"] == os.path.realpath(str(tmp_path))
+
+
+def test_launch_invalid_working_directory_fails():
+    """Test launch fails when --working-directory does not exist."""
+    runner = CliRunner()
+
+    missing_path = "/tmp/path-that-does-not-exist-for-cao-launch"
+    result = runner.invoke(
+        launch,
+        [
+            "--agents",
+            "test-agent",
+            "--working-directory",
+            missing_path,
+            "--headless",
+            "--yolo",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Working directory does not exist or is not a directory" in result.output
 
 
 def test_launch_invalid_provider():
@@ -209,3 +262,129 @@ def test_launch_workspace_confirmation_for_default_provider():
         assert result.exit_code == 0
         assert "provider (kiro_cli) will be trusted to perform all actions" in result.output
         assert "Do you trust all the actions in this folder?" in result.output
+
+
+def test_launch_workspace_confirmation_for_openclaw_provider():
+    """Test that openclaw also triggers workspace confirmation."""
+    runner = CliRunner()
+
+    with (
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.subprocess.run"),
+    ):
+        mock_post.return_value.json.return_value = {
+            "session_name": "test-session",
+            "name": "test-terminal",
+        }
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = runner.invoke(
+            launch,
+            ["--agents", "test-agent", "--provider", "openclaw", "--headless"],
+            input="y\n",
+        )
+
+        assert result.exit_code == 0
+        assert "provider (openclaw) will be trusted to perform all actions" in result.output
+
+
+def test_launch_uses_provider_from_agent_profile_when_not_explicit():
+    """Test that launch resolves provider from profile when --provider is omitted."""
+    runner = CliRunner()
+
+    with (
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.subprocess.run"),
+        patch("cli_agent_orchestrator.cli.commands.launch.load_agent_profile") as mock_load_profile,
+    ):
+        profile = type("Profile", (), {"provider": ProviderType.CODEX})()
+        mock_load_profile.return_value = profile
+        mock_post.return_value.json.return_value = {
+            "session_name": "test-session",
+            "name": "test-terminal",
+        }
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = runner.invoke(launch, ["--agents", "developer", "--headless", "--yolo"])
+
+        assert result.exit_code == 0
+        params = mock_post.call_args.kwargs["params"]
+        assert params["provider"] == ProviderType.CODEX.value
+
+
+def test_launch_explicit_provider_overrides_profile_provider():
+    """Test explicit --provider takes precedence over profile provider."""
+    runner = CliRunner()
+
+    with (
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.subprocess.run"),
+        patch("cli_agent_orchestrator.cli.commands.launch.load_agent_profile") as mock_load_profile,
+    ):
+        profile = type("Profile", (), {"provider": ProviderType.CODEX})()
+        mock_load_profile.return_value = profile
+        mock_post.return_value.json.return_value = {
+            "session_name": "test-session",
+            "name": "test-terminal",
+        }
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = runner.invoke(
+            launch,
+            [
+                "--agents",
+                "developer",
+                "--provider",
+                ProviderType.CLAUDE_CODE.value,
+                "--headless",
+                "--yolo",
+            ],
+        )
+
+        assert result.exit_code == 0
+        params = mock_post.call_args.kwargs["params"]
+        assert params["provider"] == ProviderType.CLAUDE_CODE.value
+
+
+def test_launch_retries_without_working_directory_when_rejected():
+    """Test launch retries without working_directory when API rejects external path."""
+    runner = CliRunner()
+
+    with (
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.subprocess.run"),
+    ):
+        import requests
+
+        first_response = requests.Response()
+        first_response.status_code = 400
+        first_response._content = (
+            b'{"detail":"Working directory not allowed: /mnt/j/project (outside home)"}'
+        )
+        first_response.url = "http://localhost:9889/sessions"
+        first_response.raise_for_status = lambda: (_ for _ in ()).throw(
+            requests.exceptions.HTTPError(response=first_response)
+        )
+
+        second_response = requests.Response()
+        second_response.status_code = 200
+        second_response._content = b'{"session_name":"test-session","name":"test-terminal"}'
+        second_response.url = "http://localhost:9889/sessions"
+        second_response.raise_for_status = lambda: None
+
+        mock_post.side_effect = [first_response, second_response]
+
+        result = runner.invoke(
+            launch,
+            ["--agents", "test-agent", "--provider", "qoder_cli", "--headless", "--yolo"],
+        )
+
+        assert result.exit_code == 0
+        assert "retrying launch without working_directory parameter" in result.output
+        assert mock_post.call_count == 2
+
+        first_call_params = mock_post.call_args_list[0].kwargs["params"]
+        second_call_params = mock_post.call_args_list[1].kwargs["params"]
+
+        assert "working_directory" in first_call_params
+        assert "working_directory" not in second_call_params

@@ -7,16 +7,22 @@
 │                         Entry Points                                │
 ├─────────────────────────────┬───────────────────────────────────────┤
 │       CLI Commands          │         MCP Server                    │
-│       (cao launch)          │    (handoff, send_message)            │
+│       (cao launch)          │  (handoff, assign, send_message)      │
 └──────────────┬──────────────┴──────────────┬────────────────────────┘
                │                             │
                └─────────────┬───────────────┘
                              │
-                      ┌──────▼──────┐
-                      │  FastAPI    │
-                      │  HTTP API   │
-                      │  (:9889)    │
-                      └──────┬──────┘
+                       ┌──────▼──────┐
+                       │ Control     │
+                       │ Panel API   │
+                       │  (:8000)    │
+                       └──────┬──────┘
+                         │
+                       ┌──────▼──────┐
+                       │  FastAPI    │
+                       │  HTTP API   │
+                       │  (:9889)    │
+                       └──────┬──────┘
                              │
                       ┌──────▼──────┐
                       │  Services   │
@@ -81,8 +87,12 @@ src/cli_agent_orchestrator/
 │   ├── manager.py         # Maps terminal_id → provider
 │   ├── kiro_cli.py        # Kiro CLI provider (kiro_cli) - default
 │   ├── q_cli.py           # Amazon Q CLI provider (q_cli)
-│   ├── claude_code.py     # Claude Code provider (claude_code, ❯ prompt, trust prompt handling)
-│   └── codex.py           # Codex/ChatGPT CLI provider (codex, developer_instructions, › prompt + • bullet detection, trust prompt handling)
+│   ├── kiro_cli.py        # Kiro CLI provider (kiro_cli)
+│   ├── claude_code.py     # Claude Code provider (claude_code)
+│   ├── codex.py           # Codex CLI provider (codex)
+│   ├── qoder_cli.py       # Qoder CLI provider (qoder_cli)
+│   ├── codebuddy.py       # CodeBuddy provider (codebuddy)
+│   └── copilot.py         # Copilot provider (copilot)
 ├── models/                # Data models
 │   ├── terminal.py        # Terminal, TerminalStatus
 │   ├── session.py         # Session model
@@ -146,7 +156,7 @@ MCP: handoff(agent_profile, message)
   ↓
 API: POST /sessions/{session}/terminals
   ↓
-Wait for terminal IDLE
+Wait for terminal IDLE or COMPLETED (provider-ready)
   ↓
 API: POST /terminals/{id}/input
   ↓

@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.services.flow_service import (
@@ -271,7 +272,46 @@ class TestGetFlow:
         result = get_flow("test-flow")
 
         assert result.name == "test-flow"
-        mock_db_get.assert_called_once_with("test-flow")
+
+    @patch("cli_agent_orchestrator.services.flow_service.db_delete_flow")
+    @patch("cli_agent_orchestrator.services.flow_service.db_create_flow")
+    def test_add_flow_duplicate_name_recreates(self, mock_db_create, mock_db_delete):
+        """Test duplicate flow names are recreated instead of failing."""
+        mock_flow = Flow(
+            name="test-flow",
+            file_path="/path/to/flow.md",
+            schedule="* * * * *",
+            agent_profile="developer",
+            provider="kiro_cli",
+            script="",
+            enabled=True,
+            next_run=datetime.now(),
+        )
+        mock_db_create.side_effect = [
+            IntegrityError("INSERT INTO flows", {}, Exception("UNIQUE constraint failed: flows.name")),
+            mock_flow,
+        ]
+        mock_db_delete.return_value = True
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(
+                """---
+name: test-flow
+schedule: "* * * * *"
+agent_profile: developer
+provider: kiro_cli
+---
+
+Prompt.
+"""
+            )
+            f.flush()
+
+            result = add_flow(f.name)
+
+        assert result.name == "test-flow"
+        mock_db_delete.assert_called_once_with("test-flow")
+        assert mock_db_create.call_count == 2
 
     @patch("cli_agent_orchestrator.services.flow_service.db_get_flow")
     def test_get_flow_not_found(self, mock_db_get):
@@ -415,6 +455,127 @@ Simple prompt without variables.
 
         assert result is True
         mock_create_terminal.assert_called_once()
+        mock_send_input.assert_called_once()
+
+    @patch("cli_agent_orchestrator.services.flow_service.send_input")
+    @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
+    @patch("cli_agent_orchestrator.services.flow_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.flow_service.db_update_flow_run_times")
+    @patch("cli_agent_orchestrator.services.flow_service.db_get_flow")
+    def test_execute_flow_reuses_bound_session_name(
+        self,
+        mock_db_get,
+        mock_update_times,
+        mock_gen_session,
+        mock_create_terminal,
+        mock_send_input,
+    ):
+        """Test executing flow reuses frontmatter session_name when present."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(
+                """---
+name: bound-flow
+schedule: "* * * * *"
+agent_profile: developer
+session_name: cao-team1
+---
+
+Prompt for existing session.
+"""
+            )
+            f.flush()
+            flow_path = f.name
+
+        mock_flow = Flow(
+            name="bound-flow",
+            file_path=flow_path,
+            schedule="* * * * *",
+            agent_profile="developer",
+            provider="kiro_cli",
+            script="",
+            enabled=True,
+            next_run=datetime.now(),
+        )
+        mock_db_get.return_value = mock_flow
+
+        mock_terminal = MagicMock()
+        mock_terminal.id = "terminal-123"
+        mock_create_terminal.return_value = mock_terminal
+
+        result = execute_flow("bound-flow")
+
+        assert result is True
+        mock_gen_session.assert_not_called()
+        mock_create_terminal.assert_called_once_with(
+            session_name="cao-team1",
+            provider="kiro_cli",
+            agent_profile="developer",
+            new_session=False,
+        )
+        mock_send_input.assert_called_once()
+
+    @patch("cli_agent_orchestrator.services.flow_service.send_input")
+    @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
+    @patch("cli_agent_orchestrator.services.flow_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.flow_service.db_update_flow_run_times")
+    @patch("cli_agent_orchestrator.services.flow_service.db_get_flow")
+    def test_execute_flow_bound_session_missing_falls_back_to_new_session(
+        self,
+        mock_db_get,
+        mock_update_times,
+        mock_gen_session,
+        mock_create_terminal,
+        mock_send_input,
+    ):
+        """Test execute_flow creates a new bound session when existing one is missing."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(
+                """---
+name: bound-flow
+schedule: "* * * * *"
+agent_profile: developer
+session_name: cao-team1
+---
+
+Prompt for existing session.
+"""
+            )
+            f.flush()
+            flow_path = f.name
+
+        mock_flow = Flow(
+            name="bound-flow",
+            file_path=flow_path,
+            schedule="* * * * *",
+            agent_profile="developer",
+            provider="kiro_cli",
+            script="",
+            enabled=True,
+            next_run=datetime.now(),
+        )
+        mock_db_get.return_value = mock_flow
+
+        mock_terminal = MagicMock()
+        mock_terminal.id = "terminal-123"
+        mock_create_terminal.side_effect = [ValueError("Session 'cao-team1' not found"), mock_terminal]
+
+        result = execute_flow("bound-flow")
+
+        assert result is True
+        mock_gen_session.assert_not_called()
+        assert mock_create_terminal.call_count == 2
+        assert mock_create_terminal.call_args_list[0].kwargs == {
+            "session_name": "cao-team1",
+            "provider": "kiro_cli",
+            "agent_profile": "developer",
+            "new_session": False,
+        }
+        assert mock_create_terminal.call_args_list[1].kwargs == {
+            "session_name": "cao-team1",
+            "provider": "kiro_cli",
+            "agent_profile": "developer",
+            "new_session": True,
+        }
         mock_send_input.assert_called_once()
 
     @patch("cli_agent_orchestrator.services.flow_service.subprocess.run")

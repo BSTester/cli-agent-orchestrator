@@ -23,7 +23,7 @@ Check if the server is running.
 Create a new session with one terminal.
 
 **Parameters:**
-- `provider` (string, required): Provider type ("kiro_cli", "claude_code", "codex", or "q_cli")
+- `provider` (string, required): Provider type (例如 `kiro_cli`、`claude_code`、`codex`、`q_cli`、`qoder_cli`、`codebuddy`、`copilot`、`openclaw`)
 - `agent_profile` (string, required): Agent profile name
 - `session_name` (string, optional): Custom session name
 - `working_directory` (string, optional): Working directory for the agent session
@@ -79,7 +79,7 @@ Get terminal details.
 {
   "id": "string",
   "name": "string",
-  "provider": "kiro_cli|claude_code|codex|q_cli",
+  "provider": "kiro_cli|claude_code|codex|q_cli|qoder_cli|codebuddy|copilot|openclaw",
   "session_name": "string",
   "agent_profile": "string",
   "status": "idle|processing|completed|waiting_user_answer|error",
@@ -140,6 +140,10 @@ Send provider-specific exit command to terminal.
 | claude_code | `/exit` | Text |
 | codex | `/exit` | Text |
 | q_cli | `/exit` | Text |
+| qoder_cli | `/quit` | Text |
+| codebuddy | `C-d` | Key |
+| copilot | `C-d` | Key |
+| openclaw | `C-c` | Key |
 
 **Response:**
 ```json

@@ -1,10 +1,11 @@
-"""Tests for TmuxClient.send_keys paste-buffer implementation."""
+"""Tests for TmuxClient tmux command helpers."""
 
-from unittest.mock import call, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from cli_agent_orchestrator.clients.tmux import TmuxClient
+from cli_agent_orchestrator.constants import TMUX_HISTORY_LINES
 
 
 @pytest.fixture
@@ -126,12 +127,23 @@ class TestSendKeys:
 
         assert mock_subprocess.run.call_count == 5  # load + paste + 2 Enter + delete
         calls = mock_subprocess.run.call_args_list
-        # Both Enters
+        # Both Enter submissions
         assert calls[2] == call(
             ["tmux", "send-keys", "-t", "sess:win", "Enter"],
             check=True,
         )
         assert calls[3] == call(
+            ["tmux", "send-keys", "-t", "sess:win", "Enter"],
+            check=True,
+        )
+
+    def test_enter_count_clamped_to_one(self, client, mock_subprocess, mock_uuid):
+        """enter_count<=0 should still send one submit key."""
+        client.send_keys("sess", "win", "hello", enter_count=0)
+
+        assert mock_subprocess.run.call_count == 4
+        calls = mock_subprocess.run.call_args_list
+        assert calls[2] == call(
             ["tmux", "send-keys", "-t", "sess:win", "Enter"],
             check=True,
         )
@@ -145,3 +157,63 @@ class TestSendKeys:
         assert mock_subprocess.run.call_count == 4
         load_call = mock_subprocess.run.call_args_list[0]
         assert len(load_call[1]["input"]) == 50000
+
+    def test_send_raw_input_sends_hex_bytes(self, client, mock_subprocess):
+        """Raw input should be sent in one batched tmux send-keys -H command."""
+        client.send_raw_input("sess", "win", "A\n")
+
+        calls = mock_subprocess.run.call_args_list
+        assert len(calls) == 1
+        assert calls[0] == call(
+            ["tmux", "send-keys", "-t", "sess:win", "-H", "41", "0a"],
+            check=True,
+        )
+
+    def test_send_raw_input_chunks_large_payload(self, client, mock_subprocess):
+        """Large raw input should be split into multiple tmux commands."""
+        client.send_raw_input("sess", "win", "A" * 130)
+
+        calls = mock_subprocess.run.call_args_list
+        assert len(calls) == 3
+        assert len(calls[0].args[0]) == 69
+        assert len(calls[1].args[0]) == 69
+        assert len(calls[2].args[0]) == 7
+
+    def test_send_raw_input_ignores_empty(self, client, mock_subprocess):
+        """Empty raw input should not invoke tmux commands."""
+        client.send_raw_input("sess", "win", "")
+        mock_subprocess.run.assert_not_called()
+
+
+class TestGetHistory:
+    def test_falls_back_to_alt_screen_when_primary_screen_is_empty(self, client):
+        pane = MagicMock()
+        pane.cmd.side_effect = [
+            MagicMock(stdout=[]),
+            MagicMock(stdout=["OpenClaw", "❯  Type your message"]),
+        ]
+        window = MagicMock(panes=[pane])
+        session = MagicMock()
+        session.windows.get.return_value = window
+        client.server.sessions.get.return_value = session
+
+        history = client.get_history("sess", "win")
+
+        assert history == "OpenClaw\n❯  Type your message"
+        assert pane.cmd.call_args_list == [
+            call("capture-pane", "-e", "-p", "-S", f"-{TMUX_HISTORY_LINES}"),
+            call("capture-pane", "-a", "-e", "-p", "-S", f"-{TMUX_HISTORY_LINES}"),
+        ]
+
+    def test_uses_primary_screen_without_alt_screen_lookup_when_available(self, client):
+        pane = MagicMock()
+        pane.cmd.return_value = MagicMock(stdout=["shell prompt", "$"])
+        window = MagicMock(panes=[pane])
+        session = MagicMock()
+        session.windows.get.return_value = window
+        client.server.sessions.get.return_value = session
+
+        history = client.get_history("sess", "win")
+
+        assert history == "shell prompt\n$"
+        pane.cmd.assert_called_once_with("capture-pane", "-e", "-p", "-S", f"-{TMUX_HISTORY_LINES}")

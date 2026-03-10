@@ -123,6 +123,23 @@ class TestSessionCreationWithWorkingDirectory:
             call_kwargs = mock_svc.create_terminal.call_args.kwargs
             assert call_kwargs.get("working_directory") == "/custom/path"
 
+    def test_create_session_without_provider_uses_optional_param(self, client):
+        """Test POST /sessions accepts missing provider and passes None to service."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.create_terminal.return_value = Terminal(
+                id="abcd1234",
+                name="test-window",
+                session_name="test-session",
+                provider="kiro_cli",
+                agent_profile="developer",
+            )
+
+            response = client.post("/sessions", params={"agent_profile": "developer"})
+
+            assert response.status_code == 201
+            call_kwargs = mock_svc.create_terminal.call_args.kwargs
+            assert call_kwargs.get("provider") is None
+
 
 class TestTerminalCreationWithWorkingDirectory:
     """Test terminal creation with working_directory parameter."""
@@ -175,6 +192,26 @@ class TestTerminalCreationWithWorkingDirectory:
             call_kwargs = mock_svc.create_terminal.call_args.kwargs
             assert call_kwargs.get("working_directory") == "/session/path"
 
+    def test_create_terminal_in_session_without_provider_uses_optional_param(self, client):
+        """Test POST /sessions/{session}/terminals accepts missing provider."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.create_terminal.return_value = Terminal(
+                id="abcd5678",
+                name="test-window",
+                session_name="test-session",
+                provider="kiro_cli",
+                agent_profile="analyst",
+            )
+
+            response = client.post(
+                "/sessions/test-session/terminals",
+                params={"agent_profile": "analyst"},
+            )
+
+            assert response.status_code == 201
+            call_kwargs = mock_svc.create_terminal.call_args.kwargs
+            assert call_kwargs.get("provider") is None
+
 
 class TestExitTerminalEndpoint:
     """Test POST /terminals/{terminal_id}/exit endpoint.
@@ -200,6 +237,7 @@ class TestExitTerminalEndpoint:
             assert response.json() == {"success": True}
             mock_svc.send_input.assert_called_once_with("abcd1234", "/exit")
             mock_svc.send_special_key.assert_not_called()
+            mock_svc.mark_terminal_off_duty.assert_called_once_with("abcd1234")
 
     def test_exit_terminal_special_key(self, client):
         """Tmux key sequences (e.g., C-d) should use send_special_key."""
@@ -218,6 +256,7 @@ class TestExitTerminalEndpoint:
             assert response.json() == {"success": True}
             mock_svc.send_special_key.assert_called_once_with("abcd1234", "C-d")
             mock_svc.send_input.assert_not_called()
+            mock_svc.mark_terminal_off_duty.assert_called_once_with("abcd1234")
 
     def test_exit_terminal_meta_key(self, client):
         """Meta key sequences (M-x) should also use send_special_key."""
@@ -261,3 +300,40 @@ class TestExitTerminalEndpoint:
 
             assert response.status_code == 500
             assert "Failed to exit terminal" in response.json()["detail"]
+
+
+class TestTaskTitleTracking:
+    """Tests for latest-task persistence used by control panel task titles."""
+
+    def test_send_terminal_input_updates_latest_task(self, client):
+        with (
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+            patch("cli_agent_orchestrator.api.main.upsert_terminal_latest_task") as mock_upsert,
+        ):
+            mock_svc.send_input.return_value = True
+
+            response = client.post("/terminals/abcd1234/input", params={"message": "Do work"})
+
+            assert response.status_code == 200
+            assert response.json() == {"success": True}
+            mock_upsert.assert_called_once_with("abcd1234", "Do work")
+
+
+class TestSpecialKeyEndpoint:
+    def test_send_terminal_special_key(self, client):
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.send_special_key.return_value = True
+
+            response = client.post("/terminals/abcd1234/special-key", params={"key": "C-m"})
+
+            assert response.status_code == 200
+            assert response.json() == {"success": True}
+            mock_svc.send_special_key.assert_called_once_with("abcd1234", "C-m")
+
+    def test_send_terminal_special_key_not_found(self, client):
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.send_special_key.side_effect = ValueError("Terminal not found")
+
+            response = client.post("/terminals/abcd1234/special-key", params={"key": "C-m"})
+
+            assert response.status_code == 404

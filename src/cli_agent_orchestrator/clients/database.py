@@ -42,6 +42,16 @@ class InboxModel(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+class TerminalLatestTaskModel(Base):
+    """SQLAlchemy model for the latest task message per terminal."""
+
+    __tablename__ = "terminal_latest_tasks"
+
+    receiver_id = Column(String, primary_key=True)
+    message = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now)
+
+
 class FlowModel(Base):
     """SQLAlchemy model for flow metadata."""
 
@@ -53,6 +63,7 @@ class FlowModel(Base):
     agent_profile = Column(String, nullable=False)
     provider = Column(String, nullable=False)
     script = Column(String, nullable=True)
+    session_name = Column(String, nullable=True)
     last_run = Column(DateTime, nullable=True)
     next_run = Column(DateTime, nullable=True)
     enabled = Column(Boolean, default=True)
@@ -67,6 +78,14 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     """Initialize database tables."""
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight schema migration for existing SQLite databases.
+    with engine.connect() as connection:
+        rows = connection.exec_driver_sql("PRAGMA table_info(flows)").fetchall()
+        existing_columns = {str(row[1]) for row in rows}
+        if "session_name" not in existing_columns:
+            connection.exec_driver_sql("ALTER TABLE flows ADD COLUMN session_name VARCHAR")
+            connection.commit()
 
 
 def create_terminal(
@@ -234,6 +253,55 @@ def update_message_status(message_id: int, status: MessageStatus) -> bool:
         return False
 
 
+def upsert_terminal_latest_task(receiver_id: str, message: str) -> bool:
+    """Upsert latest task message for a terminal.
+
+    Returns True when stored, False when receiver/message is blank.
+    """
+    normalized_receiver = receiver_id.strip()
+    if not normalized_receiver or not message.strip():
+        return False
+
+    with SessionLocal() as db:
+        existing = (
+            db.query(TerminalLatestTaskModel)
+            .filter(TerminalLatestTaskModel.receiver_id == normalized_receiver)
+            .first()
+        )
+        if existing:
+            existing.message = message
+            existing.updated_at = datetime.now()
+        else:
+            db.add(
+                TerminalLatestTaskModel(
+                    receiver_id=normalized_receiver,
+                    message=message,
+                    updated_at=datetime.now(),
+                )
+            )
+        db.commit()
+        return True
+
+
+def get_latest_task_messages(receiver_ids: List[str]) -> Dict[str, str]:
+    """Get latest task messages for terminal IDs."""
+    targets = [receiver_id.strip() for receiver_id in receiver_ids if receiver_id and receiver_id.strip()]
+    if not targets:
+        return {}
+
+    with SessionLocal() as db:
+        rows = (
+            db.query(TerminalLatestTaskModel)
+            .filter(TerminalLatestTaskModel.receiver_id.in_(targets))
+            .all()
+        )
+        return {
+            str(row.receiver_id): str(row.message)
+            for row in rows
+            if row.receiver_id and row.message
+        }
+
+
 # Flow database functions
 
 
@@ -245,6 +313,7 @@ def create_flow(
     provider: str,
     script: str,
     next_run: datetime,
+    session_name: Optional[str] = None,
 ) -> Flow:
     """Create flow record."""
     with SessionLocal() as db:
@@ -256,6 +325,7 @@ def create_flow(
             provider=provider,
             script=script,
             next_run=next_run,
+            session_name=session_name,
         )
         db.add(flow)
         db.commit()
@@ -267,6 +337,7 @@ def create_flow(
             agent_profile=flow.agent_profile,
             provider=flow.provider,
             script=flow.script,
+            session_name=flow.session_name,
             last_run=flow.last_run,
             next_run=flow.next_run,
             enabled=flow.enabled,
@@ -286,6 +357,7 @@ def get_flow(name: str) -> Optional[Flow]:
             agent_profile=flow.agent_profile,
             provider=flow.provider,
             script=flow.script,
+            session_name=flow.session_name,
             last_run=flow.last_run,
             next_run=flow.next_run,
             enabled=flow.enabled,
@@ -304,6 +376,7 @@ def list_flows() -> List[Flow]:
                 agent_profile=f.agent_profile,
                 provider=f.provider,
                 script=f.script,
+                session_name=f.session_name,
                 last_run=f.last_run,
                 next_run=f.next_run,
                 enabled=f.enabled,
@@ -360,6 +433,7 @@ def get_flows_to_run() -> List[Flow]:
                 agent_profile=f.agent_profile,
                 provider=f.provider,
                 script=f.script,
+                session_name=f.session_name,
                 last_run=f.last_run,
                 next_run=f.next_run,
                 enabled=f.enabled,

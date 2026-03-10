@@ -18,6 +18,7 @@ class TerminalStatus(str, Enum):
     COMPLETED = "completed"
     WAITING_USER_ANSWER = "waiting_user_answer"
     ERROR = "error"
+    OFF_DUTY = "off_duty"
 
 
 class Terminal(BaseModel):

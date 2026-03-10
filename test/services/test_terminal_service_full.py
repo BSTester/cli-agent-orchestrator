@@ -5,14 +5,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cli_agent_orchestrator.constants import DEFAULT_PROVIDER
+from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services.terminal_service import (
     OutputMode,
+    create_shell_terminal,
     create_terminal,
     delete_terminal,
     get_output,
     get_terminal,
     get_working_directory,
+    mark_terminal_off_duty,
     send_input,
 )
 
@@ -118,6 +122,203 @@ class TestCreateTerminal:
         with pytest.raises(ValueError, match="already exists"):
             create_terminal("kiro_cli", "developer", session_name="cao-existing", new_session=True)
 
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
+    def test_create_terminal_resolves_provider_from_profile(
+        self,
+        mock_gen_id,
+        mock_gen_session,
+        mock_gen_window,
+        mock_tmux,
+        mock_db_create,
+        mock_provider_manager,
+        mock_log_dir,
+        mock_load_profile,
+    ):
+        mock_gen_id.return_value = "test1234"
+        mock_gen_session.return_value = "cao-session"
+        mock_gen_window.return_value = "developer-abcd"
+        mock_tmux.session_exists.return_value = False
+        mock_provider = MagicMock()
+        mock_provider_manager.create_provider.return_value = mock_provider
+        mock_log_path = MagicMock()
+        mock_log_dir.__truediv__.return_value = mock_log_path
+        mock_load_profile.return_value = type("Profile", (), {"provider": ProviderType.COPILOT})()
+
+        result = create_terminal(None, "developer", new_session=True)
+
+        assert result.provider == ProviderType.COPILOT.value
+        mock_db_create.assert_called_once_with(
+            "test1234", "cao-session", "developer-abcd", ProviderType.COPILOT.value, "developer"
+        )
+        mock_provider_manager.create_provider.assert_called_once_with(
+            ProviderType.COPILOT.value, "test1234", "cao-session", "developer-abcd", "developer"
+        )
+
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
+    def test_create_terminal_falls_back_to_default_provider(
+        self,
+        mock_gen_id,
+        mock_gen_session,
+        mock_gen_window,
+        mock_tmux,
+        mock_db_create,
+        mock_provider_manager,
+        mock_log_dir,
+        mock_load_profile,
+    ):
+        mock_gen_id.return_value = "test1234"
+        mock_gen_session.return_value = "cao-session"
+        mock_gen_window.return_value = "developer-abcd"
+        mock_tmux.session_exists.return_value = False
+        mock_provider = MagicMock()
+        mock_provider_manager.create_provider.return_value = mock_provider
+        mock_log_path = MagicMock()
+        mock_log_dir.__truediv__.return_value = mock_log_path
+        mock_load_profile.side_effect = RuntimeError("profile not found")
+
+        result = create_terminal(None, "developer", new_session=True)
+
+        assert result.provider == DEFAULT_PROVIDER
+        mock_db_create.assert_called_once_with(
+            "test1234", "cao-session", "developer-abcd", DEFAULT_PROVIDER, "developer"
+        )
+        mock_provider_manager.create_provider.assert_called_once_with(
+            DEFAULT_PROVIDER, "test1234", "cao-session", "developer-abcd", "developer"
+        )
+
+    @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
+    def test_create_terminal_cleans_up_on_init_failure(
+        self,
+        mock_gen_id,
+        mock_gen_session,
+        mock_gen_window,
+        mock_tmux,
+        mock_db_create,
+        mock_provider_manager,
+        mock_log_dir,
+        mock_db_delete,
+    ):
+        """Ensure resources are cleaned when provider initialization fails."""
+        mock_gen_id.return_value = "test1234"
+        mock_gen_session.return_value = "cao-session"
+        mock_gen_window.return_value = "developer-abcd"
+        mock_tmux.session_exists.return_value = False
+        mock_provider = MagicMock()
+        mock_provider.initialize.side_effect = TimeoutError("init failed")
+        mock_provider_manager.create_provider.return_value = mock_provider
+        mock_log_path = MagicMock()
+        mock_log_dir.__truediv__.return_value = mock_log_path
+
+        with pytest.raises(TimeoutError):
+            create_terminal("kiro_cli", "developer", new_session=True)
+
+        mock_provider_manager.cleanup_provider.assert_called_once_with("test1234")
+        mock_tmux.kill_session.assert_called_once_with("cao-session")
+        mock_db_delete.assert_called_once_with("test1234")
+
+
+class TestCreateShellTerminal:
+    """Tests for create_shell_terminal function."""
+
+    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
+    def test_create_shell_terminal_success(
+        self,
+        mock_gen_id,
+        mock_gen_session,
+        mock_gen_window,
+        mock_tmux,
+        mock_db_create,
+        mock_provider_manager,
+        mock_log_dir,
+    ):
+        mock_gen_id.return_value = "shell123"
+        mock_gen_session.return_value = "shell-session"
+        mock_gen_window.return_value = "shell-abcd"
+        mock_tmux.session_exists.return_value = False
+        mock_provider = MagicMock()
+        mock_provider_manager.create_provider.return_value = mock_provider
+        mock_log_path = MagicMock()
+        mock_log_dir.__truediv__.return_value = mock_log_path
+
+        result = create_shell_terminal()
+
+        assert result.id == "shell123"
+        assert result.provider == ProviderType.SHELL.value
+        assert result.agent_profile is None
+        mock_tmux.create_session.assert_called_once_with(
+            "cao-shell-session", "shell-abcd", "shell123", None
+        )
+        mock_db_create.assert_called_once_with(
+            "shell123", "cao-shell-session", "shell-abcd", ProviderType.SHELL.value, None
+        )
+        mock_provider_manager.create_provider.assert_called_once_with(
+            ProviderType.SHELL.value,
+            "shell123",
+            "cao-shell-session",
+            "shell-abcd",
+            None,
+        )
+        mock_provider.initialize.assert_called_once()
+
+    @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
+    def test_create_shell_terminal_cleans_up_on_failure(
+        self,
+        mock_gen_id,
+        mock_gen_session,
+        mock_gen_window,
+        mock_tmux,
+        mock_provider_manager,
+        mock_db_create,
+        mock_db_delete,
+    ):
+        mock_gen_id.return_value = "shell123"
+        mock_gen_session.return_value = "shell-session"
+        mock_gen_window.return_value = "shell-abcd"
+        mock_tmux.session_exists.return_value = False
+        mock_provider = MagicMock()
+        mock_provider.initialize.side_effect = RuntimeError("shell init failed")
+        mock_provider_manager.create_provider.return_value = mock_provider
+
+        with pytest.raises(RuntimeError, match="shell init failed"):
+            create_shell_terminal()
+
+        mock_provider_manager.cleanup_provider.assert_called_once_with("shell123")
+        mock_tmux.kill_session.assert_called_once_with("cao-shell-session")
+        mock_db_delete.assert_called_once_with("shell123")
+
 
 class TestGetTerminal:
     """Tests for get_terminal function."""
@@ -142,6 +343,25 @@ class TestGetTerminal:
 
         assert result["id"] == "test1234"
         assert result["status"] == TerminalStatus.IDLE.value
+
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_get_terminal_off_duty(self, mock_get_metadata, mock_provider_manager):
+        terminal_id = "offduty1"
+        mock_get_metadata.return_value = {
+            "id": terminal_id,
+            "tmux_window": "developer-abcd",
+            "provider": "kiro_cli",
+            "tmux_session": "cao-session",
+            "agent_profile": "developer",
+            "last_active": datetime.now(),
+        }
+
+        mark_terminal_off_duty(terminal_id)
+        result = get_terminal(terminal_id)
+
+        assert result["status"] == TerminalStatus.OFF_DUTY.value
+        mock_provider_manager.get_provider.assert_not_called()
 
     @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
     def test_get_terminal_not_found(self, mock_get_metadata):

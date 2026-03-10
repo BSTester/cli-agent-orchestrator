@@ -24,7 +24,8 @@ dependencies = [
 [project.scripts]
 "cao" = "cli_agent_orchestrator.cli.main:cli"
 "cao-server" = "cli_agent_orchestrator.api.main:main"
-"cao-mcp-server" = "cli_agent_orchestrator.mcp_server.server:main"
+"cao-mcp-server" = "cli_agent_orchestrator.mcp_server.server:cli_main"
+"cao-control-panel" = "cli_agent_orchestrator.control_panel.main:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -43,6 +44,7 @@ dev = [
     "isort>=5.12.0",
     "mypy>=1.5.0",
     "pytest-xdist>=3.8.0",
+    "types-requests>=2.32.0",
 ]
 
 [tool.black]

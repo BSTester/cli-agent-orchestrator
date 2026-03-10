@@ -1,42 +1,90 @@
-# CLI Agent Orchestrator
+# CLI Agent Orchestrator Dashboard
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/awslabs/cli-agent-orchestrator)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/BSTester/cli-agent-orchestrator)
 
-CLI Agent Orchestrator(CAO, pronounced as "kay-oh"), is a lightweight orchestration system for managing multiple AI agent sessions in tmux terminals. Enables Multi-agent collaboration via MCP server.
+CLI Agent Orchestrator（CAO，读作 “kay-oh”）是一套轻量级编排系统，用于在 tmux 终端中管理多个 AI Agent 会话，通过 MCP server 实现多智能体协作。本项目是CAO的控制面板组件，提供基于浏览器的 UI 来管理 Agent 团队、监控任务状态和直接与 Agent 交互。
 
-## Hierarchical Multi-Agent System
+## 分层多智能体系统
 
-CLI Agent Orchestrator (CAO) implements a hierarchical multi-agent system that enables complex problem-solving through specialized division of CLI Developer Agents.
+CLI Agent Orchestrator (CAO) 采用分层多智能体体系结构，让专长明确的 CLI 开发者 Agent 分工协作，解决复杂问题。
 
 ![CAO Architecture](./docs/assets/cao_architecture.png)
 
-### Key Features
+### 关键特性
 
-* **Hierarchical orchestration** – CAO's supervisor agent coordinates workflow management and task delegation to specialized worker agents. The supervisor maintains overall project context while agents focus on their domains of expertise.
-* **Session-based isolation** – Each agent operates in isolated tmux sessions, ensuring proper context separation while enabling seamless communication through Model Context Protocol (MCP) servers. This provides both coordination and parallel processing capabilities.
-* **Intelligent task delegation** – CAO automatically routes tasks to appropriate specialists based on project requirements, expertise matching, and workflow dependencies. The system adapts between individual agent work and coordinated team efforts through three orchestration patterns:
-    - **Handoff** - Synchronous task transfer with wait-for-completion
-    - **Assign** - Asynchronous task spawning for parallel execution  
-    - **Send Message** - Direct communication with existing agents
-* **Flexible workflow patterns** – CAO supports both sequential coordination for dependent tasks and parallel processing for independent work streams. This allows optimization of both development speed and quality assurance processes.
-* **Flow - Scheduled runs** – Automated execution of workflows at specified intervals using cron-like scheduling, enabling routine tasks and monitoring workflows to run unattended.
-* **Context preservation** – The supervisor agent provides only necessary context to each worker agent, avoiding context pollution while maintaining workflow coherence.
-* **Direct worker interaction and steering** – Users can interact directly with worker agents to provide additional steering, distinguishing from sub-agents features by allowing real-time guidance and course correction.
-* **Advanced CLI integration** – CAO agents have full access to advanced features of the developer CLI, such as the [sub-agents](https://docs.claude.com/en/docs/claude-code/sub-agents) feature of Claude Code, [Custom Agent](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line-custom-agents.html) of Amazon Q Developer for CLI and so on.
+* **分层编排**：监督者 Agent 负责调度工作流并把任务分派给专门的工作 Agent，在保持全局上下文的同时让各 Agent 聚焦其领域。
+* **会话隔离**：每个 Agent 在独立 tmux 会话中运行，通过 MCP server 实现安全的消息和状态同步，既能并行也能协调。
+* **智能分派**：按需求、专长和依赖将任务路由给合适的 Agent，三种编排模式灵活切换：
+    - **Handoff**：同步移交并等待完成
+    - **Assign**：异步派工并行执行
+    - **Send Message**：向现有 Agent 直接通信
+* **灵活工作流**：可在顺序编排和并行执行间自由切换，兼顾开发效率与质量。
+* **Flow 定时运行**：基于 cron 的定时编排，自动完成例行或监控任务。
+* **上下文控制**：监督者只传递必要上下文，避免信息污染同时保持协同。
+* **直接干预**：用户可直接与工作 Agent 交互，实时纠偏与补充指令。
+* **高级 CLI 集成**：支持各类开发者 CLI 的高级特性，如 Claude Code 的 [sub-agents](https://docs.claude.com/en/docs/claude-code/sub-agents)、Amazon Q Developer CLI 的 [Custom Agent](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line-custom-agents.html) 等。
 
-For detailed project structure and architecture, see [CODEBASE.md](CODEBASE.md).
+项目结构与架构细节见 [CODEBASE.md](CODEBASE.md)。
 
-## Installation
+## 控制面板三层架构
 
-### Requirements
+CAO 提供面向浏览器的控制面板层，形成 Next.js → 控制面板 → CAO Server 的三层结构：
 
-- **Python 3.10 or higher** — CAO requires Python >=3.10 (see [pyproject.toml](pyproject.toml))
-- **tmux 3.3+** — Used for agent session isolation
-- **[uv](https://docs.astral.sh/uv/)** — Fast Python package installer and virtual environment manager
+* **Next.js 前端（端口 3000，目录 `frontend/`）**：渲染 UI，并通过 `/api/cao/[...path]` 路由将浏览器请求代理到控制面板；使用 `NEXT_PUBLIC_CAO_CONTROL_PANEL_URL`（本地默认回退 `http://localhost:8000`）配置目标。
+* **FastAPI 控制面板（端口 8000，命令 `cao-control-panel`）**：处理 CORS、健康检查并把请求转发到后端，可通过 `CONTROL_PANEL_HOST`、`CONTROL_PANEL_PORT`、`CAO_SERVER_URL`、`CAO_CONSOLE_PASSWORD` 等环境变量配置。
+* **CAO Server（端口 9889，命令 `cao-server`）**：负责终端生命周期、会话管理和消息路由。
 
-### 1. Install Python 3.10+
+### Web 控制台能力清单
 
-If you don't have Python 3.10+ installed, use your platform's package manager:
+当前控制台顶部菜单模块为：`集团总览`、`组织管理`、`会话管理`、`资产管理`、`任务管理`。
+
+* **登录与会话入口（`/login`）**
+  - 控制台采用密码登录；
+  - 未登录访问业务页面会自动重定向到登录页（并带 `next` 回跳参数）；
+  - 顶部导航支持退出登录。
+* **集团总览（`/dashboard`）**
+  - 展示核心指标：集团在岗员工、在营团队、团队成员、系统运行时长；
+  - 展示运行分布：Provider 分布、状态分布（图表）；
+  - 展示团队任务看板与团队负责人列表；
+  - 支持自动轮询刷新（周期 10 秒）。
+* **组织管理（`/organization`）**
+  - 岗位（Agent Profile）管理：新增、编辑、删除岗位文件，并支持安装/重装/卸载；
+  - 团队编制管理：新增负责人（启动团队）、编辑负责人配置（岗位、Provider、团队别名、工作目录）；
+  - 员工管理：新增员工并可选择加入指定团队；
+  - 组织变更：成员退出团队、整队解散（含确认弹窗）。
+* **会话管理（`/agents`）**
+  - 按团队查看负责人和成员会话状态、岗位、Provider、当前任务；
+  - 支持负责人会话恢复（ensure-online）与团队“下班”（批量退出团队终端）；
+  - 点击成员可打开实时终端侧边抽屉，通过 WebSocket 直连 tmux 执行命令；
+  - 支持全局自动刷新会话与任务状态。
+* **资产管理（`/assets`）**
+  - 按团队浏览已配置工作目录资产；
+  - 提供目录树展开/折叠、路径面包屑跳转、根目录快速返回；
+  - 文本类文件支持在线预览，Markdown/HTML 支持渲染视图与源码切换；
+  - 支持文件下载、源码复制、文件/目录删除（含确认弹窗）。
+* **任务管理（`/tasks`）**
+  - 按团队查看即时任务与定时任务，并展示未绑定团队的定时任务；
+  - 支持新建或加载已有 Flow 文件进行编辑；
+  - 支持任务绑定团队、创建后立即触发执行；
+  - 支持定时任务手动触发、启用/暂停、删除。
+* **团队工作目录（Web 配置）**
+  - 创建/编辑团队时可设置工作目录（`~/workspace` 下一级目录，支持选择已有或输入新目录名自动创建）；
+  - 员工加入团队后继承团队工作目录，并在该目录中启动终端 Agent；
+  - 资产管理模块直接复用团队工作目录作为浏览根路径。
+
+完整运行方式与生产注意事项见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+## 安装
+
+### 环境需求
+
+- **Python 3.10 或更高版本** — 见 [pyproject.toml](pyproject.toml)
+- **tmux 3.3+** — 提供 Agent 会话隔离
+- **[uv](https://docs.astral.sh/uv/)** — 快速的 Python 包与虚拟环境管理工具
+
+### 1. 安装 Python 3.10+
+
+若尚未安装，可用系统包管理器：
 
 ```bash
 # macOS (Homebrew)
@@ -45,284 +93,403 @@ brew install python@3.12
 # Ubuntu/Debian
 sudo apt update && sudo apt install python3.12 python3.12-venv
 
-# Amazon Linux 2023 / Fedora
+# CentOS/RHEL/Amazon Linux/Fedora
 sudo dnf install python3.12
 ```
 
-Verify your Python version:
+验证版本：
 
 ```bash
-python3 --version   # Should be 3.10 or higher
+python3 --version   # 需 ≥ 3.10
 ```
 
-> **Note:** We recommend using [uv](https://docs.astral.sh/uv/) to manage Python environments instead of system-wide installations like Anaconda. `uv` automatically handles virtual environments and Python version resolution per-project.
+> **提示：** 推荐使用 [uv](https://docs.astral.sh/uv/) 管理虚拟环境与 Python 版本，避免系统级安装带来的干扰。
 
-### 2. Install tmux (version 3.3 or higher required)
+### 2. 安装 tmux（需 3.3+）
 
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/awslabs/cli-agent-orchestrator/refs/heads/main/tmux-install.sh)
+bash <(curl -s https://raw.githubusercontent.com/BSTester/cli-agent-orchestrator/refs/heads/main/tmux-install.sh)
 ```
 
-### 3. Install uv
+### 3. 安装 uv
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 4. Install CLI Agent Orchestrator
+### 4. 安装 CLI Agent Orchestrator
 
 ```bash
-uv tool install git+https://github.com/awslabs/cli-agent-orchestrator.git@main --upgrade
+uv tool install git+https://github.com/BSTester/cli-agent-orchestrator.git@main --upgrade
 ```
 
-### Development Setup
+### 本地开发
 
-For local development, clone the repo and install with `uv sync`:
+克隆仓库并安装依赖：
 
 ```bash
-git clone https://github.com/awslabs/cli-agent-orchestrator.git
+git clone https://github.com/BSTester/cli-agent-orchestrator.git
 cd cli-agent-orchestrator/
-uv sync          # Creates .venv/ and installs all dependencies
-uv run cao --help  # Verify installation
+uv sync             # 创建 .venv/ 并安装依赖
+uv run cao --help   # 校验安装
 ```
 
-For development workflow, testing, code quality checks, and project structure, see [DEVELOPMENT.md](DEVELOPMENT.md).
+开发流程、测试与代码质量检查见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
-## Prerequisites
+## 前置准备
 
-Before using CAO, install at least one supported CLI agent tool:
+在使用 CAO 前，需安装至少一个受支持的 CLI Agent 工具：
 
-| Provider | Documentation | Authentication |
-|----------|---------------|----------------|
-| **Kiro CLI** (default) | [Provider docs](docs/kiro-cli.md) · [Installation](https://kiro.dev/docs/kiro-cli) | AWS credentials |
-| **Claude Code** | [Provider docs](docs/claude-code.md) · [Installation](https://docs.anthropic.com/en/docs/claude-code/getting-started) | Anthropic API key |
-| **Codex CLI** | [Provider docs](docs/codex-cli.md) · [Installation](https://github.com/openai/codex) | OpenAI API key |
-| **Gemini CLI** | [Provider docs](docs/gemini-cli.md) · [Installation](https://github.com/google-gemini/gemini-cli) | Google AI API key |
-| **Q CLI** | [Installation](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line.html) | AWS credentials |
+| Provider | 文档 | 认证方式 |
+|----------|------|----------|
+| **Kiro CLI**（默认） | [Provider docs](docs/kiro-cli.md) · [Installation](https://kiro.dev/docs/kiro-cli) | AWS 凭证 |
+| **Claude Code** | [Provider docs](docs/claude-code.md) · [Installation](https://docs.anthropic.com/en/docs/claude-code/getting-started) | Anthropic API Key |
+| **Codex CLI** | [Provider docs](docs/codex-cli.md) · [Installation](https://github.com/openai/codex) | OpenAI API Key |
+| **Q CLI** | [Installation](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line.html) | AWS 凭证 |
+| **Qoder CLI** | [Installation](https://www.npmjs.com/package/@qoder-ai/qodercli) | Qoder 账号/令牌 |
+| **CodeBuddy CLI** | [CLI docs](https://www.codebuddy.ai/docs/cli/cli-reference) | CodeBuddy 账号/令牌 |
+| **GitHub Copilot CLI** | [Getting started](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started) | GitHub Copilot 权限 |
+| **OpenClaw CLI** | [Installation](https://www.npmjs.com/package/openclaw) | OpenClaw 账号/令牌 |
 
-## Quick Start
+## 快速开始
 
-### 1. Install Agent Profiles
+### 1. 安装 Agent 配置
 
-Install the supervisor agent (the orchestrator that delegates to other agents):
+安装监督者（负责分派任务的编排 Agent）：
 
 ```bash
 cao install code_supervisor
 ```
 
-Optionally install additional worker agents:
+默认会安装到所有支持的 Provider（文件型 Agent + 运行时注入型）。
+如需仅安装到单一 Provider：
+
+```bash
+cao install code_supervisor --provider q_cli
+cao install code_supervisor --provider kiro_cli
+cao install code_supervisor --provider qoder_cli
+cao install code_supervisor --provider codebuddy
+cao install code_supervisor --provider copilot
+cao install code_supervisor --provider openclaw
+```
+
+可选安装额外工作 Agent：
 
 ```bash
 cao install developer
 cao install reviewer
 ```
 
-You can also install agents from local files or URLs:
+也可从本地文件或 URL 安装：
 
 ```bash
 cao install ./my-custom-agent.md
 cao install https://example.com/agents/custom-agent.md
 ```
 
-For details on creating custom agent profiles, see [docs/agent-profile.md](docs/agent-profile.md).
+自定义 Agent 配置详见 [docs/agent-profile.md](docs/agent-profile.md)。
 
-### 2. Start the Server
+### 2. 启动后端
+
+推荐使用项目脚本（安装与启动已拆分）：
+
+```bash
+# 仅安装依赖与工具（全自动）
+bash scripts/install_services.sh
+
+# 仅启动服务（cao-server + cao-control-panel）
+bash scripts/start_services.sh
+
+# 停止服务
+bash scripts/stop_services.sh
+```
+
+兼容入口（等价于先安装再启动）：
+
+```bash
+bash scripts/install_and_start_services.sh
+```
+
+如需静默安装 OpenClaw CLI（跳过引导/配置阶段），`scripts/install_services.sh` 会自动以非交互模式执行安装。
+
+### 2.1 Docker 启动
+
+仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。容器内不会复制当前仓库源码，而是在镜像构建时仅下载 `scripts/*.sh`，并在启动时通过安装脚本完成环境安装与服务启动。
+
+```bash
+docker compose up --build
+```
+
+可选环境变量：
+
+```bash
+CAO_CONSOLE_PASSWORD=change-me docker compose up --build
+```
+
+> `CAO_REPO_REF` 默认就是 `main`。如需验证特定提交或临时切换分支，可显式覆盖该变量；为了获得更可重现的镜像构建结果，建议固定为具体 commit SHA。当前仓库尚未提供可直接固定的 release tag。
+
+默认端口映射：
+
+- `8000` → `cao-control-panel`
+- `9889` → `cao-server`
+
+也可手动仅启动后端 API：
 
 ```bash
 cao-server
 ```
 
-### 3. Launch the Supervisor
+### 3. 启动监督者
 
-In another terminal, launch the supervisor agent:
+在另一终端运行：
 
 ```bash
 cao launch --agents code_supervisor
 
-# Or specify a provider
+# 指定 Provider
 cao launch --agents code_supervisor --provider kiro_cli
 cao launch --agents code_supervisor --provider claude_code
 cao launch --agents code_supervisor --provider codex
-cao launch --agents code_supervisor --provider gemini_cli
-# Skip workspace trust confirmation
+cao launch --agents code_supervisor --provider qoder_cli
+cao launch --agents code_supervisor --provider codebuddy
+cao launch --agents code_supervisor --provider copilot
+cao launch --agents code_supervisor --provider openclaw
+
+# 跳过工作区信任确认
 cao launch --agents code_supervisor --yolo
+
+# 指定工作目录启动（目录需存在）
+cao launch --agents code_supervisor --working-directory /home/you/project-a
 ```
 
-The supervisor will coordinate and delegate tasks to worker agents (developer, reviewer, etc.) as needed using the orchestration patterns.
+> **Qoder CLI 说明：** 使用 `--provider qoder_cli` 启动时，CAO 会自动重装同名 MCP 服务（先执行 `qodercli mcp remove <name>`，再执行 `qodercli mcp add ... --scope project`）。
 
-### 4. Shutdown
+监督者会按需协调并派发任务给工作 Agent（developer、reviewer 等），应用上述编排模式。
+
+### 4. 启动 Web 控制台（可选）
 
 ```bash
-# Shutdown all cao sessions
+# 构建前端静态资源（构建后自动同步到 cao-control-panel/static，含旧资源清理）
+npm --prefix frontend run build
+
+# 启动控制面板
+uv run cao-control-panel
+```
+
+浏览器打开 `http://localhost:8000`，即可通过 Web 控制台管理 Agent 团队与任务。
+
+### 启动服务环境变量
+
+以下环境变量会直接影响 `cao-server` 与 `cao-control-panel` 的启动行为：
+
+| 服务 | 环境变量 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `cao-server` | `SERVER_HOST` | `localhost` | CAO API 监听地址 |
+| `cao-server` | `SERVER_PORT` | `9889` | CAO API 监听端口 |
+| `cao-control-panel` | `CONTROL_PANEL_HOST` | `localhost` | 控制面板监听地址 |
+| `cao-control-panel` | `CONTROL_PANEL_PORT` | `8000` | 控制面板监听端口 |
+| `cao-control-panel` | `CAO_SERVER_URL` | `http://localhost:9889` | 控制面板转发目标（CAO Server 地址） |
+| `cao-control-panel` | `CONTROL_PANEL_STATIC_DIR` | 内置 `static` 目录 | 控制面板静态文件目录 |
+| `cao-control-panel` | `CAO_CONSOLE_PASSWORD` | `admin` | 控制台登录密码（生产环境务必修改） |
+| `cao-control-panel` | `CAO_CONSOLE_SESSION_TTL_SECONDS` | `43200` | 登录会话有效期（秒） |
+| `cao-control-panel` | `CAO_WS_TOKEN_TTL_SECONDS` | `120` | WebSocket 临时 token 有效期（秒） |
+
+前端开发模式常用变量：
+
+| 服务 | 环境变量 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| Next.js 前端 | `NEXT_PUBLIC_CAO_CONTROL_PANEL_URL` | 本地开发自动回退 `http://localhost:8000` | 浏览器 API 请求的控制面板地址 |
+
+示例（自定义地址启动）：
+
+```bash
+# 终端 1：启动 CAO Server
+SERVER_HOST=0.0.0.0 SERVER_PORT=9889 uv run cao-server
+
+# 终端 2：启动控制面板
+CONTROL_PANEL_HOST=0.0.0.0 CONTROL_PANEL_PORT=8000 \
+CAO_SERVER_URL=http://127.0.0.1:9889 \
+CAO_CONSOLE_PASSWORD='change-me' \
+uv run cao-control-panel
+
+# 终端 3：前端本地开发（可选）
+cd frontend
+NEXT_PUBLIC_CAO_CONTROL_PANEL_URL=http://127.0.0.1:8000 npm run dev
+```
+
+### 5. 关闭会话
+
+```bash
+# 关闭全部 CAO 会话
 cao shutdown --all
 
-# Shutdown specific session
+# 关闭指定会话
 cao shutdown --session cao-my-session
 ```
 
-### Working with tmux Sessions
+### tmux 会话小抄
 
-All agent sessions run in tmux. Useful commands:
+所有 Agent 都运行在 tmux 中，常用命令：
 
 ```bash
-# List all sessions
+# 列出所有会话
 tmux list-sessions
 
-# Attach to a session
+# 附着会话
 tmux attach -t <session-name>
 
-# Detach from session (inside tmux)
-Ctrl+b, then d
+# 断开（tmux 内）
+Ctrl+b, 然后 d
 
-# Switch between windows (inside tmux)
-Ctrl+b, then n          # Next window
-Ctrl+b, then p          # Previous window
-Ctrl+b, then <number>   # Go to window number (0-9)
-Ctrl+b, then w          # List all windows (interactive selector)
+# 切换窗口（tmux 内）
+Ctrl+b, 然后 n          # 下一个窗口
+Ctrl+b, 然后 p          # 上一个窗口
+Ctrl+b, 然后 <number>   # 跳转到编号窗口（0-9）
+Ctrl+b, 然后 w          # 窗口列表
 
-# Delete a session
+# 删除会话
 cao shutdown --session <session-name>
 ```
 
-**List all windows (Ctrl+b, w):**
+**窗口列表（Ctrl+b, w）：**
 
 ![Tmux Window Selector](./docs/assets/tmux_all_windows.png)
 
-## MCP Server Tools and Orchestration Modes
+## MCP 工具与编排模式
 
-CAO provides a local HTTP server that processes orchestration requests. CLI agents can interact with this server through MCP tools to coordinate multi-agent workflows.
+CAO 提供本地 HTTP 服务处理编排请求，CLI Agent 通过 MCP 工具与之交互。
 
-### How It Works
+### 工作方式
 
-Each agent terminal is assigned a unique `CAO_TERMINAL_ID` environment variable. The server uses this ID to:
+每个 Agent 终端都会分配唯一的 `CAO_TERMINAL_ID`，服务端依此：
 
-- Route messages between agents
-- Track terminal status (IDLE, PROCESSING, COMPLETED, ERROR)
-- Manage terminal-to-terminal communication via inbox
-- Coordinate orchestration operations
+- 路由 Agent 间消息
+- 追踪终端状态（IDLE、PROCESSING、COMPLETED、ERROR）
+- 通过收件箱管理终端间通信
+- 协调整体编排操作
 
-When an agent calls an MCP tool, the server identifies the caller by their `CAO_TERMINAL_ID` and orchestrates accordingly.
+当 Agent 调用 MCP 工具时，服务端会根据 `CAO_TERMINAL_ID` 识别调用方并执行编排。
 
-### Orchestration Modes
+### 编排模式
 
-CAO supports three orchestration patterns:
+三种编排模式：
 
-> **Note:** All orchestration modes support optional `working_directory` parameter when enabled via `CAO_ENABLE_WORKING_DIRECTORY=true`. See [Working Directory Support](#working-directory-support) for details.
+> **说明：** 所有模式都可在设置 `CAO_ENABLE_WORKING_DIRECTORY=true` 后使用可选的 `working_directory` 参数，详见 [Working Directory Support](#working-directory-support)。
 
-**1. Handoff** - Transfer control to another agent and wait for completion
+**1. Handoff** —— 同步移交并等待完成
 
-- Creates a new terminal with the specified agent profile
-- Sends the task message and waits for the agent to finish
-- Returns the agent's output to the caller
-- Automatically exits the agent after completion
-- Use when you need **synchronous** task execution with results
+- 创建带指定 Agent 配置的新终端
+- 发送任务消息并等待完成
+- 将结果返回给调用方
+- 完成后自动退出 Agent
+- 适用于需要同步结果的场景
 
-Example: Sequential code review workflow
+示例：串行代码评审流程
 
 ![Handoff Workflow](./docs/assets/handoff-workflow.png)
 
-**2. Assign** - Spawn an agent to work independently (async)
+**2. Assign** —— 异步派工并行执行
 
-- Creates a new terminal with the specified agent profile
-- Sends the task message with callback instructions
-- Returns immediately with the terminal ID
-- Agent continues working in the background
-- Assigned agent sends results back to supervisor via `send_message` when complete
-- Messages are queued for delivery if the supervisor is busy (common in parallel workflows)
-- Use for **asynchronous** task execution or fire-and-forget operations
+- 创建带指定 Agent 配置的新终端
+- 携带回调指令发送任务
+- 立即返回终端 ID
+- Agent 在后台继续工作
+- 完成后通过 `send_message` 把结果发回监督者
+- 若监督者忙碌消息会排队（常见于并行场景）
+- 适合异步或 fire-and-forget 任务
 
-Example: A supervisor assigns parallel data analysis tasks to multiple analysts while using handoff to sequentially generate a report template, then combines all results.
+示例：监督者并行分派数据分析任务，同时串行生成报告模板，最后汇总结果。
 
-See [examples/assign](examples/assign) for the complete working example.
+完整示例见 [examples/assign](examples/assign)。
 
 ![Parallel Data Analysis](./docs/assets/parallel-data-analysis.png)
 
-**3. Send Message** - Communicate with an existing agent
+**3. Send Message** —— 与现有 Agent 通信
 
-- Sends a message to a specific terminal's inbox
-- Messages are queued and delivered when the terminal is idle
-- Enables ongoing collaboration between agents
-- Common for **swarm** operations where multiple agents coordinate dynamically
-- Use for iterative feedback or multi-turn conversations
+- 向指定终端的收件箱发送消息
+- 消息在终端空闲时递送
+- 便于 Agent 间持续协作
+- 常用于多 Agent 动态协同（swarm）
+- 适合迭代反馈或多轮对话
 
-Example: Multi-role feature development
+示例：多角色协作开发
 
 ![Multi-role Feature Development](./docs/assets/multi-role-feature-development.png)
 
-### Custom Orchestration
+### 自定义编排
 
-The `cao-server` runs on `http://localhost:9889` by default and exposes REST APIs for session management, terminal control, and messaging. The CLI commands (`cao launch`, `cao shutdown`) and MCP server tools (`handoff`, `assign`, `send_message`) are just examples of how these APIs can be packaged together.
+`cao-server` 默认运行在 `http://localhost:9889`，提供会话管理、终端控制与消息 API。CLI 命令（`cao launch`、`cao shutdown`）及 MCP 工具（`handoff`、`assign`、`send_message`）都是对这些 API 的包装。
 
-You can combine the three orchestration modes above into custom workflows, or create entirely new orchestration patterns using the underlying APIs to fit your specific needs.
+可将上述三种模式自由组合，或基于底层 API 构建全新编排以适配你的场景。
 
-For complete API documentation, see [docs/api.md](docs/api.md).
+完整 API 文档见 [docs/api.md](docs/api.md)。
 
-## Flows - Scheduled Agent Sessions
+## Flows - 定时 Agent 会话
 
-Flows allow you to schedule agent sessions to run automatically based on cron expressions.
+Flows 基于 cron 表达式自动运行 Agent 会话。
 
-### Prerequisites
+### 前置条件
 
-Install the agent profile you want to use:
+先安装需要使用的 Agent 配置：
 
 ```bash
 cao install developer
 ```
 
-### Quick Start
+### 快速体验
 
-The example flow asks a simple world trivia question every morning at 7:30 AM.
+示例 Flow：每天 7:30 AM 询问一条世界趣闻。
 
 ```bash
-# 1. Start the cao server
+# 1. 启动 cao server
 cao-server
 
-# 2. In another terminal, add a flow
+# 2. 在另一终端添加 flow
 cao flow add examples/flow/morning-trivia.md
 
-# 3. List flows to see schedule and status
+# 3. 查看计划与状态
 cao flow list
 
-# 4. Manually run a flow (optional - for testing)
+# 4. 手动运行（可选，用于测试）
 cao flow run morning-trivia
 
-# 5. View flow execution (after it runs)
+# 5. 查看执行结果（运行后）
 tmux list-sessions
 tmux attach -t <session-name>
 
-# 6. Cleanup session when done
+# 6. 完成后清理
 cao shutdown --session <session-name>
 ```
 
-**IMPORTANT:** The `cao-server` must be running for flows to execute on schedule.
+**重要：** 需要保持 `cao-server` 运行，Flow 才能按计划执行。
 
-### Example 1: Simple Scheduled Task
+### 示例 1：简单定时任务
 
-A flow that runs at regular intervals with a static prompt (no script needed):
+静态提示、定期运行（无需脚本）：
 
-**File: `daily-standup.md`**
+**文件：`daily-standup.md`**
 
 ```yaml
 ---
 name: daily-standup
-schedule: "0 9 * * 1-5"  # 9am weekdays
+schedule: "0 9 * * 1-5"  # 工作日早 9 点
 agent_profile: developer
-provider: kiro_cli  # Optional, defaults to kiro_cli
+provider: kiro_cli  # 可选，默认 kiro_cli
 ---
 
 Review yesterday's commits and create a standup summary.
 ```
 
-### Example 2: Conditional Execution with Health Check
+### 示例 2：带健康检查的条件执行
 
-A flow that monitors a service and only executes when there's an issue:
+监控服务，仅在异常时执行：
 
-**File: `monitor-service.md`**
+**文件：`monitor-service.md`**
 
 ```yaml
 ---
 name: monitor-service
-schedule: "*/5 * * * *"  # Every 5 minutes
+schedule: "*/5 * * * *"  # 每 5 分钟
 agent_profile: developer
 script: ./health-check.sh
 ---
@@ -335,7 +502,7 @@ Please investigate and triage the issue:
 4. Suggest remediation steps
 ```
 
-**Script: `health-check.sh`**
+**脚本：`health-check.sh`**
 
 ```bash
 #!/bin/bash
@@ -343,53 +510,56 @@ URL="https://api.example.com/health"
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
 
 if [ "$STATUS" != "200" ]; then
-  # Service is down - execute flow
+  # 服务异常，执行 Flow
   echo "{\"execute\": true, \"output\": {\"url\": \"$URL\", \"status_code\": \"$STATUS\"}}"
 else
-  # Service is healthy - skip execution
+  # 服务正常，跳过
   echo "{\"execute\": false, \"output\": {}}"
 fi
 ```
 
-### Flow Commands
+### Flow 命令
 
 ```bash
-# Add a flow
+# 添加 flow
 cao flow add daily-standup.md
 
-# List all flows (shows schedule, next run time, enabled status)
+# 列出所有 flow（含计划、下次运行时间、启用状态）
 cao flow list
 
-# Enable/disable a flow
+# 启用/禁用 flow
 cao flow enable daily-standup
 cao flow disable daily-standup
 
-# Manually run a flow (ignores schedule)
+# 手动运行（忽略计划）
 cao flow run daily-standup
 
-# Remove a flow
+# 移除 flow
 cao flow remove daily-standup
 ```
 
-## Working Directory Support
+## 工作目录支持
 
-CAO supports specifying working directories for agent handoff/delegation operations. By default this is disabled to prevent agents from hallucinating directory paths.
+CAO 支持在移交/派工时指定工作目录。默认关闭以避免 Agent 臆造路径。
 
-All paths are canonicalized via `realpath` and validated against a security policy:
+CLI `launch` 也支持显式目录：
 
-- **Allowed:** the user's home directory (`~/`) and any subdirectory under it, including paths through symlinks (e.g., `/home/user` -> `/local/home/user` on AWS)
-- **Blocked:** system directories (`/`, `/etc`, `/var`, `/tmp`, `/proc`, `/sys`, `/root`, `/boot`, `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, `/lib`, `/lib64`, `/dev`) and any path outside the home directory tree
+```bash
+cao launch --agents developer --working-directory /home/you/workspace
+```
 
-For configuration and usage details, see [docs/working-directory.md](docs/working-directory.md).
+Web 控制台创建团队时，也支持配置团队工作目录（home 一级目录），并在成员加入团队时自动继承。
 
-## Security
+配置与用法详见 [docs/working-directory.md](docs/working-directory.md)。
 
-See [SECURITY.md](SECURITY.md) for vulnerability reporting, security scanning, and best practices.
+## 安全
 
-## Contributing
+安全报告、扫描与最佳实践见 [SECURITY.md](SECURITY.md)。
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on contributing to this project.
+## 贡献
 
-## License
+贡献指南见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-This project is licensed under the Apache-2.0 License.
+## 许可证
+
+本项目基于 Apache-2.0 许可证。
