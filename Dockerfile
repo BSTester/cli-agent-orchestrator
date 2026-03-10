@@ -23,8 +23,18 @@ base_url = f"https://raw.githubusercontent.com/BSTester/cli-agent-orchestrator/{
 script_dir = Path("/opt/cao/scripts")
 script_dir.mkdir(parents=True, exist_ok=True)
 
-for name in ("install_services.sh", "start_services.sh", "stop_services.sh", "install_and_start_services.sh"):
-    content = urlopen(f"{base_url}/{name}").read().decode("utf-8")
+for name in (
+    "install_services.sh",
+    "start_services.sh",
+    "stop_services.sh",
+    "install_and_start_services.sh",
+    "docker_entrypoint.sh",
+    "docker_healthcheck.py",
+):
+    try:
+        content = urlopen(f"{base_url}/{name}", timeout=30).read().decode("utf-8")
+    except Exception as exc:
+        raise SystemExit(f"failed to download {name} from {base_url}: {exc}") from exc
     path = script_dir / name
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
@@ -34,6 +44,6 @@ EXPOSE 8000 9889
 
 ENTRYPOINT []
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 CMD python -c "from urllib.request import urlopen; [urlopen(url, timeout=5).close() for url in ('http://127.0.0.1:9889/health', 'http://127.0.0.1:8000/health')]"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 CMD python /opt/cao/scripts/docker_healthcheck.py
 
-CMD ["/bin/bash", "-lc", "/opt/cao/scripts/install_and_start_services.sh && exec tail -F /opt/cao/.runtime/logs/cao-server.log /opt/cao/.runtime/logs/cao-control-panel.log"]
+CMD ["/bin/bash", "/opt/cao/scripts/docker_entrypoint.sh"]

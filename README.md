@@ -226,6 +226,8 @@ docker compose up --build
 CAO_REPO_REF=main CAO_CONSOLE_PASSWORD=change-me docker compose up --build
 ```
 
+> 建议将 `CAO_REPO_REF` 固定为具体 commit SHA（或后续可用的 tag），以获得更可复现的镜像构建结果。
+
 默认端口映射：
 
 - `8000` → `cao-control-panel`
