@@ -23,4 +23,4 @@ def mcp_server(
     path: str | None,
 ):
     """Start the CAO MCP server."""
-    run_mcp_server(transport=transport.lower(), host=host, port=port, path=path)
+    run_mcp_server(transport=transport, host=host, port=port, path=path)

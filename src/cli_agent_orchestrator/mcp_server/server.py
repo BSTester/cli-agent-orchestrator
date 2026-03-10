@@ -5,7 +5,6 @@ import asyncio
 import logging
 import os
 import subprocess
-import sys
 import time
 from typing import Any, Dict, Optional, Sequence, Tuple
 
@@ -1021,7 +1020,7 @@ def _parse_cli_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def cli_main(argv: Optional[Sequence[str]] = None) -> None:
     """CLI entry point for the standalone MCP server executable."""
-    args = _parse_cli_args(argv if argv is not None else sys.argv[1:])
+    args = _parse_cli_args(argv)
     main(transport=args.transport, host=args.host, port=args.port, path=args.path)
 
 
