@@ -17,6 +17,14 @@ from cli_agent_orchestrator.utils.terminal import wait_until_status
 
 logger = logging.getLogger(__name__)
 
+_OPENCLAW_TERMINAL_ID_NOTICE_TEMPLATE = (
+    "System bootstrap notice: your CAO terminal id for this session is {terminal_id}.\n"
+    "OpenClaw may keep stale environment variables until the gateway restarts, so do not rely on "
+    "CAO_TERMINAL_ID from the environment for this session.\n"
+    "When you need to reference or pass your current CAO terminal id to CAO tools, use {terminal_id}.\n"
+    "Do not reply to this notice; just remember the id for later tool calls."
+)
+
 
 class ProviderError(Exception):
     """Exception raised for OpenClaw provider-specific errors."""
@@ -218,9 +226,32 @@ class OpenClawProvider(SimpleTuiProvider):
 
         self._reset_bootstrap_state()
 
+    def _send_terminal_id_notice(self) -> None:
+        """Send a bootstrap message that tells OpenClaw its CAO terminal id."""
+        notice = _OPENCLAW_TERMINAL_ID_NOTICE_TEMPLATE.format(terminal_id=self.terminal_id)
+
+        self.mark_input_received()
+        tmux_client.send_keys(
+            self.session_name,
+            self.window_name,
+            notice,
+            enter_count=self.paste_enter_count,
+        )
+
+        if not wait_until_status(
+            self,
+            {TerminalStatus.IDLE, TerminalStatus.COMPLETED},
+            timeout=30.0,
+            polling_interval=1.0,
+        ):
+            raise TimeoutError("OpenClaw terminal-id bootstrap notice timed out after 30 seconds")
+
+        self._reset_bootstrap_state()
+
     def initialize(self) -> bool:
         """Initialize OpenClaw and switch to the configured agent profile if needed."""
         self._ensure_openclaw_agent_registered()
         super().initialize()
         self._switch_to_openclaw_agent()
+        self._send_terminal_id_notice()
         return True
