@@ -13,3 +13,4 @@ class ProviderType(str, Enum):
     CODEBUDDY = "codebuddy"
     COPILOT = "copilot"
     OPENCLAW = "openclaw"
+    GEMINI_CLI = "gemini_cli"
