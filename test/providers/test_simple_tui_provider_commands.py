@@ -97,9 +97,9 @@ def test_copilot_start_command_allows_all_without_ask_user() -> None:
     assert provider._start_command == "copilot --allow-all --no-ask-user --no-alt-screen"
 
 
-def test_openclaw_start_command_uses_tui_mode() -> None:
+def test_openclaw_start_command_uses_default_interactive_mode() -> None:
     provider = OpenClawProvider("t1", "s1", "w1")
-    assert provider._start_command == "openclaw tui"
+    assert provider._start_command == "openclaw"
     assert provider.exit_cli() == "C-c"
 
 

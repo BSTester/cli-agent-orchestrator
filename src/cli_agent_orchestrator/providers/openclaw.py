@@ -14,7 +14,7 @@ def _build_openclaw_command(agent_profile: Optional[str]) -> str:
     injection parity with other providers.
     """
     _ = agent_profile
-    return "openclaw tui"
+    return "openclaw"
 
 
 class OpenClawProvider(SimpleTuiProvider):
