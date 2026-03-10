@@ -75,6 +75,7 @@ AGENT_FLOW_DIR = CAO_HOME_DIR / "agent-flow"
 
 # Local agent store for custom agent profiles
 LOCAL_AGENT_STORE_DIR = CAO_HOME_DIR / "agent-store"
+OPENCLAW_AGENT_WORKSPACES_DIR = CAO_HOME_DIR / "openclaw-agents"
 
 # Provider-specific agent directories
 Q_AGENTS_DIR = Path.home() / ".aws" / "amazonq" / "cli-agents"  # Q CLI agents
