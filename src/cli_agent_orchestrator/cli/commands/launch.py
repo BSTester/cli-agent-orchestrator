@@ -37,7 +37,6 @@ def _resolve_provider(agent_name: str, provider: Optional[str]) -> str:
         pass
 
     return DEFAULT_PROVIDER
-}
 
 
 @click.command()
