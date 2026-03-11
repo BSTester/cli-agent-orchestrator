@@ -61,7 +61,7 @@ export default function LoginPage() {
         }}
       >
       <SectionCard style={{ width: 360, padding: 22 }}>
-        <h1 style={{ marginBottom: 10, color: "var(--text-bright)", fontSize: 20, textAlign: "center" }}>一人集团公司</h1>
+        <h1 style={{ marginBottom: 10, color: "var(--text-bright)", fontSize: 20, textAlign: "center" }}>一人无限智能</h1>
         <div style={{ marginBottom: 16, textAlign: "center" }}>
           <InfoHint text="输入控制台密码后进入管理页面" />
         </div>

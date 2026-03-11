@@ -10,6 +10,7 @@ from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.utils.provider_runtime_config import get_provider_runtime_settings
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,16 @@ class CodexProvider(BaseProvider):
         Returns properly escaped shell command string that can be safely sent via tmux.
         Uses codex's -c developer_instructions flag to inject agent system prompts.
         """
+        runtime_settings = get_provider_runtime_settings("codex")
+        command_prefix: list[str] = []
+        if runtime_settings.get("mode") == "api":
+            api_key = str(runtime_settings.get("api_key") or "").strip()
+            api_base_url = str(runtime_settings.get("api_base_url") or "").strip()
+            if api_key:
+                command_prefix.append(f"OPENAI_API_KEY={shlex.quote(api_key)}")
+            if api_base_url:
+                command_prefix.append(f"OPENAI_BASE_URL={shlex.quote(api_base_url)}")
+
         command_parts = ["codex", "--no-alt-screen", "--disable", "shell_snapshot"]
 
         if self._agent_profile is not None:
@@ -187,7 +198,10 @@ class CodexProvider(BaseProvider):
             except Exception as e:
                 raise ProviderError(f"Failed to load agent profile '{self._agent_profile}': {e}")
 
-        return shlex.join(command_parts)
+        command = shlex.join(command_parts)
+        if command_prefix:
+            return " ".join([*command_prefix, command])
+        return command
 
     def _handle_trust_prompt(self, timeout: float = 20.0) -> None:
         """Auto-accept the workspace trust prompt if it appears.

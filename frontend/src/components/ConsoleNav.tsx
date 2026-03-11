@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
+import ProviderConfigGuide from "@/components/ProviderConfigGuide";
 import { SecondaryButton } from "@/components/ConsoleTheme";
 import { caoRequest } from "@/lib/cao";
 
@@ -12,6 +13,7 @@ const navItems = [
   { href: "/agents", label: "会话管理" },
   { href: "/assets", label: "资产管理" },
   { href: "/tasks", label: "任务管理" },
+  { href: "/settings", label: "配置引导" },
 ];
 
 export default function ConsoleNav() {
@@ -28,46 +30,56 @@ export default function ConsoleNav() {
   }
 
   return (
-    <header
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 10,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "12px 18px",
-        borderBottom: "1px solid var(--border)",
-        background: "var(--surface)",
-        backdropFilter: "blur(10px)",
-      }}
-    >
-      <div style={{ fontWeight: 700, color: "var(--text-bright)" }}>一人集团公司</div>
-      <nav style={{ display: "flex", gap: 16 }}>
-        {navItems.map((item) => {
-          const active = normalizedPathname === item.href;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              style={{
-                textDecoration: "none",
-                color: active ? "var(--text-bright)" : "var(--text-dim)",
-                fontWeight: active ? 700 : 500,
-                border: "1px solid var(--border)",
-                borderRadius: 999,
-                padding: "4px 10px",
-                background: active ? "var(--surface2)" : "transparent",
-              }}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
-      <SecondaryButton onClick={handleLogout} style={{ padding: "6px 10px" }}>
-        退出登录
-      </SecondaryButton>
-    </header>
+    <>
+      <header
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "12px 18px",
+          borderBottom: "1px solid var(--border)",
+          background: "var(--surface)",
+          backdropFilter: "blur(10px)",
+        }}
+      >
+        <div style={{ fontWeight: 700, color: "var(--text-bright)" }}>一人无限智能</div>
+        <nav style={{ display: "flex", gap: 16 }}>
+          {navItems.map((item) => {
+            const active = normalizedPathname === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                style={{
+                  textDecoration: "none",
+                  color: active ? "var(--text-bright)" : "var(--text-dim)",
+                  fontWeight: active ? 700 : 500,
+                  border: "1px solid var(--border)",
+                  borderRadius: 999,
+                  padding: "4px 10px",
+                  background: active ? "var(--surface2)" : "transparent",
+                }}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+        <SecondaryButton onClick={handleLogout} style={{ padding: "6px 10px" }}>
+          退出登录
+        </SecondaryButton>
+      </header>
+
+      {normalizedPathname !== "/settings" ? (
+        <ProviderConfigGuide
+          variant="modal"
+          defaultOpen={false}
+          autoOpen
+        />
+      ) : null}
+    </>
   );
 }

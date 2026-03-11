@@ -9,7 +9,9 @@ import sqlite3
 import subprocess
 import asyncio
 import json
+import shutil
 import time
+import tomllib
 import uuid
 import contextlib
 from collections import Counter
@@ -17,6 +19,7 @@ from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import urlparse
 
 import requests
 import frontmatter
@@ -36,6 +39,12 @@ from cli_agent_orchestrator.constants import (
 )
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.services import terminal_service
+from cli_agent_orchestrator.utils.provider_runtime_config import (
+    get_provider_runtime_settings,
+    load_provider_runtime_config,
+    set_onboarding_state,
+    update_provider_runtime_settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +71,81 @@ CONTROL_PANEL_CORS_ORIGINS = [
 BUILTIN_AGENT_PROFILES = ("code_supervisor", "developer", "reviewer")
 TASK_TITLE_MAX_LEN = 48
 TASK_TITLE_FALLBACK_LEN = 20
+
+CONTROL_PANEL_PROVIDER_GUIDES: List[Dict[str, Any]] = [
+    {
+        "id": "claude_code",
+        "label": "Claude Code",
+        "command": "claude",
+        "supports_account_login": True,
+        "supports_api_config": True,
+        "default_selected": True,
+        "login_launch_command": "claude",
+        "login_send_command": "/login",
+    },
+    {
+        "id": "codex",
+        "label": "Codex",
+        "command": "codex",
+        "supports_account_login": True,
+        "supports_api_config": True,
+        "default_selected": True,
+        "login_launch_command": "codex",
+        "login_send_command": "/login",
+    },
+    {
+        "id": "openclaw",
+        "label": "OpenClaw",
+        "command": "openclaw",
+        "supports_account_login": False,
+        "supports_api_config": True,
+        "default_selected": True,
+        "login_launch_command": "openclaw tui",
+        "login_send_command": None,
+    },
+    {
+        "id": "copilot",
+        "label": "Copilot CLI",
+        "command": "copilot",
+        "supports_account_login": True,
+        "supports_api_config": False,
+        "default_selected": True,
+        "login_launch_command": "copilot",
+        "login_send_command": "/login",
+        "direct_login_command": "copilot login",
+    },
+    {
+        "id": "qoder_cli",
+        "label": "QoderCLI",
+        "command": "qodercli",
+        "supports_account_login": True,
+        "supports_api_config": False,
+        "default_selected": True,
+        "login_launch_command": "qodercli",
+        "login_send_command": "/login",
+    },
+    {
+        "id": "kiro_cli",
+        "label": "Kiro CLI",
+        "command": "kiro-cli",
+        "supports_account_login": True,
+        "supports_api_config": False,
+        "default_selected": True,
+        "login_launch_command": "kiro-cli login",
+        "login_send_command": None,
+        "direct_login_command": "kiro-cli login --use-device-flow",
+    },
+    {
+        "id": "codebuddy",
+        "label": "CodeBuddy",
+        "command": "codebuddy",
+        "supports_account_login": True,
+        "supports_api_config": False,
+        "default_selected": True,
+        "login_launch_command": "codebuddy",
+        "login_send_command": "/login",
+    },
+]
 
 app = FastAPI(
     title="CAO Control Panel API",
@@ -1188,6 +1272,36 @@ class ConsoleCreateShellTerminalRequest(BaseModel):
     working_directory: Optional[str] = None
 
 
+class ProviderConfigDismissRequest(BaseModel):
+    dismissed: bool = True
+
+
+class OpenClawFeishuConfigRequest(BaseModel):
+    enabled: bool = False
+    domain: Literal["feishu", "lark"] = "feishu"
+    connection_mode: Literal["websocket", "webhook"] = "websocket"
+    app_id: Optional[str] = None
+    app_secret: Optional[str] = None
+    bot_name: Optional[str] = None
+    verification_token: Optional[str] = None
+    dm_policy: Literal["pairing", "allowlist", "open", "disabled"] = "pairing"
+    account_id: str = "main"
+
+
+class ProviderConfigApplyRequest(BaseModel):
+    provider_id: str = Field(min_length=1)
+    mode: Literal["account", "api"]
+    api_base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    default_model: Optional[str] = None
+    compatibility: Optional[Literal["openai", "anthropic"]] = None
+    feishu: Optional[OpenClawFeishuConfigRequest] = None
+
+
+class ProviderCallbackRequest(BaseModel):
+    callback_url: str = Field(min_length=1)
+
+
 class InboxMessageRequest(BaseModel):
     message: str = Field(min_length=1)
     sender_id: Optional[str] = None
@@ -1644,6 +1758,428 @@ def _response_json_or_text(response: requests.Response) -> Any:
         return response.json()
     except ValueError:
         return response.text
+
+
+def _run_provider_command(
+    args: List[str],
+    *,
+    input_text: Optional[str] = None,
+    timeout: int = 25,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        input=input_text,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _provider_settings_path(provider_id: str) -> Optional[Path]:
+    mapping = {
+        "claude_code": Path.home() / ".claude" / "settings.json",
+        "codex": Path.home() / ".codex" / "config.toml",
+        "openclaw": Path.home() / ".openclaw" / "openclaw.json",
+        "codebuddy": Path.home() / ".codebuddy" / "settings.json",
+    }
+    return mapping.get(provider_id)
+
+
+def _read_json_file(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_json_file(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+
+def _parse_toml_file(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def _toml_string(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _upsert_top_level_toml_key(content: str, key: str, value: str) -> str:
+    pattern = re.compile(rf"(?m)^{re.escape(key)}\s*=\s*.*$")
+    replacement = f"{key} = {value}"
+    if pattern.search(content):
+        return pattern.sub(replacement, content, count=1)
+    suffix = "\n" if content and not content.endswith("\n") else ""
+    return f"{content}{suffix}{replacement}\n"
+
+
+def _upsert_toml_section(content: str, section_name: str, values: Dict[str, str]) -> str:
+    lines = content.splitlines()
+    section_header = f"[{section_name}]"
+    start_index = -1
+    end_index = len(lines)
+
+    for index, line in enumerate(lines):
+        if line.strip() == section_header:
+            start_index = index
+            break
+
+    if start_index >= 0:
+        for index in range(start_index + 1, len(lines)):
+            if lines[index].startswith("[") and lines[index].endswith("]"):
+                end_index = index
+                break
+        body = lines[start_index + 1 : end_index]
+    else:
+        body = []
+
+    for key, value in values.items():
+        updated = False
+        pattern = re.compile(rf"^{re.escape(key)}\s*=")
+        for index, line in enumerate(body):
+            if pattern.match(line.strip()):
+                body[index] = f"{key} = {value}"
+                updated = True
+                break
+        if not updated:
+            body.append(f"{key} = {value}")
+
+    replacement_lines = [section_header, *body]
+    if start_index >= 0:
+        lines = [*lines[:start_index], *replacement_lines, *lines[end_index:]]
+    else:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(replacement_lines)
+
+    rendered = "\n".join(lines).rstrip()
+    return f"{rendered}\n"
+
+
+def _write_codex_config(default_model: str) -> Path:
+    path = Path.home() / ".codex" / "config.toml"
+    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    content = _upsert_top_level_toml_key(content, "model", _toml_string(default_model))
+    content = _upsert_top_level_toml_key(content, "model_provider", _toml_string("openai"))
+    content = _upsert_toml_section(
+        content,
+        "model_providers.openai",
+        {
+            "name": _toml_string("OpenAI"),
+            "base_url": _toml_string("https://api.openai.com/v1"),
+            "api_key_env": _toml_string("OPENAI_API_KEY"),
+        },
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _write_claude_settings(api_base_url: str, api_key: str, default_model: str) -> Path:
+    path = Path.home() / ".claude" / "settings.json"
+    payload = _read_json_file(path)
+    env_payload = payload.get("env")
+    env_data = dict(env_payload) if isinstance(env_payload, dict) else {}
+    env_data["ANTHROPIC_BASE_URL"] = api_base_url
+    env_data["ANTHROPIC_AUTH_TOKEN"] = api_key
+    env_data["ANTHROPIC_API_KEY"] = api_key
+    env_data["ANTHROPIC_MODEL"] = default_model
+    payload["env"] = env_data
+    _write_json_file(path, payload)
+    return path
+
+
+def _merge_openclaw_feishu_config(
+    *,
+    domain: str,
+    connection_mode: str,
+    app_id: str,
+    app_secret: str,
+    bot_name: str,
+    verification_token: Optional[str],
+    dm_policy: str,
+    account_id: str,
+) -> Path:
+    path = Path.home() / ".openclaw" / "openclaw.json"
+    payload = _read_json_file(path)
+
+    channels = payload.get("channels")
+    channels_data = dict(channels) if isinstance(channels, dict) else {}
+    feishu = channels_data.get("feishu")
+    feishu_data = dict(feishu) if isinstance(feishu, dict) else {}
+    accounts = feishu_data.get("accounts")
+    accounts_data = dict(accounts) if isinstance(accounts, dict) else {}
+
+    feishu_data["enabled"] = True
+    feishu_data["domain"] = domain
+    feishu_data["connectionMode"] = connection_mode
+    feishu_data["dmPolicy"] = dm_policy
+    feishu_data["defaultAccount"] = account_id
+
+    account_payload = accounts_data.get(account_id)
+    account_data = dict(account_payload) if isinstance(account_payload, dict) else {}
+    account_data["appId"] = app_id
+    account_data["appSecret"] = app_secret
+    if bot_name:
+        account_data["botName"] = bot_name
+    accounts_data[account_id] = account_data
+    feishu_data["accounts"] = accounts_data
+
+    if connection_mode == "webhook":
+        feishu_data["verificationToken"] = verification_token or ""
+    else:
+        feishu_data.pop("verificationToken", None)
+
+    channels_data["feishu"] = feishu_data
+    payload["channels"] = channels_data
+    _write_json_file(path, payload)
+    return path
+
+
+def _detect_claude_status() -> Dict[str, Any]:
+    installed = shutil.which("claude") is not None
+    runtime_settings = get_provider_runtime_settings("claude_code")
+    details = ""
+    configured = False
+    detected_mode = runtime_settings.get("mode")
+
+    if installed:
+        result = _run_provider_command(["claude", "auth", "status"])
+        stdout = (result.stdout or "").strip()
+        if stdout:
+            details = stdout
+        try:
+            payload = json.loads(stdout) if stdout else {}
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict) and payload.get("loggedIn") is True:
+            configured = True
+            detected_mode = detected_mode or "account"
+            details = payload.get("authMethod") or details
+
+    if runtime_settings.get("mode") == "api" and runtime_settings.get("api_key"):
+        configured = True
+        detected_mode = "api"
+        details = runtime_settings.get("default_model") or details
+
+    return {
+        "installed": installed,
+        "configured": configured,
+        "detected_mode": detected_mode,
+        "details": details,
+        "settings_path": str(_provider_settings_path("claude_code")) if _provider_settings_path("claude_code") else None,
+    }
+
+
+def _detect_codex_status() -> Dict[str, Any]:
+    installed = shutil.which("codex") is not None
+    runtime_settings = get_provider_runtime_settings("codex")
+    details = ""
+    configured = False
+    detected_mode = runtime_settings.get("mode")
+
+    if installed:
+        result = _run_provider_command(["codex", "login", "status"])
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        details = stdout or stderr
+        if result.returncode == 0 and stdout:
+            configured = True
+            detected_mode = detected_mode or "account"
+
+    if runtime_settings.get("mode") == "api" and runtime_settings.get("api_key"):
+        configured = True
+        detected_mode = "api"
+        details = runtime_settings.get("default_model") or details
+
+    return {
+        "installed": installed,
+        "configured": configured,
+        "detected_mode": detected_mode,
+        "details": details,
+        "settings_path": str(_provider_settings_path("codex")) if _provider_settings_path("codex") else None,
+    }
+
+
+def _detect_kiro_status() -> Dict[str, Any]:
+    installed = shutil.which("kiro-cli") is not None
+    details = ""
+    configured = False
+    if installed:
+        result = _run_provider_command(["kiro-cli", "whoami", "--format", "json"])
+        stdout = (result.stdout or "").strip()
+        details = stdout or (result.stderr or "").strip()
+        try:
+            payload = json.loads(stdout) if stdout else {}
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict) and payload.get("accountType"):
+            configured = True
+            details = str(payload.get("accountType"))
+    return {
+        "installed": installed,
+        "configured": configured,
+        "detected_mode": "account" if configured else None,
+        "details": details,
+        "settings_path": None,
+    }
+
+
+def _detect_qoder_status() -> Dict[str, Any]:
+    installed = shutil.which("qodercli") is not None
+    details = ""
+    configured = False
+    if installed:
+        result = _run_provider_command(["qodercli", "status"])
+        stdout = (result.stdout or "").strip()
+        details = stdout or (result.stderr or "").strip()
+        configured = result.returncode == 0 and "Username:" in stdout
+    return {
+        "installed": installed,
+        "configured": configured,
+        "detected_mode": "account" if configured else None,
+        "details": details,
+        "settings_path": None,
+    }
+
+
+def _detect_copilot_status() -> Dict[str, Any]:
+    installed = shutil.which("copilot") is not None
+    runtime_settings = get_provider_runtime_settings("copilot")
+    env_tokens = [
+        os.getenv("COPILOT_GITHUB_TOKEN"),
+        os.getenv("GH_TOKEN"),
+        os.getenv("GITHUB_TOKEN"),
+    ]
+    config_dir = Path.home() / ".copilot"
+    configured = any(bool(str(token or "").strip()) for token in env_tokens)
+    if not configured and config_dir.exists():
+        configured = any(item.is_file() and item.name != "mcp-config.json" for item in config_dir.iterdir())
+    if runtime_settings.get("login_completed_at"):
+        configured = True
+    details = "device-flow / browser OAuth"
+    return {
+        "installed": installed,
+        "configured": configured,
+        "detected_mode": "account" if configured else None,
+        "details": details,
+        "settings_path": str(config_dir) if config_dir.exists() else None,
+    }
+
+
+def _detect_codebuddy_status() -> Dict[str, Any]:
+    installed = shutil.which("codebuddy") is not None
+    runtime_settings = get_provider_runtime_settings("codebuddy")
+    settings_path = _provider_settings_path("codebuddy")
+    configured = bool(runtime_settings.get("login_completed_at"))
+    details = ""
+    if installed:
+        result = _run_provider_command(["codebuddy", "config", "get", "model"])
+        stdout = (result.stdout or "").strip()
+        if stdout:
+            details = f"model={stdout.splitlines()[0]}"
+    if settings_path and settings_path.exists() and not configured:
+        configured = True
+    return {
+        "installed": installed,
+        "configured": configured,
+        "detected_mode": "account" if configured else None,
+        "details": details,
+        "settings_path": str(settings_path) if settings_path else None,
+    }
+
+
+def _detect_openclaw_status() -> Dict[str, Any]:
+    installed = shutil.which("openclaw") is not None
+    runtime_settings = get_provider_runtime_settings("openclaw")
+    config_path = _provider_settings_path("openclaw")
+    payload = _read_json_file(config_path) if config_path else {}
+    configured = bool(runtime_settings.get("api_key"))
+    details = ""
+    if isinstance(payload, dict):
+        channels = payload.get("channels")
+        feishu_configured = isinstance(channels, dict) and isinstance(channels.get("feishu"), dict)
+        if feishu_configured:
+            details = "Feishu 已配置"
+        models = payload.get("models")
+        if isinstance(models, dict) and models.get("providers"):
+            configured = True
+    if runtime_settings.get("default_model"):
+        configured = True
+        details = runtime_settings.get("compatibility") or details
+    return {
+        "installed": installed,
+        "configured": configured,
+        "detected_mode": "api" if configured else None,
+        "details": details,
+        "settings_path": str(config_path) if config_path else None,
+    }
+
+
+def _detect_provider_status(provider_id: str) -> Dict[str, Any]:
+    detectors = {
+        "claude_code": _detect_claude_status,
+        "codex": _detect_codex_status,
+        "openclaw": _detect_openclaw_status,
+        "copilot": _detect_copilot_status,
+        "qoder_cli": _detect_qoder_status,
+        "kiro_cli": _detect_kiro_status,
+        "codebuddy": _detect_codebuddy_status,
+    }
+    detector = detectors.get(provider_id)
+    if detector is None:
+        return {
+            "installed": False,
+            "configured": False,
+            "detected_mode": None,
+            "details": "Unsupported provider",
+            "settings_path": None,
+        }
+    return detector()
+
+
+def _build_provider_guide_summary() -> Dict[str, Any]:
+    runtime_config = load_provider_runtime_config()
+    onboarding = runtime_config.get("onboarding", {})
+    dismissed = bool(onboarding.get("dismissed"))
+    completed_at = onboarding.get("completed_at")
+    provider_summaries: List[Dict[str, Any]] = []
+    any_configured = False
+
+    for item in CONTROL_PANEL_PROVIDER_GUIDES:
+        status_payload = _detect_provider_status(str(item["id"]))
+        provider_settings = get_provider_runtime_settings(str(item["id"]))
+        configured = bool(status_payload.get("configured"))
+        any_configured = any_configured or configured
+        provider_summaries.append(
+            {
+                **item,
+                "status": status_payload,
+                "saved_settings": {
+                    key: value
+                    for key, value in provider_settings.items()
+                    if key not in {"api_key", "updated_at"}
+                },
+            }
+        )
+
+    should_show_guide = not dismissed and not completed_at and not any_configured
+    return {
+        "should_show_guide": should_show_guide,
+        "onboarding": onboarding,
+        "providers": provider_summaries,
+    }
 
 
 def _get_terminal_tmux_target(terminal_id: str) -> tuple[str, str]:
@@ -2203,6 +2739,169 @@ async def me(request: Request) -> Dict[str, Any]:
     return {
         "authenticated": expires_at is not None,
         "session_expires_at": int(expires_at) if expires_at else None,
+    }
+
+
+@app.get("/console/provider-config/summary")
+async def console_provider_config_summary() -> Dict[str, Any]:
+    return await asyncio.to_thread(_build_provider_guide_summary)
+
+
+@app.post("/console/provider-config/onboarding")
+async def console_provider_config_onboarding(payload: ProviderConfigDismissRequest) -> Dict[str, Any]:
+    onboarding = await asyncio.to_thread(set_onboarding_state, dismissed=payload.dismissed)
+    return {"ok": True, "onboarding": onboarding}
+
+
+@app.post("/console/provider-config/apply")
+async def console_provider_config_apply(payload: ProviderConfigApplyRequest) -> Dict[str, Any]:
+    provider_id = payload.provider_id.strip()
+    provider_meta = next(
+        (item for item in CONTROL_PANEL_PROVIDER_GUIDES if item["id"] == provider_id),
+        None,
+    )
+    if provider_meta is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider_id}")
+
+    if payload.mode == "api" and not provider_meta.get("supports_api_config"):
+        raise HTTPException(status_code=400, detail=f"{provider_id} does not support API configuration")
+
+    if payload.mode == "account" and not provider_meta.get("supports_account_login"):
+        raise HTTPException(status_code=400, detail=f"{provider_id} does not support account login")
+
+    api_base_url = (payload.api_base_url or "").strip()
+    api_key = (payload.api_key or "").strip()
+    default_model = (payload.default_model or "").strip()
+
+    if payload.mode == "api":
+        if not api_base_url:
+            raise HTTPException(status_code=400, detail="api_base_url is required in API mode")
+        if not api_key:
+            raise HTTPException(status_code=400, detail="api_key is required in API mode")
+        if not default_model:
+            raise HTTPException(status_code=400, detail="default_model is required in API mode")
+
+    saved_path: Optional[str] = None
+    command_summary: Optional[str] = None
+
+    try:
+        if provider_id == "claude_code" and payload.mode == "api":
+            saved_path = str(
+                await asyncio.to_thread(_write_claude_settings, api_base_url, api_key, default_model)
+            )
+        elif provider_id == "codex" and payload.mode == "api":
+            saved_path = str(await asyncio.to_thread(_write_codex_config, default_model))
+        elif provider_id == "openclaw" and payload.mode == "api":
+            compatibility = payload.compatibility or "openai"
+            command = [
+                "openclaw",
+                "onboard",
+                "--non-interactive",
+                "--accept-risk",
+                "--skip-ui",
+                "--skip-health",
+                "--skip-skills",
+                "--skip-search",
+                "--no-install-daemon",
+                "--auth-choice",
+                "custom-api-key",
+                "--custom-api-key",
+                api_key,
+                "--custom-base-url",
+                api_base_url,
+                "--custom-model-id",
+                default_model,
+                "--custom-compatibility",
+                compatibility,
+                "--json",
+            ]
+            result = await asyncio.to_thread(_run_provider_command, command, timeout=60)
+            if result.returncode != 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(result.stderr or result.stdout or "OpenClaw onboard failed").strip(),
+                )
+            command_summary = " ".join(command[:6]) + " ..."
+            saved_path = str(_provider_settings_path("openclaw"))
+            if payload.feishu and payload.feishu.enabled:
+                feishu = payload.feishu
+                if not (feishu.app_id or "").strip() or not (feishu.app_secret or "").strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="OpenClaw Feishu channel requires app_id and app_secret",
+                    )
+                if feishu.connection_mode == "webhook" and not (feishu.verification_token or "").strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="OpenClaw Feishu webhook mode requires verification_token",
+                    )
+                saved_path = str(
+                    await asyncio.to_thread(
+                        _merge_openclaw_feishu_config,
+                        domain=feishu.domain,
+                        connection_mode=feishu.connection_mode,
+                        app_id=(feishu.app_id or "").strip(),
+                        app_secret=(feishu.app_secret or "").strip(),
+                        bot_name=(feishu.bot_name or "").strip(),
+                        verification_token=(feishu.verification_token or "").strip() or None,
+                        dm_policy=feishu.dm_policy,
+                        account_id=(feishu.account_id or "main").strip() or "main",
+                    )
+                )
+        runtime_payload: Dict[str, Any] = {
+            "mode": payload.mode,
+            "api_base_url": api_base_url or None,
+            "api_key": api_key or None,
+            "default_model": default_model or None,
+            "compatibility": payload.compatibility or None,
+        }
+        if payload.mode == "account":
+            runtime_payload["login_completed_at"] = datetime.now(timezone.utc).isoformat()
+        if payload.feishu:
+            runtime_payload["feishu"] = payload.feishu.model_dump(exclude_none=True)
+
+        settings = await asyncio.to_thread(update_provider_runtime_settings, provider_id, runtime_payload)
+        onboarding = await asyncio.to_thread(set_onboarding_state, completed=True)
+        return {
+            "ok": True,
+            "provider_id": provider_id,
+            "saved_path": saved_path,
+            "command": command_summary,
+            "settings": {key: value for key, value in settings.items() if key != "api_key"},
+            "onboarding": onboarding,
+        }
+    except HTTPException:
+        raise
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail=f"Provider configuration timed out: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to apply provider configuration: {exc}")
+
+
+@app.post("/console/provider-config/kiro/callback")
+async def console_provider_config_kiro_callback(payload: ProviderCallbackRequest) -> Dict[str, Any]:
+    callback_url = payload.callback_url.strip()
+    parsed = urlparse(callback_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="callback_url must use http or https")
+    if parsed.hostname not in {"localhost", "127.0.0.1"}:
+        raise HTTPException(status_code=400, detail="callback_url must target localhost or 127.0.0.1")
+
+    try:
+        response = await asyncio.to_thread(requests.get, callback_url, timeout=20)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to request callback URL: {exc}")
+
+    await asyncio.to_thread(
+        update_provider_runtime_settings,
+        "kiro_cli",
+        {"mode": "account", "login_completed_at": datetime.now(timezone.utc).isoformat()},
+    )
+    await asyncio.to_thread(set_onboarding_state, completed=True)
+    return {
+        "ok": response.ok,
+        "status_code": response.status_code,
+        "body": response.text[:2000],
     }
 
 

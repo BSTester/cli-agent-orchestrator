@@ -341,3 +341,75 @@ export interface ConsoleScheduledTaskFile {
 export interface ConsoleScheduledTaskFilesResponse {
   files: ConsoleScheduledTaskFile[];
 }
+
+export interface ProviderGuideStatus {
+  installed: boolean;
+  configured: boolean;
+  detected_mode?: string | null;
+  details?: string;
+  settings_path?: string | null;
+}
+
+export interface ProviderGuideSavedSettings {
+  mode?: string;
+  api_base_url?: string | null;
+  default_model?: string | null;
+  compatibility?: string | null;
+  login_completed_at?: string | null;
+  feishu?: Record<string, unknown> | null;
+  updated_at?: string | null;
+}
+
+export interface ProviderGuideProvider {
+  id: string;
+  label: string;
+  command: string;
+  supports_account_login: boolean;
+  supports_api_config: boolean;
+  default_selected: boolean;
+  login_launch_command?: string | null;
+  login_send_command?: string | null;
+  direct_login_command?: string | null;
+  status: ProviderGuideStatus;
+  saved_settings: ProviderGuideSavedSettings;
+}
+
+export interface ProviderGuideSummary {
+  should_show_guide: boolean;
+  onboarding: {
+    dismissed?: boolean;
+    dismissed_at?: string | null;
+    completed_at?: string | null;
+  };
+  providers: ProviderGuideProvider[];
+}
+
+export interface OpenClawFeishuConfigPayload {
+  enabled: boolean;
+  domain: "feishu" | "lark";
+  connection_mode: "websocket" | "webhook";
+  app_id?: string;
+  app_secret?: string;
+  bot_name?: string;
+  verification_token?: string;
+  dm_policy: "pairing" | "allowlist" | "open" | "disabled";
+  account_id: string;
+}
+
+export interface ProviderConfigApplyPayload {
+  provider_id: string;
+  mode: "account" | "api";
+  api_base_url?: string;
+  api_key?: string;
+  default_model?: string;
+  compatibility?: "openai" | "anthropic";
+  feishu?: OpenClawFeishuConfigPayload;
+}
+
+export interface ProviderConfigApplyResponse {
+  ok: boolean;
+  provider_id: string;
+  saved_path?: string | null;
+  command?: string | null;
+  settings?: ProviderGuideSavedSettings;
+}

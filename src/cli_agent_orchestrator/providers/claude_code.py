@@ -11,6 +11,7 @@ from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.utils.provider_runtime_config import get_provider_runtime_settings
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,24 @@ class ClaudeCodeProvider(BaseProvider):
         Returns properly escaped shell command string that can be safely sent via tmux.
         Uses shlex.join() to handle multiline strings and special characters correctly.
         """
+        runtime_settings = get_provider_runtime_settings("claude_code")
+        command_prefix: list[str] = []
+        if runtime_settings.get("mode") == "api":
+            api_key = str(runtime_settings.get("api_key") or "").strip()
+            api_base_url = str(runtime_settings.get("api_base_url") or "").strip()
+            default_model = str(runtime_settings.get("default_model") or "").strip()
+            if api_key:
+                command_prefix.extend(
+                    [
+                        f"ANTHROPIC_API_KEY={shlex.quote(api_key)}",
+                        f"ANTHROPIC_AUTH_TOKEN={shlex.quote(api_key)}",
+                    ]
+                )
+            if api_base_url:
+                command_prefix.append(f"ANTHROPIC_BASE_URL={shlex.quote(api_base_url)}")
+            if default_model:
+                command_prefix.append(f"ANTHROPIC_MODEL={shlex.quote(default_model)}")
+
         # --dangerously-skip-permissions: bypass the workspace trust dialog and
         # tool permission prompts. CAO already confirms workspace access during
         # `cao launch` (or `--yolo`), so re-prompting each spawned agent
@@ -104,7 +123,10 @@ class ClaudeCodeProvider(BaseProvider):
 
         # Use shlex.join() for proper shell escaping of all arguments
         # This correctly handles multiline strings, quotes, and special characters
-        return shlex.join(command_parts)
+        command = shlex.join(command_parts)
+        if command_prefix:
+            return " ".join([*command_prefix, command])
+        return command
 
     def _handle_trust_prompt(self, timeout: float = 20.0) -> None:
         """Auto-accept the workspace trust prompt if it appears.

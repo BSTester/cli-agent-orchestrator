@@ -226,6 +226,162 @@ def test_auth_required_for_proxy_routes(client: TestClient) -> None:
     assert response.status_code == 401
 
 
+def test_console_provider_config_summary(client: TestClient) -> None:
+    login(client)
+
+    summary = {
+        "should_show_guide": True,
+        "onboarding": {"dismissed": False, "dismissed_at": None, "completed_at": None},
+        "providers": [
+            {
+                "id": "claude_code",
+                "label": "Claude Code",
+                "command": "claude",
+                "supports_account_login": True,
+                "supports_api_config": True,
+                "default_selected": True,
+                "status": {"installed": True, "configured": False},
+                "saved_settings": {},
+            }
+        ],
+    }
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main._build_provider_guide_summary",
+        return_value=summary,
+    ):
+        response = client.get("/console/provider-config/summary")
+
+    assert response.status_code == 200
+    assert response.json() == summary
+
+
+def test_console_provider_config_onboarding(client: TestClient) -> None:
+    login(client)
+
+    onboarding = {
+        "dismissed": True,
+        "dismissed_at": "2025-01-01T00:00:00+00:00",
+        "completed_at": None,
+    }
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main.set_onboarding_state",
+        return_value=onboarding,
+    ) as mock_set_onboarding:
+        response = client.post("/console/provider-config/onboarding", json={"dismissed": True})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "onboarding": onboarding}
+    mock_set_onboarding.assert_called_once_with(dismissed=True)
+
+
+def test_console_provider_config_apply_claude_api(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    settings_path = tmp_path / "settings.json"
+    runtime_settings = {
+        "mode": "api",
+        "api_base_url": "https://example.invalid/v1",
+        "default_model": "claude-sonnet-4-6",
+        "updated_at": "2025-01-01T00:00:00+00:00",
+    }
+    onboarding = {
+        "dismissed": True,
+        "dismissed_at": "2025-01-01T00:00:00+00:00",
+        "completed_at": "2025-01-01T00:00:00+00:00",
+    }
+
+    with (
+        patch(
+            "cli_agent_orchestrator.control_panel.main._write_claude_settings",
+            return_value=settings_path,
+        ) as mock_write_settings,
+        patch(
+            "cli_agent_orchestrator.control_panel.main.update_provider_runtime_settings",
+            return_value=runtime_settings,
+        ) as mock_update_runtime,
+        patch(
+            "cli_agent_orchestrator.control_panel.main.set_onboarding_state",
+            return_value=onboarding,
+        ) as mock_set_onboarding,
+    ):
+        response = client.post(
+            "/console/provider-config/apply",
+            json={
+                "provider_id": "claude_code",
+                "mode": "api",
+                "api_base_url": "https://example.invalid/v1",
+                "api_key": "secret-key",
+                "default_model": "claude-sonnet-4-6",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["provider_id"] == "claude_code"
+    assert payload["saved_path"] == str(settings_path)
+    assert payload["settings"] == {
+        "mode": "api",
+        "api_base_url": "https://example.invalid/v1",
+        "default_model": "claude-sonnet-4-6",
+        "updated_at": "2025-01-01T00:00:00+00:00",
+    }
+    mock_write_settings.assert_called_once_with(
+        "https://example.invalid/v1", "secret-key", "claude-sonnet-4-6"
+    )
+    mock_update_runtime.assert_called_once_with(
+        "claude_code",
+        {
+            "mode": "api",
+            "api_base_url": "https://example.invalid/v1",
+            "api_key": "secret-key",
+            "default_model": "claude-sonnet-4-6",
+            "compatibility": None,
+        },
+    )
+    mock_set_onboarding.assert_called_once_with(completed=True)
+
+
+def test_console_provider_config_kiro_callback_rejects_non_localhost(client: TestClient) -> None:
+    login(client)
+
+    response = client.post(
+        "/console/provider-config/kiro/callback",
+        json={"callback_url": "https://example.com/callback"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "callback_url must target localhost or 127.0.0.1"
+
+
+def test_console_provider_config_kiro_callback_success(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.requests.get") as mock_get,
+        patch("cli_agent_orchestrator.control_panel.main.update_provider_runtime_settings") as mock_update_runtime,
+        patch("cli_agent_orchestrator.control_panel.main.set_onboarding_state") as mock_set_onboarding,
+    ):
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.status_code = 200
+        mock_response.text = "ok"
+        mock_get.return_value = mock_response
+
+        response = client.post(
+            "/console/provider-config/kiro/callback",
+            json={"callback_url": "http://localhost:49153/callback?code=abc"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "status_code": 200, "body": "ok"}
+    mock_get.assert_called_once_with("http://localhost:49153/callback?code=abc", timeout=20)
+    mock_update_runtime.assert_called_once()
+    mock_set_onboarding.assert_called_once_with(completed=True)
+
+
 def test_proxy_get_request(client: TestClient) -> None:
     """Test proxying a GET request to cao-server."""
     login(client)
