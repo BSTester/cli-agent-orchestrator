@@ -4,7 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        CAO_REPO_REF: ${CAO_REPO_REF:-main}
+        CAO_UID: ${CAO_UID:-1000}
+        CAO_GID: ${CAO_GID:-1000}
     environment:
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 9889
@@ -12,6 +13,15 @@ services:
       CONTROL_PANEL_PORT: 8000
       CAO_SERVER_URL: http://127.0.0.1:9889
       CAO_CONSOLE_PASSWORD: ${CAO_CONSOLE_PASSWORD:-admin}
+      HOME: /home/cao
+      CAO_RUNTIME_DIR: /home/cao/.local/state/cli-agent-orchestrator/runtime
     ports:
       - "8000:8000"
       - "9889:9889"
+    volumes:
+      - ./.docker/cao-agent-context:/home/cao/.aws/cli-agent-orchestrator/agent-context
+      - ./.docker/q-cli-agents:/home/cao/.aws/amazonq/cli-agents
+      - ./.docker/kiro-agents:/home/cao/.kiro/agents
+      - ./.docker/qoder-agents:/home/cao/.qoder/agents
+      - ./.docker/copilot-agents:/home/cao/.copilot/agents
+      - ./.docker/codebuddy-agents:/home/cao/.codebuddy/agents

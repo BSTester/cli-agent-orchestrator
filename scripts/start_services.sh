@@ -85,7 +85,7 @@ main() {
     root_dir="$(pwd)"
   fi
 
-  local runtime_dir="$root_dir/.runtime"
+  local runtime_dir="${CAO_RUNTIME_DIR:-$root_dir/.runtime}"
   local log_dir="$runtime_dir/logs"
   local pid_dir="$runtime_dir/pids"
   local server_pid_file="$pid_dir/cao-server.pid"

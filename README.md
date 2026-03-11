@@ -210,6 +210,8 @@ bash scripts/stop_services.sh
 bash scripts/install_and_start_services.sh
 ```
 
+`scripts/install_services.sh` 也会尝试自动安装 `CodeBuddy CLI`（`npm install -g @tencent-ai/codebuddy-code`）。
+
 如需静默安装 OpenClaw CLI（跳过引导/配置阶段），`scripts/install_services.sh` 会自动以非交互模式执行安装。
 
 默认情况下，`scripts/install_services.sh` 还会自动安装并启用仓库内置的 OpenClaw 插件 `cao-tools`（link 模式），并将 `cao_handoff`、`cao_assign`、`cao_send_message` 写入 `tools.allow`。如需跳过该步骤，可设置：
@@ -220,7 +222,18 @@ OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
 
 ### 2.1 Docker 启动
 
-仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。镜像构建时会在线下载 `scripts/*.sh`，并复制本地 `extensions/openclaw-cao-tools/` 到容器；启动时通过安装脚本完成环境安装与服务启动（包含 OpenClaw `cao-tools` 插件自动安装）。
+仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。镜像构建时会直接复制仓库内源码、`scripts/` 和本地 `extensions/openclaw-cao-tools/` 到容器，并在构建阶段完成依赖/CLI 安装；容器启动时默认只启动服务，不会重复安装。
+
+容器默认以非 root 用户 `cao` 运行。为避免覆盖镜像内已安装的 CLI，同时保留自定义 Agent 配置，Compose 只会将以下目录映射到主机侧 `./.docker/`：
+
+- `cao-agent-context` → `/home/cao/.aws/cli-agent-orchestrator/agent-context`
+- `q-cli-agents` → `/home/cao/.aws/amazonq/cli-agents`
+- `kiro-agents` → `/home/cao/.kiro/agents`
+- `qoder-agents` → `/home/cao/.qoder/agents`
+- `copilot-agents` → `/home/cao/.copilot/agents`
+- `codebuddy-agents` → `/home/cao/.codebuddy/agents`
+
+这样只持久化 Agent 配置文件，不再映射整个 `/home/cao`，从而避免把镜像内的 `claude`、`qodercli`、`copilot` 等命令目录遮住。
 
 ```bash
 docker compose up --build
@@ -232,7 +245,17 @@ docker compose up --build
 CAO_CONSOLE_PASSWORD=change-me docker compose up --build
 ```
 
-> `CAO_REPO_REF` 默认就是 `main`。如需验证特定提交或临时切换分支，可显式覆盖该变量；为了获得更可重现的镜像构建结果，建议固定为具体 commit SHA。当前仓库尚未提供可直接固定的 release tag。
+如需匹配宿主机 UID/GID，避免挂载目录权限不一致，可在构建前设置：
+
+```bash
+CAO_UID=$(id -u) CAO_GID=$(id -g) docker compose up --build
+```
+
+如需恢复旧行为，在容器启动时再次执行安装流程，可设置：
+
+```bash
+CAO_RUNTIME_INSTALL=1 docker compose up
+```
 
 默认端口映射：
 

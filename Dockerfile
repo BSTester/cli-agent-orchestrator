@@ -1,49 +1,58 @@
 FROM pyd4vinci/scrapling:latest
 
-ARG CAO_REPO_REF=main
+ARG CAO_UID=1000
+ARG CAO_GID=1000
 
 ENV PYTHONUNBUFFERED=1 \
-    CAO_REPO_REF=${CAO_REPO_REF} \
+    HOME=/home/cao \
     SERVER_HOST=0.0.0.0 \
     SERVER_PORT=9889 \
     CONTROL_PANEL_HOST=0.0.0.0 \
     CONTROL_PANEL_PORT=8000 \
     CAO_SERVER_URL=http://127.0.0.1:9889 \
-    CAO_CONSOLE_PASSWORD=admin
+    CAO_TOOL_SPEC=/opt/cao \
+    CAO_RUNTIME_DIR=/home/cao/.local/state/cli-agent-orchestrator/runtime \
+    NPM_CONFIG_PREFIX=/home/cao/.local \
+    PATH=/home/cao/.local/bin:/home/cao/.cargo/bin:/usr/local/bin:${PATH}
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        gnupg \
+        tmux \
+        unzip \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid "${CAO_GID}" cao \
+    && useradd --uid "${CAO_UID}" --gid "${CAO_GID}" --create-home --shell /bin/bash cao \
+    && mkdir -p /opt/cao/home-template \
+    && chown -R cao:cao /opt/cao /home/cao
 
 WORKDIR /opt/cao
 
+COPY pyproject.toml README.md uv.lock /opt/cao/
+COPY src /opt/cao/src
 COPY extensions/openclaw-cao-tools /opt/cao/extensions/openclaw-cao-tools
 
-RUN python - <<'PY'
-import os
-from pathlib import Path
-from urllib.request import urlopen
+COPY --chmod=755 scripts/install_services.sh /opt/cao/scripts/install_services.sh
+COPY --chmod=755 scripts/start_services.sh /opt/cao/scripts/start_services.sh
+COPY --chmod=755 scripts/stop_services.sh /opt/cao/scripts/stop_services.sh
+COPY --chmod=755 scripts/install_and_start_services.sh /opt/cao/scripts/install_and_start_services.sh
+COPY --chmod=755 scripts/docker_entrypoint.sh /opt/cao/scripts/docker_entrypoint.sh
+COPY scripts/docker_healthcheck.py /opt/cao/scripts/docker_healthcheck.py
 
-repo_ref = os.environ["CAO_REPO_REF"]
-base_url = f"https://raw.githubusercontent.com/BSTester/cli-agent-orchestrator/{repo_ref}/scripts"
-script_dir = Path("/opt/cao/scripts")
-script_dir.mkdir(parents=True, exist_ok=True)
+RUN python -m pip install --no-cache-dir /opt/cao \
+    && chown -R cao:cao /opt/cao
 
-for name in (
-    "install_services.sh",
-    "start_services.sh",
-    "stop_services.sh",
-    "install_and_start_services.sh",
-    "docker_entrypoint.sh",
-    "docker_healthcheck.py",
-):
-    try:
-        content = urlopen(f"{base_url}/{name}", timeout=30).read().decode("utf-8")
-    except Exception as exc:
-        raise SystemExit(
-            f"failed to download script {name} from {base_url}/{name}: "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
-    path = script_dir / name
-    path.write_text(content, encoding="utf-8")
-    path.chmod(0o755)
-PY
+USER cao
+
+RUN CAO_SKIP_TOOL_INSTALL=1 /bin/bash /opt/cao/scripts/install_services.sh \
+    && npm install -g @anthropic-ai/claude-code @openai/codex \
+    && mkdir -p /opt/cao/home-template \
+    && cp -a /home/cao/. /opt/cao/home-template/
 
 EXPOSE 8000 9889
 

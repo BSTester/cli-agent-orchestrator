@@ -145,7 +145,7 @@ main() {
     root_dir="$(pwd)"
   fi
 
-  local runtime_dir="$root_dir/.runtime"
+  local runtime_dir="${CAO_RUNTIME_DIR:-$root_dir/.runtime}"
   local pid_dir="$runtime_dir/pids"
   local server_pid_file="$pid_dir/cao-server.pid"
   local panel_pid_file="$pid_dir/cao-control-panel.pid"

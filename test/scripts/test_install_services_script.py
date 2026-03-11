@@ -214,6 +214,42 @@ exit 0
     assert "copilot 自动安装失败，请手动执行：npm install -g @github/copilot" in result.stderr
 
 
+def test_codebuddy_cli_install_failure_prints_manual_command(tmp_path: Path) -> None:
+        script_path = _script_path()
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        _prepare_stub_tools(bin_dir, tmp_path)
+        (bin_dir / "codebuddy").unlink()
+        _make_stub_command(
+                bin_dir / "npm",
+                """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1-}" == "config" && "${2-}" == "get" && "${3-}" == "prefix" ]]; then
+    echo "$HOME/.npm-global"
+    exit 0
+fi
+if [[ "${1-}" == "install" && "${2-}" == "-g" && "${3-}" == "@tencent-ai/codebuddy-code" ]]; then
+    exit 1
+fi
+exit 0
+""",
+        )
+
+        result = subprocess.run(
+                ["bash", str(script_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={
+                        "PATH": f"{bin_dir}:/usr/bin:/bin",
+                        "HOME": str(tmp_path),
+                },
+        )
+
+        assert result.returncode == 0
+        assert "codebuddy 自动安装失败，请手动执行：npm install -g @tencent-ai/codebuddy-code" in result.stderr
+
+
 def test_openclaw_cli_install_failure_prints_manual_command(tmp_path: Path) -> None:
     script_path = _script_path()
     bin_dir = tmp_path / "bin"
@@ -301,7 +337,7 @@ exit 0
     ]
 
 
-def test_skips_codex_claude_and_codebuddy_auto_install(tmp_path: Path) -> None:
+def test_attempts_codebuddy_auto_install_when_binary_missing(tmp_path: Path) -> None:
     script_path = _script_path()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -347,12 +383,10 @@ exit 0
     assert result.returncode == 0
     npm_log_content = npm_log.read_text(encoding="utf-8")
     assert "install -g @openai/codex --force --no-os-check" not in npm_log_content
-    assert "install -g @tencent-ai/codebuddy-code" not in npm_log_content
+    assert "install -g @tencent-ai/codebuddy-code" in npm_log_content
     assert "install -g @github/copilot" not in npm_log_content
     assert not curl_log.exists()
-    assert "codex 自动安装失败" not in result.stderr
-    assert "claude 自动安装失败" not in result.stderr
-    assert "codebuddy 自动安装失败" not in result.stderr
+    assert "codebuddy 自动安装失败" in result.stderr
 
 
 def test_installs_default_agent_profiles(tmp_path: Path) -> None:

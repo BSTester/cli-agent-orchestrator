@@ -3,7 +3,7 @@ set -euo pipefail
 
 CAO_REPO_REF="${CAO_REPO_REF:-main}"
 CAO_REPO_URL="${CAO_REPO_URL:-https://github.com/BSTester/cli-agent-orchestrator.git}"
-CAO_TOOL_SPEC="git+${CAO_REPO_URL}@${CAO_REPO_REF}"
+CAO_TOOL_SPEC="${CAO_TOOL_SPEC:-git+${CAO_REPO_URL}@${CAO_REPO_REF}}"
 OPENCLAW_INSTALL_METHOD="${OPENCLAW_INSTALL_METHOD:-npm}"
 OPENCLAW_NO_PROMPT="${OPENCLAW_NO_PROMPT:-1}"
 OPENCLAW_NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-1}"
@@ -11,6 +11,8 @@ OPENCLAW_NPM_LOGLEVEL="${OPENCLAW_NPM_LOGLEVEL:-error}"
 SHARP_IGNORE_GLOBAL_LIBVIPS="${SHARP_IGNORE_GLOBAL_LIBVIPS:-1}"
 OPENCLAW_CAO_PLUGIN_ENABLE="${OPENCLAW_CAO_PLUGIN_ENABLE:-1}"
 OPENCLAW_CAO_PLUGIN_ID="${OPENCLAW_CAO_PLUGIN_ID:-cao-tools}"
+CAO_SKIP_TOOL_INSTALL="${CAO_SKIP_TOOL_INSTALL:-0}"
+NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.local}"
 
 # Skills discovery integration
 SKILLS_DISCOVERY_SPEC="${SKILLS_DISCOVERY_SPEC:-@Kamalnrf/claude-plugins/skills-discovery}"
@@ -259,6 +261,35 @@ ensure_tool_path() {
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$(npm config get prefix 2>/dev/null || echo "$HOME/.npm-global")/bin:$PATH"
 }
 
+ensure_npm_global_prefix() {
+  mkdir -p "$NPM_CONFIG_PREFIX/bin"
+  export NPM_CONFIG_PREFIX
+  ensure_tool_path
+}
+
+install_npm_global_package() {
+  local command_name="$1"
+  local package_name="$2"
+  local manual_cmd="npm install -g $package_name"
+
+  if has_cmd "$command_name"; then
+    info "$command_name 已安装，跳过。"
+    return
+  fi
+
+  ensure_npm_global_prefix
+  info "安装 $command_name（npm 全局包: $package_name）..."
+  if ! npm install -g "$package_name"; then
+    print_manual_install_command "$command_name" "$manual_cmd"
+    return
+  fi
+
+  ensure_tool_path
+  if ! has_cmd "$command_name"; then
+    print_manual_install_command "$command_name" "$manual_cmd"
+  fi
+}
+
 openclaw_config_path() {
   echo "${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}"
 }
@@ -281,7 +312,12 @@ build_openclaw_install_cmd() {
 
 install_agent_clis() {
   ensure_nodejs
+  ensure_npm_global_prefix
   ensure_tool_path
+
+  install_npm_global_package "claude" "@anthropic-ai/claude-code"
+  install_npm_global_package "codex" "@openai/codex"
+  install_npm_global_package "codebuddy" "@tencent-ai/codebuddy-code"
 
   if has_cmd kiro-cli; then
     info "kiro-cli 已安装，跳过。"
@@ -309,18 +345,7 @@ install_agent_clis() {
     fi
   fi
 
-  if has_cmd copilot; then
-    info "copilot 已安装，跳过。"
-  else
-    info "安装 copilot（官方方式）..."
-    if ! npm install -g @github/copilot; then
-      print_manual_install_command "copilot" "npm install -g @github/copilot"
-    fi
-    ensure_tool_path
-    if ! has_cmd copilot; then
-      print_manual_install_command "copilot" "npm install -g @github/copilot"
-    fi
-  fi
+  install_npm_global_package "copilot" "@github/copilot"
 
   if has_cmd openclaw; then
     info "openclaw 已安装，跳过。"
@@ -488,6 +513,14 @@ install_skills_discovery_for_all_agents() {
 }
 
 install_cao_tool() {
+  if [[ "$CAO_SKIP_TOOL_INSTALL" == "1" ]]; then
+    info "已跳过 CLI Agent Orchestrator 工具安装（CAO_SKIP_TOOL_INSTALL=1），直接复用现有命令。"
+    if ! has_cmd cao || ! has_cmd cao-server || ! has_cmd cao-control-panel; then
+      die "已跳过 CLI Agent Orchestrator 安装，但缺少 cao/cao-server/cao-control-panel 命令。"
+    fi
+    return
+  fi
+
   info "安装/升级 CLI Agent Orchestrator 工具: $CAO_TOOL_SPEC"
   if ! uv tool install "$CAO_TOOL_SPEC" --upgrade; then
     print_manual_install_command "CLI Agent Orchestrator" "uv tool install \"$CAO_TOOL_SPEC\" --upgrade"
