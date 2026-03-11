@@ -353,6 +353,7 @@ export interface ProviderGuideStatus {
 export interface ProviderGuideSavedSettings {
   mode?: string;
   api_base_url?: string | null;
+  api_key?: string | null;
   default_model?: string | null;
   compatibility?: string | null;
   login_completed_at?: string | null;
@@ -367,9 +368,13 @@ export interface ProviderGuideProvider {
   supports_account_login: boolean;
   supports_api_config: boolean;
   default_selected: boolean;
-  login_launch_command?: string | null;
-  login_send_command?: string | null;
-  direct_login_command?: string | null;
+  console_command?: string | null;
+  login_command?: string | null;
+  logout_command?: string | null;
+  login_via_console?: boolean;
+  logout_via_console?: boolean;
+  login_supported?: boolean;
+  logout_supported?: boolean;
   status: ProviderGuideStatus;
   saved_settings: ProviderGuideSavedSettings;
 }

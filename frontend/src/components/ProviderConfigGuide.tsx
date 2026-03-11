@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 
 import TerminalDrawer from "@/components/TerminalDrawer";
 import {
+  CodeEditorInput,
   EmptyState,
   ErrorBanner,
   InfoHint,
@@ -13,7 +14,6 @@ import {
   SecondaryButton,
   SectionCard,
   SectionTitle,
-  SelectInput,
   StatusPill,
   TextInput,
 } from "@/components/ConsoleTheme";
@@ -58,6 +58,8 @@ type ActiveTerminalState = {
   terminalId: string;
   title: string;
   subtitle: string;
+  providerId: string;
+  action: "login" | "logout" | "configure";
 };
 
 /** Kiro login flow phase */
@@ -77,6 +79,7 @@ function createDefaultForm(provider: ProviderGuideProvider): ProviderFormState {
   const supportsApi = provider.supports_api_config;
   const mode = savedMode === "api" && supportsApi ? "api" : "account";
   const apiBaseUrl = String(provider.saved_settings.api_base_url || "").trim();
+  const apiKey = String(provider.saved_settings.api_key || "").trim();
   const defaultModel = String(provider.saved_settings.default_model || "").trim();
   const compatibility =
     provider.saved_settings.compatibility === "anthropic" ? "anthropic" : "openai";
@@ -87,7 +90,7 @@ function createDefaultForm(provider: ProviderGuideProvider): ProviderFormState {
     selected: provider.default_selected,
     mode: supportsApi ? mode : "account",
     apiBaseUrl,
-    apiKey: "",
+    apiKey,
     defaultModel,
     compatibility,
     feishuEnabled: Boolean(feishu && (feishu as Record<string, unknown>).enabled),
@@ -98,14 +101,33 @@ function createDefaultForm(provider: ProviderGuideProvider): ProviderFormState {
         ? "webhook"
         : "websocket",
     feishuAppId: String((feishu as Record<string, unknown> | null)?.app_id || "").trim(),
-    feishuAppSecret: "",
+    feishuAppSecret: String((feishu as Record<string, unknown> | null)?.app_secret || "").trim(),
     feishuBotName: String((feishu as Record<string, unknown> | null)?.bot_name || "").trim(),
-    feishuVerificationToken: "",
+    feishuVerificationToken: String((feishu as Record<string, unknown> | null)?.verification_token || "").trim(),
     feishuDmPolicy:
       (feishu && typeof (feishu as Record<string, unknown>).dm_policy === "string"
         ? (feishu as Record<string, unknown>).dm_policy
         : "pairing") as ProviderFormState["feishuDmPolicy"],
     feishuAccountId: String((feishu as Record<string, unknown> | null)?.account_id || "main").trim() || "main",
+  };
+}
+
+function mergeProviderForm(
+  previous: ProviderFormState | undefined,
+  provider: ProviderGuideProvider
+): ProviderFormState {
+  const defaults = createDefaultForm(provider);
+  if (!previous) {
+    return defaults;
+  }
+
+  return {
+    ...defaults,
+    selected: previous.selected,
+    apiKey: previous.apiKey || defaults.apiKey,
+    feishuAppSecret: previous.feishuAppSecret || defaults.feishuAppSecret,
+    feishuVerificationToken:
+      previous.feishuVerificationToken || defaults.feishuVerificationToken,
   };
 }
 
@@ -121,8 +143,13 @@ export default function ProviderConfigGuide({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [savingProviderId, setSavingProviderId] = useState("");
+  const [refreshingProviderId, setRefreshingProviderId] = useState("");
   const [terminalBusyProviderId, setTerminalBusyProviderId] = useState("");
   const [activeTerminal, setActiveTerminal] = useState<ActiveTerminalState | null>(null);
+  const [openclawConfigPath, setOpenclawConfigPath] = useState("");
+  const [openclawConfigContent, setOpenclawConfigContent] = useState("");
+  const [openclawConfigLoading, setOpenclawConfigLoading] = useState(false);
+  const [openclawConfigSaving, setOpenclawConfigSaving] = useState(false);
   const [kiroCallbackUrl, setKiroCallbackUrl] = useState("");
   const [kiroCallbackSubmitting, setKiroCallbackSubmitting] = useState(false);
   const [kiroTerminalId, setKiroTerminalId] = useState<string | null>(null);
@@ -143,18 +170,7 @@ export default function ProviderConfigGuide({
     setForms((previous: Record<string, ProviderFormState>) => {
       const next = { ...previous };
       for (const provider of result.data.providers) {
-        if (!next[provider.id]) {
-          next[provider.id] = createDefaultForm(provider);
-          continue;
-        }
-        next[provider.id] = {
-          ...createDefaultForm(provider),
-          ...next[provider.id],
-          selected: next[provider.id].selected,
-          apiKey: next[provider.id].apiKey,
-          feishuAppSecret: next[provider.id].feishuAppSecret,
-          feishuVerificationToken: next[provider.id].feishuVerificationToken,
-        };
+        next[provider.id] = mergeProviderForm(previous[provider.id], provider);
       }
       return next;
     });
@@ -190,6 +206,66 @@ export default function ProviderConfigGuide({
       },
     }));
   }
+
+  function updateProviderState(provider: ProviderGuideProvider) {
+    setSummary((previous) => {
+      if (!previous) {
+        return previous;
+      }
+      return {
+        ...previous,
+        providers: previous.providers.map((item) =>
+          item.id === provider.id ? provider : item
+        ),
+      };
+    });
+    setForms((previous: Record<string, ProviderFormState>) => ({
+      ...previous,
+      [provider.id]: mergeProviderForm(previous[provider.id], provider),
+    }));
+  }
+
+  async function refreshProvider(providerId: string, preserveNotice = true) {
+    setRefreshingProviderId(providerId);
+    const result = await caoRequest<ProviderGuideProvider>(
+      "GET",
+      `/console/provider-config/providers/${providerId}`
+    );
+    setRefreshingProviderId("");
+    if (!result.ok) {
+      setError(getCaoErrorHint(result, "读取 provider 状态失败"));
+      return;
+    }
+
+    updateProviderState(result.data);
+    setError("");
+    if (!preserveNotice) {
+      setNotice("");
+    }
+  }
+
+  const loadOpenClawConfigFile = useCallback(async () => {
+    setOpenclawConfigLoading(true);
+    const result = await caoRequest<{ provider_id: string; path: string; content: string }>(
+      "GET",
+      "/console/provider-config/openclaw/file"
+    );
+    setOpenclawConfigLoading(false);
+    if (!result.ok) {
+      setError(getCaoErrorHint(result, "读取 OpenClaw 配置文件失败"));
+      return;
+    }
+
+    setOpenclawConfigPath(result.data.path || "");
+    setOpenclawConfigContent(result.data.content || "");
+    setError("");
+  }, []);
+
+  useEffect(() => {
+    if (activeProviderId === "openclaw") {
+      void loadOpenClawConfigFile();
+    }
+  }, [activeProviderId, loadOpenClawConfigFile]);
 
   async function dismissGuide() {
     await caoRequest("POST", "/console/provider-config/onboarding", {
@@ -248,14 +324,11 @@ export default function ProviderConfigGuide({
       return;
     }
 
-    if (form.mode === "api") {
-      updateForm(provider.id, { apiKey: "", feishuAppSecret: "", feishuVerificationToken: "" });
-    }
     setSavingProviderId("");
     setNotice(
       `${provider.label} 配置已保存${result.data.saved_path ? `，路径：${result.data.saved_path}` : ""}`
     );
-    await loadSummary(true);
+    await refreshProvider(provider.id);
   }
 
   async function createShellTerminal(): Promise<string | null> {
@@ -277,14 +350,97 @@ export default function ProviderConfigGuide({
     });
   }
 
-  async function openLoginTerminal(provider: ProviderGuideProvider, mode: "launch" | "direct") {
-    const launchCommand =
-      mode === "direct"
-        ? provider.direct_login_command || provider.login_launch_command || provider.command
-        : provider.login_launch_command || provider.command;
+  async function delay(ms: number) {
+    await new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  async function destroyTerminal(terminalId: string) {
+    const result = await caoRequest<{ success?: boolean }>("DELETE", `/terminals/${terminalId}`);
+    if (!result.ok) {
+      setError(getCaoErrorHint(result, "关闭登录终端失败"));
+    }
+  }
+
+  async function openOpenClawConfigureTerminal(provider: ProviderGuideProvider) {
+    setTerminalBusyProviderId(provider.id);
+    setError("");
+    const terminalId = await createShellTerminal();
+    if (!terminalId) {
+      setTerminalBusyProviderId("");
+      return;
+    }
+
+    const command = "openclaw onboard";
+    const sendResult = await sendAgentInput(terminalId, command);
+    if (!sendResult.ok) {
+      await destroyTerminal(terminalId);
+      setTerminalBusyProviderId("");
+      setError(getCaoErrorHint(sendResult, "启动 OpenClaw 配置终端失败"));
+      return;
+    }
+
+    setActiveTerminal({
+      terminalId,
+      providerId: provider.id,
+      action: "configure",
+      title: "OpenClaw 配置终端",
+      subtitle: `已执行：${command}`,
+    });
+    setTerminalBusyProviderId("");
+  }
+
+  async function saveOpenClawConfigFile() {
+    setOpenclawConfigSaving(true);
+    setError("");
+    const result = await caoRequest<{
+      provider_id: string;
+      path: string;
+      content: string;
+      gateway?: { command?: string; stdout?: string; stderr?: string };
+    }>("PUT", "/console/provider-config/openclaw/file", {
+      body: { content: openclawConfigContent },
+    });
+    setOpenclawConfigSaving(false);
+    if (!result.ok) {
+      setError(getCaoErrorHint(result, "保存 OpenClaw 配置文件失败"));
+      return;
+    }
+
+    setOpenclawConfigPath(result.data.path || openclawConfigPath);
+    setOpenclawConfigContent(result.data.content || openclawConfigContent);
+    await refreshProvider("openclaw");
+    setNotice(
+      `OpenClaw 配置文件已保存，网关已自动重启${
+        result.data.gateway?.command ? `（${result.data.gateway.command}）` : ""
+      }`
+    );
+  }
+
+  async function runProviderTerminalAction(
+    provider: ProviderGuideProvider,
+    action: "login" | "logout"
+  ) {
+    const viaConsole =
+      action === "login"
+        ? Boolean(provider.login_via_console)
+        : Boolean(provider.logout_via_console);
+    const launchCommand = viaConsole
+      ? provider.console_command || provider.command || ""
+      : action === "login"
+      ? provider.login_command || ""
+      : provider.logout_command || "";
+    const followupCommand = viaConsole
+      ? action === "login"
+        ? provider.login_command || ""
+        : provider.logout_command || ""
+      : "";
 
     if (!launchCommand) {
-      setError(`${provider.label} 没有可用的登录启动命令`);
+      setError(
+        action === "login"
+          ? `${provider.label} 没有可用的登录命令`
+          : `${provider.label} 当前未探测到 logout 命令`
+      );
       return;
     }
 
@@ -298,42 +454,50 @@ export default function ProviderConfigGuide({
 
     const sendResult = await sendAgentInput(terminalId, launchCommand);
     if (!sendResult.ok) {
+      await destroyTerminal(terminalId);
       setTerminalBusyProviderId("");
-      setError(getCaoErrorHint(sendResult, `启动 ${provider.label} 登录终端失败`));
+      setError(
+        getCaoErrorHint(
+          sendResult,
+          `${action === "login" ? "启动" : "执行"} ${provider.label}${action === "login" ? " 登录" : " 退出"}终端失败`
+        )
+      );
       return;
+    }
+
+    if (viaConsole && followupCommand) {
+      await delay(1200);
+      const followupResult = await sendAgentInput(terminalId, followupCommand);
+      if (!followupResult.ok) {
+        await destroyTerminal(terminalId);
+        setTerminalBusyProviderId("");
+        setError(
+          getCaoErrorHint(
+            followupResult,
+            `发送 ${provider.label} ${followupCommand} 指令失败`
+          )
+        );
+        return;
+      }
     }
 
     const terminalState: ActiveTerminalState = {
       terminalId,
-      title: `${provider.label} 登录终端`,
-      subtitle: `已执行：${launchCommand}`,
+      providerId: provider.id,
+      action,
+      title: `${provider.label}${action === "login" ? " 登录" : " 退出"}终端`,
+      subtitle: viaConsole
+        ? `已执行：${launchCommand} -> ${followupCommand}`
+        : `已执行：${launchCommand}`,
     };
 
-    if (provider.id === "kiro_cli") {
+    if (provider.id === "kiro_cli" && action === "login") {
       setKiroTerminalId(terminalId);
       setKiroPhase("waiting_callback");
     }
 
     setActiveTerminal(terminalState);
     setTerminalBusyProviderId("");
-  }
-
-  async function sendLoginSlashCommand(provider: ProviderGuideProvider) {
-    if (!activeTerminal?.terminalId) {
-      setError("请先打开一个登录终端");
-      return;
-    }
-    const loginCommand = provider.login_send_command;
-    if (!loginCommand) {
-      setError(`${provider.label} 当前没有预设 /login 指令`);
-      return;
-    }
-    const result = await sendAgentInput(activeTerminal.terminalId, loginCommand);
-    if (!result.ok) {
-      setError(getCaoErrorHint(result, `发送 ${provider.label} 登录指令失败`));
-      return;
-    }
-    setNotice(`${provider.label} 的 ${loginCommand} 已发送到终端`);
   }
 
   async function submitKiroCallback() {
@@ -360,22 +524,33 @@ export default function ProviderConfigGuide({
     if (kiroTerminalId) {
       setActiveTerminal({
         terminalId: kiroTerminalId,
+        providerId: "kiro_cli",
+        action: "login",
         title: "Kiro 登录状态终端",
         subtitle: "回调已发送，请在终端中确认登录状态后关闭",
       });
     }
-    await loadSummary(true);
+    await refreshProvider("kiro_cli");
   }
 
   /** Handle terminal drawer button click */
-  function handleTerminalClose() {
-    if (kiroPhase === "waiting_callback") {
+  async function handleTerminalClose() {
+    if (
+      activeTerminal?.providerId === "kiro_cli" &&
+      activeTerminal.action === "login" &&
+      kiroPhase === "waiting_callback"
+    ) {
       // Minimize only: hide the drawer but preserve the Kiro terminal session
       setActiveTerminal(null);
     } else {
       // Full destroy: clear all terminal state
+      const terminalToDestroy = activeTerminal;
       setActiveTerminal(null);
-      if (kiroPhase === "callback_submitted") {
+      if (terminalToDestroy) {
+        await destroyTerminal(terminalToDestroy.terminalId);
+        await refreshProvider(terminalToDestroy.providerId);
+      }
+      if (terminalToDestroy?.providerId === "kiro_cli") {
         setKiroTerminalId(null);
         setKiroPhase("idle");
       }
@@ -394,11 +569,19 @@ export default function ProviderConfigGuide({
       kiroPhase === "callback_submitted"
         ? "回调已发送，请在终端中确认登录状态后关闭"
         : "等待浏览器完成认证回调...";
-    setActiveTerminal({ terminalId: kiroTerminalId, title, subtitle });
+    setActiveTerminal({
+      terminalId: kiroTerminalId,
+      providerId: "kiro_cli",
+      action: "login",
+      title,
+      subtitle,
+    });
   }
 
   // Whether the terminal drawer can be fully closed (vs only minimized)
-  const terminalCanClose = kiroPhase !== "waiting_callback";
+  const terminalCanClose =
+    !(activeTerminal?.providerId === "kiro_cli" && activeTerminal.action === "login") ||
+    kiroPhase !== "waiting_callback";
 
   // Provider tab helpers
   const allProviders = summary?.providers ?? [];
@@ -409,10 +592,9 @@ export default function ProviderConfigGuide({
   function renderProviderContent(provider: ProviderGuideProvider) {
     const form = forms[provider.id] || createDefaultForm(provider);
     const isSaving = savingProviderId === provider.id;
+    const isRefreshing = refreshingProviderId === provider.id;
     const isTerminalBusy = terminalBusyProviderId === provider.id;
     const status = provider.status;
-    const canOpenSlashLogin =
-      Boolean(provider.login_send_command) && Boolean(activeTerminal?.terminalId);
     const isApiMode = provider.supports_api_config && form.mode === "api";
     const showAccountLogin =
       provider.supports_account_login &&
@@ -421,6 +603,9 @@ export default function ProviderConfigGuide({
       provider.supports_api_config && DEFAULT_ACCOUNT_MODE_PROVIDER_IDS.has(provider.id);
     const isKiro = provider.id === "kiro_cli";
     const kiroTerminalHidden = isKiro && kiroTerminalId && !activeTerminal;
+    const canLogin = Boolean(provider.login_command) && Boolean(provider.login_supported) && status.installed;
+    const canLogout = Boolean(provider.logout_command) && Boolean(provider.logout_supported) && status.installed;
+    const showLogoutAction = showAccountLogin && status.configured;
 
     return (
       <div style={{ display: "grid", gap: 14 }}>
@@ -499,246 +684,131 @@ export default function ProviderConfigGuide({
         {isApiMode ? (
           <SectionCard>
             <div style={{ display: "grid", gap: 10 }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                  gap: 10,
-                }}
-              >
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ color: "var(--text-dim)", fontSize: 12 }}>API Base URL</div>
-                  <TextInput
-                    value={form.apiBaseUrl}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      updateForm(provider.id, { apiBaseUrl: event.target.value })
-                    }
-                    placeholder="例如 https://api.openai.com/v1"
-                  />
-                </div>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ color: "var(--text-dim)", fontSize: 12 }}>默认模型</div>
-                  <TextInput
-                    value={form.defaultModel}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      updateForm(provider.id, { defaultModel: event.target.value })
-                    }
-                    placeholder={
-                      provider.id === "claude_code" ? "claude-sonnet-4-6" : "gpt-5.3-codex"
-                    }
-                  />
-                </div>
-              </div>
-              <div style={{ display: "grid", gap: 6 }}>
-                <div style={{ color: "var(--text-dim)", fontSize: 12 }}>API Key</div>
-                <TextInput
-                  type="password"
-                  value={form.apiKey}
-                  onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                    updateForm(provider.id, { apiKey: event.target.value })
-                  }
-                  placeholder="输入 provider 对应的 API Key"
-                />
-              </div>
-
               {provider.id === "openclaw" ? (
-                <div
-                  style={{
-                    display: "grid",
-                    gap: 10,
-                    marginTop: 8,
-                    paddingTop: 10,
-                    borderTop: "1px dashed var(--border)",
-                  }}
-                >
+                <>
+                  <InfoHint text="OpenClaw 现在通过终端执行 openclaw onboard 启动配置向导；下方编辑器可直接修改配置文件，保存后会自动重启 gateway。" />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <PrimaryButton
+                      type="button"
+                      onClick={() => void openOpenClawConfigureTerminal(provider)}
+                      disabled={isTerminalBusy}
+                    >
+                      {isTerminalBusy ? "启动中..." : "打开配置终端"}
+                    </PrimaryButton>
+                    <SecondaryButton
+                      type="button"
+                      onClick={() => void loadOpenClawConfigFile()}
+                      disabled={openclawConfigLoading}
+                    >
+                      {openclawConfigLoading ? "加载中..." : "重新加载配置文件"}
+                    </SecondaryButton>
+                    <SecondaryButton
+                      type="button"
+                      onClick={() => void refreshProvider(provider.id)}
+                      disabled={isRefreshing}
+                    >
+                      {isRefreshing ? "刷新中..." : "刷新状态"}
+                    </SecondaryButton>
+                  </div>
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                      gap: 8,
+                      marginTop: 4,
+                      padding: 12,
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      background: "var(--surface2)",
+                    }}
+                  >
+                    <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>
+                      配置文件{openclawConfigPath ? `：${openclawConfigPath}` : ""}
+                    </div>
+                    <CodeEditorInput
+                      value={openclawConfigContent}
+                      onChange={setOpenclawConfigContent}
+                      language="javascript"
+                      fileName={openclawConfigPath || "openclaw.json"}
+                      showToolbar
+                      enableFormat
+                      maxHeight={420}
+                      placeholder="正在加载 OpenClaw 配置文件..."
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <PrimaryButton
+                        type="button"
+                        onClick={() => void saveOpenClawConfigFile()}
+                        disabled={openclawConfigSaving || openclawConfigLoading}
+                      >
+                        {openclawConfigSaving ? "保存并重启中..." : "保存配置并重启网关"}
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
                       gap: 10,
                     }}
                   >
                     <div style={{ display: "grid", gap: 6 }}>
-                      <div style={{ color: "var(--text-dim)", fontSize: 12 }}>兼容协议</div>
-                      <SelectInput
-                        value={form.compatibility}
-                        onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                          updateForm(provider.id, {
-                            compatibility: event.target
-                              .value as ProviderFormState["compatibility"],
-                          })
-                        }
-                      >
-                        <option value="openai">OpenAI 兼容</option>
-                        <option value="anthropic">Anthropic 兼容</option>
-                      </SelectInput>
-                    </div>
-                    <label
-                      style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--text)" }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={form.feishuEnabled}
+                      <div style={{ color: "var(--text-dim)", fontSize: 12 }}>API Base URL</div>
+                      <TextInput
+                        value={form.apiBaseUrl}
                         onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                          updateForm(provider.id, { feishuEnabled: event.target.checked })
+                          updateForm(provider.id, { apiBaseUrl: event.target.value })
+                        }
+                        placeholder="例如 https://api.openai.com/v1"
+                      />
+                    </div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <div style={{ color: "var(--text-dim)", fontSize: 12 }}>默认模型</div>
+                      <TextInput
+                        value={form.defaultModel}
+                        onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                          updateForm(provider.id, { defaultModel: event.target.value })
+                        }
+                        placeholder={
+                          provider.id === "claude_code" ? "claude-sonnet-4-6" : "gpt-5.3-codex"
                         }
                       />
-                      启用飞书消息渠道
-                    </label>
-                  </div>
-
-                  {form.feishuEnabled ? (
-                    <div
-                      style={{
-                        display: "grid",
-                        gap: 10,
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 12,
-                        background: "var(--surface2)",
-                      }}
-                    >
-                      <div style={{ color: "var(--text-bright)", fontWeight: 700 }}>
-                        飞书 / Lark 渠道
-                      </div>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                          gap: 10,
-                        }}
-                      >
-                        <div style={{ display: "grid", gap: 6 }}>
-                          <div style={{ color: "var(--text-dim)", fontSize: 12 }}>域</div>
-                          <SelectInput
-                            value={form.feishuDomain}
-                            onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                              updateForm(provider.id, {
-                                feishuDomain: event.target
-                                  .value as ProviderFormState["feishuDomain"],
-                              })
-                            }
-                          >
-                            <option value="feishu">Feishu 中国站</option>
-                            <option value="lark">Lark 国际站</option>
-                          </SelectInput>
-                        </div>
-                        <div style={{ display: "grid", gap: 6 }}>
-                          <div style={{ color: "var(--text-dim)", fontSize: 12 }}>连接模式</div>
-                          <SelectInput
-                            value={form.feishuConnectionMode}
-                            onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                              updateForm(provider.id, {
-                                feishuConnectionMode: event.target
-                                  .value as ProviderFormState["feishuConnectionMode"],
-                              })
-                            }
-                          >
-                            <option value="websocket">WebSocket 长连接</option>
-                            <option value="webhook">Webhook 回调</option>
-                          </SelectInput>
-                        </div>
-                        <div style={{ display: "grid", gap: 6 }}>
-                          <div style={{ color: "var(--text-dim)", fontSize: 12 }}>DM 策略</div>
-                          <SelectInput
-                            value={form.feishuDmPolicy}
-                            onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                              updateForm(provider.id, {
-                                feishuDmPolicy: event.target
-                                  .value as ProviderFormState["feishuDmPolicy"],
-                              })
-                            }
-                          >
-                            <option value="pairing">pairing</option>
-                            <option value="allowlist">allowlist</option>
-                            <option value="open">open</option>
-                            <option value="disabled">disabled</option>
-                          </SelectInput>
-                        </div>
-                        <div style={{ display: "grid", gap: 6 }}>
-                          <div style={{ color: "var(--text-dim)", fontSize: 12 }}>账号 ID</div>
-                          <TextInput
-                            value={form.feishuAccountId}
-                            onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                              updateForm(provider.id, { feishuAccountId: event.target.value })
-                            }
-                            placeholder="main"
-                          />
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                          gap: 10,
-                        }}
-                      >
-                        <div style={{ display: "grid", gap: 6 }}>
-                          <div style={{ color: "var(--text-dim)", fontSize: 12 }}>App ID</div>
-                          <TextInput
-                            value={form.feishuAppId}
-                            onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                              updateForm(provider.id, { feishuAppId: event.target.value })
-                            }
-                            placeholder="cli_xxx"
-                          />
-                        </div>
-                        <div style={{ display: "grid", gap: 6 }}>
-                          <div style={{ color: "var(--text-dim)", fontSize: 12 }}>App Secret</div>
-                          <TextInput
-                            type="password"
-                            value={form.feishuAppSecret}
-                            onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                              updateForm(provider.id, { feishuAppSecret: event.target.value })
-                            }
-                            placeholder="输入飞书 App Secret"
-                          />
-                        </div>
-                        <div style={{ display: "grid", gap: 6 }}>
-                          <div style={{ color: "var(--text-dim)", fontSize: 12 }}>Bot Name</div>
-                          <TextInput
-                            value={form.feishuBotName}
-                            onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                              updateForm(provider.id, { feishuBotName: event.target.value })
-                            }
-                            placeholder="My AI assistant"
-                          />
-                        </div>
-                        {form.feishuConnectionMode === "webhook" ? (
-                          <div style={{ display: "grid", gap: 6 }}>
-                            <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                              Verification Token
-                            </div>
-                            <TextInput
-                              value={form.feishuVerificationToken}
-                              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                                updateForm(provider.id, {
-                                  feishuVerificationToken: event.target.value,
-                                })
-                              }
-                              placeholder="Webhook 模式必填"
-                            />
-                          </div>
-                        ) : null}
-                      </div>
-                      <InfoHint text="官方文档显示 Feishu/Lark 支持 websocket 和 webhook 两种模式；webhook 模式需要 verificationToken。" />
                     </div>
-                  ) : null}
-                </div>
-              ) : null}
+                  </div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ color: "var(--text-dim)", fontSize: 12 }}>API Key</div>
+                    <TextInput
+                      type="password"
+                      value={form.apiKey}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                        updateForm(provider.id, { apiKey: event.target.value })
+                      }
+                      placeholder="输入 provider 对应的 API Key"
+                    />
+                  </div>
+                </>
+              )}
 
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <PrimaryButton
-                  type="button"
-                  onClick={() => void applyProviderConfiguration(provider)}
-                  disabled={isSaving}
-                >
-                  {isSaving ? "保存中..." : "保存 API 配置"}
-                </PrimaryButton>
-                <SecondaryButton type="button" onClick={() => void loadSummary(true)}>
-                  刷新状态
-                </SecondaryButton>
-              </div>
+              {provider.id === "openclaw" ? null : (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <PrimaryButton
+                    type="button"
+                    onClick={() => void applyProviderConfiguration(provider)}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? "保存中..." : "保存 API 配置"}
+                  </PrimaryButton>
+                  <SecondaryButton
+                    type="button"
+                    onClick={() => void refreshProvider(provider.id)}
+                    disabled={isRefreshing}
+                  >
+                    {isRefreshing ? "刷新中..." : "刷新状态"}
+                  </SecondaryButton>
+                </div>
+              )}
             </div>
           </SectionCard>
         ) : null}
@@ -750,12 +820,23 @@ export default function ProviderConfigGuide({
               <InfoHint
                 text={
                   isKiro
-                    ? "Kiro 在远端环境下推荐 device flow；浏览器完成认证后若回调无法自动到达容器，请将完整 callback URL 粘贴到下方并点击确认，由容器内发起请求。"
+                    ? "Kiro 登录会直接执行 kiro-cli login；浏览器完成认证后若回调无法自动到达容器，请将完整 callback URL 粘贴到下方并点击确认，由容器内发起请求。"
                     : provider.id === "copilot"
-                    ? "Copilot 当前版本直接支持 device flow，打开终端后可直接执行登录命令，也可以在交互会话里尝试 /login。"
-                    : "推荐先打开登录终端，再发送 /login 指令进入浏览器登录流程。"
+                    ? "Copilot 会在打开终端后直接执行 copilot login 进入 device flow。"
+                    : `点击${showLogoutAction ? "退出" : "登录"}后会打开终端并直接执行 ${
+                        showLogoutAction
+                          ? provider.logout_via_console
+                            ? `${provider.console_command || provider.command} -> ${provider.logout_command || "logout"}`
+                            : provider.logout_command || "logout"
+                          : provider.login_via_console
+                          ? `${provider.console_command || provider.command} -> ${provider.login_command || "login"}`
+                          : provider.login_command || "login"
+                      }。`
                 }
               />
+              {showLogoutAction && !canLogout ? (
+                <InfoHint text="当前 CLI 未探测到 logout 子命令，暂不提供退出操作。" />
+              ) : null}
 
               {/* Kiro: phase status banner */}
               {isKiro && kiroPhase !== "idle" ? (
@@ -796,46 +877,30 @@ export default function ProviderConfigGuide({
               ) : null}
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {/* For Kiro: only show open terminal button when idle */}
                 {!isKiro || kiroPhase === "idle" ? (
                   <PrimaryButton
                     type="button"
                     onClick={() =>
-                      void openLoginTerminal(
+                      void runProviderTerminalAction(
                         provider,
-                        provider.direct_login_command ? "direct" : "launch"
+                        showLogoutAction ? "logout" : "login"
                       )
                     }
-                    disabled={isTerminalBusy}
+                    disabled={isTerminalBusy || (showLogoutAction ? !canLogout : !canLogin)}
                   >
                     {isTerminalBusy
                       ? "启动中..."
-                      : provider.direct_login_command
-                      ? "打开登录命令终端"
-                      : "打开登录终端"}
+                      : showLogoutAction
+                      ? "退出"
+                      : "登录"}
                   </PrimaryButton>
                 ) : null}
-                {provider.login_launch_command &&
-                provider.direct_login_command &&
-                (!isKiro || kiroPhase === "idle") ? (
-                  <SecondaryButton
-                    type="button"
-                    onClick={() => void openLoginTerminal(provider, "launch")}
-                  >
-                    打开交互终端
-                  </SecondaryButton>
-                ) : null}
-                {provider.login_send_command ? (
-                  <SecondaryButton
-                    type="button"
-                    disabled={!canOpenSlashLogin}
-                    onClick={() => void sendLoginSlashCommand(provider)}
-                  >
-                    发送 {provider.login_send_command}
-                  </SecondaryButton>
-                ) : null}
-                <SecondaryButton type="button" onClick={() => void loadSummary(true)}>
-                  刷新状态
+                <SecondaryButton
+                  type="button"
+                  onClick={() => void refreshProvider(provider.id)}
+                  disabled={isRefreshing}
+                >
+                  {isRefreshing ? "刷新中..." : "刷新状态"}
                 </SecondaryButton>
               </div>
 
@@ -856,7 +921,7 @@ export default function ProviderConfigGuide({
                   <InfoHint text="浏览器完成认证后，若终端未自动登录，请将浏览器地址栏中的完整 callback URL 粘贴到下方，由容器内发起 GET 请求完成登录。" />
                   {kiroPhase === "idle" ? (
                     <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-                      请先点击「打开登录终端」并在浏览器完成认证后，再填写回调地址。
+                      请先点击「登录」并在浏览器完成认证后，再填写回调地址。
                     </div>
                   ) : (
                     <>
@@ -1004,7 +1069,9 @@ export default function ProviderConfigGuide({
             terminalId={activeTerminal.terminalId}
             title={activeTerminal.title}
             subtitle={activeTerminal.subtitle}
-            onClose={handleTerminalClose}
+            onClose={() => {
+              void handleTerminalClose();
+            }}
             canClose={terminalCanClose}
           />
         ) : null}
@@ -1067,7 +1134,9 @@ export default function ProviderConfigGuide({
           terminalId={activeTerminal.terminalId}
           title={activeTerminal.title}
           subtitle={activeTerminal.subtitle}
-          onClose={handleTerminalClose}
+          onClose={() => {
+            void handleTerminalClose();
+          }}
           canClose={terminalCanClose}
         />
       ) : null}

@@ -80,8 +80,8 @@ CONTROL_PANEL_PROVIDER_GUIDES: List[Dict[str, Any]] = [
         "supports_account_login": True,
         "supports_api_config": True,
         "default_selected": True,
-        "login_launch_command": "claude",
-        "login_send_command": "/login",
+        "login_command": "claude login",
+        "logout_command": "claude logout",
     },
     {
         "id": "codex",
@@ -90,8 +90,8 @@ CONTROL_PANEL_PROVIDER_GUIDES: List[Dict[str, Any]] = [
         "supports_account_login": True,
         "supports_api_config": True,
         "default_selected": True,
-        "login_launch_command": "codex",
-        "login_send_command": "/login",
+        "login_command": "codex login",
+        "logout_command": "codex logout",
     },
     {
         "id": "openclaw",
@@ -100,8 +100,8 @@ CONTROL_PANEL_PROVIDER_GUIDES: List[Dict[str, Any]] = [
         "supports_account_login": False,
         "supports_api_config": True,
         "default_selected": True,
-        "login_launch_command": "openclaw tui",
-        "login_send_command": None,
+        "login_command": None,
+        "logout_command": None,
     },
     {
         "id": "copilot",
@@ -110,9 +110,9 @@ CONTROL_PANEL_PROVIDER_GUIDES: List[Dict[str, Any]] = [
         "supports_account_login": True,
         "supports_api_config": False,
         "default_selected": True,
-        "login_launch_command": "copilot",
-        "login_send_command": "/login",
-        "direct_login_command": "copilot login",
+        "login_command": "copilot login",
+        "logout_command": "copilot logout",
+        "logout_supported_override": True,
     },
     {
         "id": "qoder_cli",
@@ -121,8 +121,11 @@ CONTROL_PANEL_PROVIDER_GUIDES: List[Dict[str, Any]] = [
         "supports_account_login": True,
         "supports_api_config": False,
         "default_selected": True,
-        "login_launch_command": "qodercli",
-        "login_send_command": "/login",
+        "console_command": "qodercli",
+        "login_command": "/login",
+        "logout_command": "/logout",
+        "login_via_console": True,
+        "logout_via_console": True,
     },
     {
         "id": "kiro_cli",
@@ -131,9 +134,8 @@ CONTROL_PANEL_PROVIDER_GUIDES: List[Dict[str, Any]] = [
         "supports_account_login": True,
         "supports_api_config": False,
         "default_selected": True,
-        "login_launch_command": "kiro-cli login",
-        "login_send_command": None,
-        "direct_login_command": "kiro-cli login --use-device-flow",
+        "login_command": "kiro-cli login",
+        "logout_command": "kiro-cli logout",
     },
     {
         "id": "codebuddy",
@@ -142,8 +144,11 @@ CONTROL_PANEL_PROVIDER_GUIDES: List[Dict[str, Any]] = [
         "supports_account_login": True,
         "supports_api_config": False,
         "default_selected": True,
-        "login_launch_command": "codebuddy",
-        "login_send_command": "/login",
+        "console_command": "codebuddy",
+        "login_command": "/login",
+        "logout_command": "/logout",
+        "login_via_console": True,
+        "logout_via_console": True,
     },
 ]
 
@@ -1302,6 +1307,10 @@ class ProviderCallbackRequest(BaseModel):
     callback_url: str = Field(min_length=1)
 
 
+class ProviderConfigFileUpdateRequest(BaseModel):
+    content: str
+
+
 class InboxMessageRequest(BaseModel):
     message: str = Field(min_length=1)
     sender_id: Optional[str] = None
@@ -1776,6 +1785,78 @@ def _run_provider_command(
     )
 
 
+def _probe_cli_subcommand(command: str, subcommand: str) -> bool:
+    if shutil.which(command) is None:
+        return False
+
+    try:
+        result = _run_provider_command([command, subcommand, "--help"], timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+    output = "\n".join(part for part in [result.stdout, result.stderr] if part).strip().lower()
+    if not output:
+        return result.returncode == 0
+
+    unsupported_markers = (
+        "unknown command",
+        "unknown arguments",
+        "no such command",
+        "unrecognized",
+        "invalid choice",
+        "unexpected argument",
+        "did you mean",
+        "command not found",
+    )
+    if any(marker in output for marker in unsupported_markers):
+        return False
+
+    command_pattern = re.compile(
+        rf"usage:\s*{re.escape(command.lower())}(?:\|[^\s]+)?\s+{re.escape(subcommand.lower())}\b"
+    )
+    if command_pattern.search(output):
+        return True
+
+    return f" {subcommand.lower()} " in f" {output} " and result.returncode == 0
+
+
+def _build_provider_action_metadata(item: Dict[str, Any]) -> Dict[str, Any]:
+    command = str(item.get("command") or "").strip()
+    supports_account_login = bool(item.get("supports_account_login"))
+    console_command = item.get("console_command") if supports_account_login else None
+    login_command = item.get("login_command") if supports_account_login else None
+    logout_command = item.get("logout_command") if supports_account_login else None
+    login_via_console = bool(item.get("login_via_console"))
+    logout_via_console = bool(item.get("logout_via_console"))
+    logout_supported_override = item.get("logout_supported_override")
+
+    login_supported = False
+    logout_supported = False
+    if supports_account_login and command:
+        if login_via_console:
+            login_supported = bool(console_command) and bool(login_command)
+        else:
+            login_supported = bool(login_command)
+
+        if logout_via_console:
+            logout_supported = bool(console_command) and bool(logout_command)
+        else:
+            logout_supported = bool(logout_command) and _probe_cli_subcommand(command, "logout")
+
+    if isinstance(logout_supported_override, bool):
+        logout_supported = logout_supported_override and bool(logout_command)
+
+    return {
+        "console_command": console_command,
+        "login_command": login_command,
+        "logout_command": logout_command if logout_supported else None,
+        "login_via_console": login_via_console,
+        "logout_via_console": logout_via_console,
+        "login_supported": login_supported,
+        "logout_supported": logout_supported,
+    }
+
+
 def _provider_settings_path(provider_id: str) -> Optional[Path]:
     mapping = {
         "claude_code": Path.home() / ".claude" / "settings.json",
@@ -1867,18 +1948,18 @@ def _upsert_toml_section(content: str, section_name: str, values: Dict[str, str]
     return f"{rendered}\n"
 
 
-def _write_codex_config(default_model: str) -> Path:
+def _write_codex_config(default_model: str, api_base_url: str) -> Path:
     path = Path.home() / ".codex" / "config.toml"
     content = path.read_text(encoding="utf-8") if path.exists() else ""
     content = _upsert_top_level_toml_key(content, "model", _toml_string(default_model))
-    content = _upsert_top_level_toml_key(content, "model_provider", _toml_string("openai"))
+    content = _upsert_top_level_toml_key(content, "model_provider", _toml_string("api"))
     content = _upsert_toml_section(
         content,
-        "model_providers.openai",
+        "model_providers.api",
         {
-            "name": _toml_string("OpenAI"),
-            "base_url": _toml_string("https://api.openai.com/v1"),
-            "api_key_env": _toml_string("OPENAI_API_KEY"),
+            "name": _toml_string("IDE API"),
+            "base_url": _toml_string(api_base_url),
+            "api_key_env": _toml_string("API_KEY"),
         },
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1898,6 +1979,295 @@ def _write_claude_settings(api_base_url: str, api_key: str, default_model: str) 
     payload["env"] = env_data
     _write_json_file(path, payload)
     return path
+
+
+def _write_openclaw_api_settings(
+    api_base_url: str,
+    default_model: str,
+    compatibility: str,
+) -> Path:
+    path = Path.home() / ".openclaw" / "openclaw.json"
+    payload = _read_json_file(path)
+
+    models_payload = payload.get("models")
+    models_data = dict(models_payload) if isinstance(models_payload, dict) else {}
+    providers_payload = models_data.get("providers")
+    providers_data = dict(providers_payload) if isinstance(providers_payload, dict) else {}
+
+    auth_profiles = payload.get("auth", {}).get("profiles")
+    provider_key = None
+    if isinstance(auth_profiles, dict):
+        for profile in auth_profiles.values():
+            if isinstance(profile, dict) and isinstance(profile.get("provider"), str):
+                provider_key = str(profile["provider"]).strip()
+                if provider_key:
+                    break
+
+    if not provider_key and providers_data:
+        provider_key = next(iter(providers_data.keys()))
+    if not provider_key:
+        provider_key = "api"
+
+    provider_payload = providers_data.get(provider_key)
+    provider_data = dict(provider_payload) if isinstance(provider_payload, dict) else {}
+    provider_data["baseUrl"] = api_base_url
+    provider_data["api"] = "anthropic-messages" if compatibility == "anthropic" else "openai-completions"
+    providers_data[provider_key] = provider_data
+    models_data["providers"] = providers_data
+    payload["models"] = models_data
+
+    agents_payload = payload.get("agents")
+    agents_data = dict(agents_payload) if isinstance(agents_payload, dict) else {}
+    defaults_payload = agents_data.get("defaults")
+    defaults_data = dict(defaults_payload) if isinstance(defaults_payload, dict) else {}
+    model_payload = defaults_data.get("model")
+    model_data = dict(model_payload) if isinstance(model_payload, dict) else {}
+    model_data["primary"] = f"{provider_key}/{default_model}"
+    defaults_data["model"] = model_data
+    agents_data["defaults"] = defaults_data
+    payload["agents"] = agents_data
+
+    _write_json_file(path, payload)
+    return path
+
+
+def _read_provider_config_file(provider_id: str) -> Dict[str, Any]:
+    path = _provider_settings_path(provider_id)
+    if path is None:
+      raise HTTPException(status_code=404, detail=f"{provider_id} does not expose a config file")
+
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+    elif provider_id == "openclaw":
+        content = "{}\n"
+    else:
+        raise HTTPException(status_code=404, detail=f"Config file not found for {provider_id}")
+
+    return {
+        "provider_id": provider_id,
+        "path": str(path),
+        "content": content,
+    }
+
+
+def _restart_openclaw_gateway() -> Dict[str, Any]:
+    restart_result = _run_provider_command(["openclaw", "gateway", "restart"], timeout=30)
+    if restart_result.returncode == 0:
+        return {
+            "command": "openclaw gateway restart",
+            "stdout": (restart_result.stdout or "").strip(),
+            "stderr": (restart_result.stderr or "").strip(),
+        }
+
+    start_result = _run_provider_command(["openclaw", "gateway", "start"], timeout=30)
+    if start_result.returncode == 0:
+        return {
+            "command": "openclaw gateway start",
+            "stdout": (start_result.stdout or "").strip(),
+            "stderr": (start_result.stderr or "").strip(),
+        }
+
+    detail = (
+        start_result.stderr
+        or start_result.stdout
+        or restart_result.stderr
+        or restart_result.stdout
+        or "Failed to restart OpenClaw gateway"
+    ).strip()
+    raise HTTPException(status_code=500, detail=detail)
+
+
+def _save_provider_config_file(provider_id: str, content: str) -> Dict[str, Any]:
+    path = _provider_settings_path(provider_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"{provider_id} does not expose a config file")
+
+    rendered = content
+    if provider_id == "openclaw":
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid OpenClaw config JSON: {exc}")
+        rendered = json.dumps(parsed, indent=2, ensure_ascii=True)
+        if not rendered.endswith("\n"):
+            rendered += "\n"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(rendered, encoding="utf-8")
+
+    result: Dict[str, Any] = {
+        "provider_id": provider_id,
+        "path": str(path),
+        "content": rendered,
+    }
+    if provider_id == "openclaw":
+        result["gateway"] = _restart_openclaw_gateway()
+    return result
+
+
+def _merge_saved_settings(runtime_settings: Dict[str, Any], detected_settings: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(detected_settings)
+    for key, value in runtime_settings.items():
+        if value is None:
+            continue
+        if key == "feishu" and isinstance(value, dict):
+            current = merged.get("feishu")
+            current_data = dict(current) if isinstance(current, dict) else {}
+            current_data.update(value)
+            merged["feishu"] = current_data
+            continue
+        merged[key] = value
+    return merged
+
+
+def _read_claude_saved_settings() -> Dict[str, Any]:
+    settings_path = _provider_settings_path("claude_code")
+    payload = _read_json_file(settings_path) if settings_path else {}
+    env_payload = payload.get("env")
+    env_data = dict(env_payload) if isinstance(env_payload, dict) else {}
+
+    api_base_url = str(env_data.get("ANTHROPIC_BASE_URL") or "").strip() or None
+    api_key = str(
+        env_data.get("ANTHROPIC_API_KEY") or env_data.get("ANTHROPIC_AUTH_TOKEN") or ""
+    ).strip() or None
+    default_model = str(env_data.get("ANTHROPIC_MODEL") or "").strip() or None
+
+    if not any([api_base_url, api_key, default_model]):
+        return {}
+
+    return {
+        "mode": "api",
+        "api_base_url": api_base_url,
+        "api_key": api_key,
+        "default_model": default_model,
+    }
+
+
+def _read_codex_saved_settings() -> Dict[str, Any]:
+    settings_path = _provider_settings_path("codex")
+    payload = _parse_toml_file(settings_path) if settings_path else {}
+    provider_name = str(payload.get("model_provider") or "").strip() or None
+    model_providers = payload.get("model_providers")
+    providers_data = dict(model_providers) if isinstance(model_providers, dict) else {}
+    selected_provider = providers_data.get(provider_name or "")
+    selected_data = dict(selected_provider) if isinstance(selected_provider, dict) else {}
+    api_key_env = str(selected_data.get("api_key_env") or "").strip()
+
+    settings: Dict[str, Any] = {}
+    if provider_name or payload.get("model") or selected_data.get("base_url"):
+        settings["mode"] = "api"
+    if selected_data.get("base_url"):
+        settings["api_base_url"] = str(selected_data.get("base_url")).strip()
+    if payload.get("model"):
+        settings["default_model"] = str(payload.get("model")).strip()
+    if api_key_env and os.getenv(api_key_env):
+        settings["api_key"] = str(os.getenv(api_key_env) or "").strip()
+
+    auth_path = Path.home() / ".codex" / "auth.json"
+    auth_payload = _read_json_file(auth_path)
+    if isinstance(auth_payload, dict):
+        auth_mode = str(auth_payload.get("auth_mode") or "").strip().lower()
+        if auth_mode == "apikey":
+            settings["mode"] = "api"
+            if api_key_env and not settings.get("api_key"):
+                auth_key = str(auth_payload.get(api_key_env) or "").strip()
+                if auth_key:
+                    settings["api_key"] = auth_key
+            if not settings.get("api_key"):
+                for candidate in ["API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "ZHIPU_API_KEY"]:
+                    auth_key = str(auth_payload.get(candidate) or "").strip()
+                    if auth_key:
+                        settings["api_key"] = auth_key
+                        break
+    return settings
+
+
+def _read_openclaw_saved_settings() -> Dict[str, Any]:
+    config_path = _provider_settings_path("openclaw")
+    payload = _read_json_file(config_path) if config_path else {}
+    if not payload:
+        return {}
+
+    settings: Dict[str, Any] = {"mode": "api"}
+
+    auth_profiles = payload.get("auth", {}).get("profiles")
+    provider_key = None
+    if isinstance(auth_profiles, dict):
+        for profile in auth_profiles.values():
+            if isinstance(profile, dict) and isinstance(profile.get("provider"), str):
+                provider_key = str(profile["provider"]).strip()
+                if provider_key:
+                    break
+
+    models_payload = payload.get("models")
+    models_data = dict(models_payload) if isinstance(models_payload, dict) else {}
+    providers_payload = models_data.get("providers")
+    providers_data = dict(providers_payload) if isinstance(providers_payload, dict) else {}
+    if not provider_key and providers_data:
+        provider_key = next(iter(providers_data.keys()))
+    provider_payload = providers_data.get(provider_key or "")
+    provider_data = dict(provider_payload) if isinstance(provider_payload, dict) else {}
+    base_url = str(provider_data.get("baseUrl") or provider_data.get("base_url") or "").strip()
+    if base_url:
+        settings["api_base_url"] = base_url
+
+    api_shape = str(provider_data.get("api") or "").strip().lower()
+    if api_shape.startswith("anthropic"):
+        settings["compatibility"] = "anthropic"
+    elif provider_data:
+        settings["compatibility"] = "openai"
+
+    agents_payload = payload.get("agents")
+    agents_data = dict(agents_payload) if isinstance(agents_payload, dict) else {}
+    defaults_payload = agents_data.get("defaults")
+    defaults_data = dict(defaults_payload) if isinstance(defaults_payload, dict) else {}
+    model_payload = defaults_data.get("model")
+    model_data = dict(model_payload) if isinstance(model_payload, dict) else {}
+    primary_model = str(model_data.get("primary") or "").strip()
+    if primary_model:
+        settings["default_model"] = primary_model.split("/", 1)[1] if "/" in primary_model else primary_model
+
+    channels_payload = payload.get("channels")
+    channels_data = dict(channels_payload) if isinstance(channels_payload, dict) else {}
+    feishu_payload = channels_data.get("feishu")
+    feishu_data = dict(feishu_payload) if isinstance(feishu_payload, dict) else {}
+    if feishu_data:
+        account_id = str(feishu_data.get("defaultAccount") or "main").strip() or "main"
+        accounts_payload = feishu_data.get("accounts")
+        accounts_data = dict(accounts_payload) if isinstance(accounts_payload, dict) else {}
+        account_payload = accounts_data.get(account_id)
+        account_data = dict(account_payload) if isinstance(account_payload, dict) else {}
+
+        settings["feishu"] = {
+            "enabled": bool(feishu_data.get("enabled")),
+            "domain": str(feishu_data.get("domain") or "feishu").strip() or "feishu",
+            "connection_mode": str(feishu_data.get("connectionMode") or "websocket").strip() or "websocket",
+            "app_id": str(account_data.get("appId") or feishu_data.get("appId") or "").strip(),
+            "app_secret": str(account_data.get("appSecret") or feishu_data.get("appSecret") or "").strip(),
+            "bot_name": str(account_data.get("botName") or feishu_data.get("botName") or "").strip(),
+            "verification_token": str(feishu_data.get("verificationToken") or "").strip() or None,
+            "dm_policy": str(
+                feishu_data.get("dmPolicy")
+                or feishu_data.get("groupPolicy")
+                or "pairing"
+            ).strip()
+            or "pairing",
+            "account_id": account_id,
+        }
+
+    return settings
+
+
+def _get_provider_saved_settings(provider_id: str) -> Dict[str, Any]:
+    runtime_settings = get_provider_runtime_settings(provider_id)
+    readers = {
+        "claude_code": _read_claude_saved_settings,
+        "codex": _read_codex_saved_settings,
+        "openclaw": _read_openclaw_saved_settings,
+    }
+    reader = readers.get(provider_id)
+    detected_settings = reader() if reader else {}
+    return _merge_saved_settings(runtime_settings, detected_settings)
 
 
 def _merge_openclaw_feishu_config(
@@ -1949,7 +2319,7 @@ def _merge_openclaw_feishu_config(
 
 def _detect_claude_status() -> Dict[str, Any]:
     installed = shutil.which("claude") is not None
-    runtime_settings = get_provider_runtime_settings("claude_code")
+    runtime_settings = _get_provider_saved_settings("claude_code")
     details = ""
     configured = False
     detected_mode = runtime_settings.get("mode")
@@ -1971,7 +2341,7 @@ def _detect_claude_status() -> Dict[str, Any]:
     if runtime_settings.get("mode") == "api" and runtime_settings.get("api_key"):
         configured = True
         detected_mode = "api"
-        details = runtime_settings.get("default_model") or details
+        details = runtime_settings.get("default_model") or runtime_settings.get("api_base_url") or details
 
     return {
         "installed": installed,
@@ -1984,7 +2354,7 @@ def _detect_claude_status() -> Dict[str, Any]:
 
 def _detect_codex_status() -> Dict[str, Any]:
     installed = shutil.which("codex") is not None
-    runtime_settings = get_provider_runtime_settings("codex")
+    runtime_settings = _get_provider_saved_settings("codex")
     details = ""
     configured = False
     detected_mode = runtime_settings.get("mode")
@@ -1996,7 +2366,7 @@ def _detect_codex_status() -> Dict[str, Any]:
         details = stdout or stderr
         if result.returncode == 0 and stdout:
             configured = True
-            detected_mode = detected_mode or "account"
+            detected_mode = "api" if "api key" in stdout.lower() else (detected_mode or "account")
 
     if runtime_settings.get("mode") == "api" and runtime_settings.get("api_key"):
         configured = True
@@ -2102,7 +2472,7 @@ def _detect_codebuddy_status() -> Dict[str, Any]:
 
 def _detect_openclaw_status() -> Dict[str, Any]:
     installed = shutil.which("openclaw") is not None
-    runtime_settings = get_provider_runtime_settings("openclaw")
+    runtime_settings = _get_provider_saved_settings("openclaw")
     config_path = _provider_settings_path("openclaw")
     payload = _read_json_file(config_path) if config_path else {}
     configured = bool(runtime_settings.get("api_key"))
@@ -2117,7 +2487,7 @@ def _detect_openclaw_status() -> Dict[str, Any]:
             configured = True
     if runtime_settings.get("default_model"):
         configured = True
-        details = runtime_settings.get("compatibility") or details
+        details = runtime_settings.get("compatibility") or runtime_settings.get("default_model") or details
     return {
         "installed": installed,
         "configured": configured,
@@ -2149,6 +2519,18 @@ def _detect_provider_status(provider_id: str) -> Dict[str, Any]:
     return detector()
 
 
+def _build_provider_guide_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    provider_id = str(item["id"])
+    status_payload = _detect_provider_status(provider_id)
+    provider_settings = _get_provider_saved_settings(provider_id)
+    return {
+        **item,
+        **_build_provider_action_metadata(item),
+        "status": status_payload,
+        "saved_settings": provider_settings,
+    }
+
+
 def _build_provider_guide_summary() -> Dict[str, Any]:
     runtime_config = load_provider_runtime_config()
     onboarding = runtime_config.get("onboarding", {})
@@ -2158,21 +2540,11 @@ def _build_provider_guide_summary() -> Dict[str, Any]:
     any_configured = False
 
     for item in CONTROL_PANEL_PROVIDER_GUIDES:
-        status_payload = _detect_provider_status(str(item["id"]))
-        provider_settings = get_provider_runtime_settings(str(item["id"]))
+        provider_summary = _build_provider_guide_item(item)
+        status_payload = provider_summary["status"]
         configured = bool(status_payload.get("configured"))
         any_configured = any_configured or configured
-        provider_summaries.append(
-            {
-                **item,
-                "status": status_payload,
-                "saved_settings": {
-                    key: value
-                    for key, value in provider_settings.items()
-                    if key not in {"api_key", "updated_at"}
-                },
-            }
-        )
+        provider_summaries.append(provider_summary)
 
     should_show_guide = not dismissed and not completed_at and not any_configured
     return {
@@ -2180,6 +2552,13 @@ def _build_provider_guide_summary() -> Dict[str, Any]:
         "onboarding": onboarding,
         "providers": provider_summaries,
     }
+
+
+def _build_single_provider_guide(provider_id: str) -> Dict[str, Any]:
+    provider_meta = next((item for item in CONTROL_PANEL_PROVIDER_GUIDES if item["id"] == provider_id), None)
+    if provider_meta is None:
+        raise HTTPException(status_code=404, detail=f"Unsupported provider: {provider_id}")
+    return _build_provider_guide_item(provider_meta)
 
 
 def _get_terminal_tmux_target(terminal_id: str) -> tuple[str, str]:
@@ -2747,6 +3126,23 @@ async def console_provider_config_summary() -> Dict[str, Any]:
     return await asyncio.to_thread(_build_provider_guide_summary)
 
 
+@app.get("/console/provider-config/providers/{provider_id}")
+async def console_provider_config_provider(provider_id: str) -> Dict[str, Any]:
+    return await asyncio.to_thread(_build_single_provider_guide, provider_id)
+
+
+@app.get("/console/provider-config/{provider_id}/file")
+async def console_provider_config_file(provider_id: str) -> Dict[str, Any]:
+    return await asyncio.to_thread(_read_provider_config_file, provider_id)
+
+
+@app.put("/console/provider-config/{provider_id}/file")
+async def console_provider_config_file_save(
+    provider_id: str, payload: ProviderConfigFileUpdateRequest
+) -> Dict[str, Any]:
+    return await asyncio.to_thread(_save_provider_config_file, provider_id, payload.content)
+
+
 @app.post("/console/provider-config/onboarding")
 async def console_provider_config_onboarding(payload: ProviderConfigDismissRequest) -> Dict[str, Any]:
     onboarding = await asyncio.to_thread(set_onboarding_state, dismissed=payload.dismissed)
@@ -2769,14 +3165,18 @@ async def console_provider_config_apply(payload: ProviderConfigApplyRequest) -> 
     if payload.mode == "account" and not provider_meta.get("supports_account_login"):
         raise HTTPException(status_code=400, detail=f"{provider_id} does not support account login")
 
-    api_base_url = (payload.api_base_url or "").strip()
-    api_key = (payload.api_key or "").strip()
-    default_model = (payload.default_model or "").strip()
+    existing_settings = await asyncio.to_thread(_get_provider_saved_settings, provider_id)
+    existing_feishu = existing_settings.get("feishu")
+    existing_feishu_data = dict(existing_feishu) if isinstance(existing_feishu, dict) else {}
+
+    api_base_url = (payload.api_base_url or "").strip() or str(existing_settings.get("api_base_url") or "").strip()
+    api_key = (payload.api_key or "").strip() or str(existing_settings.get("api_key") or "").strip()
+    default_model = (payload.default_model or "").strip() or str(existing_settings.get("default_model") or "").strip()
 
     if payload.mode == "api":
         if not api_base_url:
             raise HTTPException(status_code=400, detail="api_base_url is required in API mode")
-        if not api_key:
+        if provider_id in {"claude_code", "openclaw"} and not api_key:
             raise HTTPException(status_code=400, detail="api_key is required in API mode")
         if not default_model:
             raise HTTPException(status_code=400, detail="default_model is required in API mode")
@@ -2790,47 +3190,60 @@ async def console_provider_config_apply(payload: ProviderConfigApplyRequest) -> 
                 await asyncio.to_thread(_write_claude_settings, api_base_url, api_key, default_model)
             )
         elif provider_id == "codex" and payload.mode == "api":
-            saved_path = str(await asyncio.to_thread(_write_codex_config, default_model))
+            saved_path = str(await asyncio.to_thread(_write_codex_config, default_model, api_base_url))
         elif provider_id == "openclaw" and payload.mode == "api":
             compatibility = payload.compatibility or "openai"
-            command = [
-                "openclaw",
-                "onboard",
-                "--non-interactive",
-                "--accept-risk",
-                "--skip-ui",
-                "--skip-health",
-                "--skip-skills",
-                "--skip-search",
-                "--no-install-daemon",
-                "--auth-choice",
-                "custom-api-key",
-                "--custom-api-key",
-                api_key,
-                "--custom-base-url",
-                api_base_url,
-                "--custom-model-id",
-                default_model,
-                "--custom-compatibility",
-                compatibility,
-                "--json",
-            ]
-            result = await asyncio.to_thread(_run_provider_command, command, timeout=60)
-            if result.returncode != 0:
-                raise HTTPException(
-                    status_code=500,
-                    detail=(result.stderr or result.stdout or "OpenClaw onboard failed").strip(),
+            if (payload.api_key or "").strip():
+                command = [
+                    "openclaw",
+                    "onboard",
+                    "--non-interactive",
+                    "--accept-risk",
+                    "--skip-ui",
+                    "--skip-health",
+                    "--skip-skills",
+                    "--skip-search",
+                    "--no-install-daemon",
+                    "--auth-choice",
+                    "custom-api-key",
+                    "--custom-api-key",
+                    api_key,
+                    "--custom-base-url",
+                    api_base_url,
+                    "--custom-model-id",
+                    default_model,
+                    "--custom-compatibility",
+                    compatibility,
+                    "--json",
+                ]
+                result = await asyncio.to_thread(_run_provider_command, command, timeout=60)
+                if result.returncode != 0:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(result.stderr or result.stdout or "OpenClaw onboard failed").strip(),
+                    )
+                command_summary = " ".join(command[:6]) + " ..."
+                saved_path = str(_provider_settings_path("openclaw"))
+            else:
+                saved_path = str(
+                    await asyncio.to_thread(
+                        _write_openclaw_api_settings,
+                        api_base_url,
+                        default_model,
+                        compatibility,
+                    )
                 )
-            command_summary = " ".join(command[:6]) + " ..."
-            saved_path = str(_provider_settings_path("openclaw"))
             if payload.feishu and payload.feishu.enabled:
                 feishu = payload.feishu
-                if not (feishu.app_id or "").strip() or not (feishu.app_secret or "").strip():
+                app_id = (feishu.app_id or "").strip() or str(existing_feishu_data.get("app_id") or "").strip()
+                app_secret = (feishu.app_secret or "").strip() or str(existing_feishu_data.get("app_secret") or "").strip()
+                verification_token = (feishu.verification_token or "").strip() or str(existing_feishu_data.get("verification_token") or "").strip()
+                if not app_id or not app_secret:
                     raise HTTPException(
                         status_code=400,
                         detail="OpenClaw Feishu channel requires app_id and app_secret",
                     )
-                if feishu.connection_mode == "webhook" and not (feishu.verification_token or "").strip():
+                if feishu.connection_mode == "webhook" and not verification_token:
                     raise HTTPException(
                         status_code=400,
                         detail="OpenClaw Feishu webhook mode requires verification_token",
@@ -2840,10 +3253,10 @@ async def console_provider_config_apply(payload: ProviderConfigApplyRequest) -> 
                         _merge_openclaw_feishu_config,
                         domain=feishu.domain,
                         connection_mode=feishu.connection_mode,
-                        app_id=(feishu.app_id or "").strip(),
-                        app_secret=(feishu.app_secret or "").strip(),
+                        app_id=app_id,
+                        app_secret=app_secret,
                         bot_name=(feishu.bot_name or "").strip(),
-                        verification_token=(feishu.verification_token or "").strip() or None,
+                        verification_token=verification_token or None,
                         dm_policy=feishu.dm_policy,
                         account_id=(feishu.account_id or "main").strip() or "main",
                     )
@@ -2853,12 +3266,18 @@ async def console_provider_config_apply(payload: ProviderConfigApplyRequest) -> 
             "api_base_url": api_base_url or None,
             "api_key": api_key or None,
             "default_model": default_model or None,
-            "compatibility": payload.compatibility or None,
+            "compatibility": payload.compatibility or existing_settings.get("compatibility") or None,
         }
         if payload.mode == "account":
             runtime_payload["login_completed_at"] = datetime.now(timezone.utc).isoformat()
         if payload.feishu:
-            runtime_payload["feishu"] = payload.feishu.model_dump(exclude_none=True)
+            runtime_payload["feishu"] = {
+                **existing_feishu_data,
+                **payload.feishu.model_dump(exclude_none=True),
+                "app_id": (payload.feishu.app_id or "").strip() or existing_feishu_data.get("app_id"),
+                "app_secret": (payload.feishu.app_secret or "").strip() or existing_feishu_data.get("app_secret"),
+                "verification_token": (payload.feishu.verification_token or "").strip() or existing_feishu_data.get("verification_token"),
+            }
 
         settings = await asyncio.to_thread(update_provider_runtime_settings, provider_id, runtime_payload)
         onboarding = await asyncio.to_thread(set_onboarding_state, completed=True)
@@ -2867,7 +3286,7 @@ async def console_provider_config_apply(payload: ProviderConfigApplyRequest) -> 
             "provider_id": provider_id,
             "saved_path": saved_path,
             "command": command_summary,
-            "settings": {key: value for key, value in settings.items() if key != "api_key"},
+            "settings": settings,
             "onboarding": onboarding,
         }
     except HTTPException:

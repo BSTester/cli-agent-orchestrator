@@ -256,6 +256,270 @@ def test_console_provider_config_summary(client: TestClient) -> None:
     assert response.json() == summary
 
 
+def test_console_provider_config_single_provider(client: TestClient) -> None:
+    login(client)
+
+    provider = {
+        "id": "claude_code",
+        "label": "Claude Code",
+        "command": "claude",
+        "supports_account_login": True,
+        "supports_api_config": True,
+        "default_selected": True,
+        "login_command": "claude login",
+        "logout_command": None,
+        "login_supported": True,
+        "logout_supported": False,
+        "status": {"installed": True, "configured": False},
+        "saved_settings": {},
+    }
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main._build_single_provider_guide",
+        return_value=provider,
+    ):
+        response = client.get("/console/provider-config/providers/claude_code")
+
+    assert response.status_code == 200
+    assert response.json() == provider
+
+
+def test_build_provider_action_metadata_hides_unsupported_logout() -> None:
+    item = {
+        "id": "claude_code",
+        "label": "Claude Code",
+        "command": "claude",
+        "supports_account_login": True,
+        "supports_api_config": True,
+        "default_selected": True,
+        "login_command": "claude login",
+        "logout_command": "claude logout",
+    }
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main._probe_cli_subcommand",
+        return_value=False,
+    ):
+        payload = control_panel_main._build_provider_action_metadata(item)
+
+    assert payload == {
+        "console_command": None,
+        "login_command": "claude login",
+        "logout_command": None,
+        "login_via_console": False,
+        "logout_via_console": False,
+        "login_supported": True,
+        "logout_supported": False,
+    }
+
+
+def test_build_provider_action_metadata_supports_console_slash_flow() -> None:
+    item = {
+        "id": "qoder_cli",
+        "label": "QoderCLI",
+        "command": "qodercli",
+        "supports_account_login": True,
+        "supports_api_config": False,
+        "default_selected": True,
+        "console_command": "qodercli",
+        "login_command": "/login",
+        "logout_command": "/logout",
+        "login_via_console": True,
+        "logout_via_console": True,
+    }
+
+    payload = control_panel_main._build_provider_action_metadata(item)
+
+    assert payload == {
+        "console_command": "qodercli",
+        "login_command": "/login",
+        "logout_command": "/logout",
+        "login_via_console": True,
+        "logout_via_console": True,
+        "login_supported": True,
+        "logout_supported": True,
+    }
+
+
+def test_detect_codex_status_marks_api_key_login_as_configured() -> None:
+        process = MagicMock(returncode=0, stdout="Logged in using an API key - demo***1234", stderr="")
+
+        with (
+                patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/codex"),
+                patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+                patch("cli_agent_orchestrator.control_panel.main._get_provider_saved_settings", return_value={}),
+        ):
+                payload = control_panel_main._detect_codex_status()
+
+        assert payload["installed"] is True
+        assert payload["configured"] is True
+        assert payload["detected_mode"] == "api"
+
+
+def test_detect_claude_status_prefers_api_saved_settings() -> None:
+        process = MagicMock(
+                stdout='{"loggedIn": true, "authMethod": "oauth_token", "apiProvider": "firstParty"}',
+                stderr="",
+        )
+        saved_settings = {
+                "mode": "api",
+                "api_base_url": "https://example.invalid/anthropic",
+                "api_key": "secret-key",
+                "default_model": "claude-sonnet-4-5",
+        }
+
+        with (
+                patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/claude"),
+                patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+                patch(
+                        "cli_agent_orchestrator.control_panel.main._get_provider_saved_settings",
+                        return_value=saved_settings,
+                ),
+        ):
+                payload = control_panel_main._detect_claude_status()
+
+        assert payload["configured"] is True
+        assert payload["detected_mode"] == "api"
+        assert payload["details"] == "claude-sonnet-4-5"
+
+
+def test_read_openclaw_saved_settings_maps_existing_config(tmp_path: Path) -> None:
+        config_path = tmp_path / "openclaw.json"
+        config_path.write_text(
+                """
+{
+    "auth": {
+        "profiles": {
+            "zai:default": {
+                "provider": "zai",
+                "mode": "api_key"
+            }
+        }
+    },
+    "models": {
+        "providers": {
+            "zai": {
+                "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+                "api": "openai-completions"
+            }
+        }
+    },
+    "agents": {
+        "defaults": {
+            "model": {
+                "primary": "zai/glm-4.7"
+            }
+        }
+    },
+    "channels": {
+        "feishu": {
+            "enabled": true,
+            "domain": "feishu",
+            "connectionMode": "webhook",
+            "verificationToken": "verify-token",
+            "defaultAccount": "main",
+            "accounts": {
+                "main": {
+                    "appId": "cli_xxx",
+                    "appSecret": "secret-yyy",
+                    "botName": "bot"
+                }
+            }
+        }
+    }
+}
+                """.strip(),
+                encoding="utf-8",
+        )
+
+        with patch(
+                "cli_agent_orchestrator.control_panel.main._provider_settings_path",
+                return_value=config_path,
+        ):
+                payload = control_panel_main._read_openclaw_saved_settings()
+
+        assert payload["mode"] == "api"
+        assert payload["api_base_url"] == "https://open.bigmodel.cn/api/coding/paas/v4"
+        assert payload["default_model"] == "glm-4.7"
+        assert payload["compatibility"] == "openai"
+        assert payload["feishu"] == {
+                "enabled": True,
+                "domain": "feishu",
+                "connection_mode": "webhook",
+                "app_id": "cli_xxx",
+                "app_secret": "secret-yyy",
+                "bot_name": "bot",
+                "verification_token": "verify-token",
+                "dm_policy": "pairing",
+                "account_id": "main",
+        }
+
+
+        def test_read_codex_saved_settings_reads_auth_json_api_key(tmp_path: Path) -> None:
+            codex_dir = tmp_path / ".codex"
+            codex_dir.mkdir()
+            config_path = codex_dir / "config.toml"
+            config_path.write_text(
+                """
+        model = "gpt-5-codex"
+        model_provider = "openai"
+
+        [model_providers.openai]
+        base_url = "https://api.openai.com/v1"
+        api_key_env = "OPENAI_API_KEY"
+                """.strip(),
+                encoding="utf-8",
+            )
+            auth_path = codex_dir / "auth.json"
+            auth_path.write_text(
+                json.dumps(
+                    {
+                        "auth_mode": "apikey",
+                        "OPENAI_API_KEY": "auth-json-secret",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch("cli_agent_orchestrator.control_panel.main._provider_settings_path", return_value=config_path),
+                patch("cli_agent_orchestrator.control_panel.main.Path.home", return_value=tmp_path),
+                patch.dict("cli_agent_orchestrator.control_panel.main.os.environ", {}, clear=True),
+            ):
+                payload = control_panel_main._read_codex_saved_settings()
+
+            assert payload == {
+                "mode": "api",
+                "api_base_url": "https://api.openai.com/v1",
+                "default_model": "gpt-5-codex",
+                "api_key": "auth-json-secret",
+            }
+
+
+        def test_save_provider_config_file_openclaw_restarts_gateway(tmp_path: Path) -> None:
+            config_path = tmp_path / "openclaw.json"
+
+            with (
+                patch("cli_agent_orchestrator.control_panel.main._provider_settings_path", return_value=config_path),
+                patch(
+                    "cli_agent_orchestrator.control_panel.main._restart_openclaw_gateway",
+                    return_value={"command": "openclaw gateway restart", "stdout": "ok", "stderr": ""},
+                ),
+            ):
+                payload = control_panel_main._save_provider_config_file(
+                    "openclaw",
+                    '{"channels":{"feishu":{"enabled":true}}}',
+                )
+
+            assert payload == {
+                "provider_id": "openclaw",
+                "path": str(config_path),
+                "content": '{\n  "channels": {\n    "feishu": {\n      "enabled": true\n    }\n  }\n}\n',
+                "gateway": {"command": "openclaw gateway restart", "stdout": "ok", "stderr": ""},
+            }
+            assert config_path.read_text(encoding="utf-8") == payload["content"]
+
+
 def test_console_provider_config_onboarding(client: TestClient) -> None:
     login(client)
 
@@ -380,6 +644,50 @@ def test_console_provider_config_kiro_callback_success(client: TestClient) -> No
     mock_get.assert_called_once_with("http://localhost:49153/callback?code=abc", timeout=20)
     mock_update_runtime.assert_called_once()
     mock_set_onboarding.assert_called_once_with(completed=True)
+
+
+def test_console_provider_config_file_read(client: TestClient) -> None:
+    login(client)
+
+    payload = {
+        "provider_id": "openclaw",
+        "path": "/tmp/openclaw.json",
+        "content": "{}\n",
+    }
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main._read_provider_config_file",
+        return_value=payload,
+    ) as mock_read_file:
+        response = client.get("/console/provider-config/openclaw/file")
+
+    assert response.status_code == 200
+    assert response.json() == payload
+    mock_read_file.assert_called_once_with("openclaw")
+
+
+def test_console_provider_config_file_save(client: TestClient) -> None:
+    login(client)
+
+    payload = {
+        "provider_id": "openclaw",
+        "path": "/tmp/openclaw.json",
+        "content": "{\n  \"foo\": true\n}\n",
+        "gateway": {"command": "openclaw gateway restart", "stdout": "ok", "stderr": ""},
+    }
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main._save_provider_config_file",
+        return_value=payload,
+    ) as mock_save_file:
+        response = client.put(
+            "/console/provider-config/openclaw/file",
+            json={"content": '{"foo":true}'},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == payload
+    mock_save_file.assert_called_once_with("openclaw", '{"foo":true}')
 
 
 def test_proxy_get_request(client: TestClient) -> None:
