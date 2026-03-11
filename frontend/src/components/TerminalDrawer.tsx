@@ -13,9 +13,11 @@ type TerminalDrawerProps = {
   title: string;
   subtitle: string;
   onClose: () => void;
+  /** When false the primary button shows "最小化" to hide the drawer without destroying the session */
+  canClose?: boolean;
 };
 
-export default function TerminalDrawer({ terminalId, title, subtitle, onClose }: TerminalDrawerProps) {
+export default function TerminalDrawer({ terminalId, title, subtitle, onClose, canClose = true }: TerminalDrawerProps) {
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -375,7 +377,7 @@ export default function TerminalDrawer({ terminalId, title, subtitle, onClose }:
             </div>
           </div>
           <SecondaryButton type="button" onClick={onClose} style={{ padding: "6px 10px" }}>
-            关闭
+            {canClose ? "关闭" : "最小化"}
           </SecondaryButton>
         </div>
 
