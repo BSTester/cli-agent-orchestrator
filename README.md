@@ -224,10 +224,9 @@ OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
 
 仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。镜像构建时会直接复制仓库内源码、`scripts/` 和本地 `extensions/openclaw-cao-tools/` 到容器，并在构建阶段完成依赖/CLI 安装；容器启动时默认只启动服务，不会重复安装。
 
-容器默认以非 root 用户 `cao` 运行，Compose 会显式以 `${CAO_UID}:${CAO_GID}` 启动服务。为避免覆盖镜像内已安装的 CLI，同时保留必要的 Provider 配置与 Agent 目录，Compose 会将以下路径映射到主机侧 `./.docker/`：
+容器默认以非 root 用户 `cao` 运行，Compose 会显式以 `${CAO_UID}:${CAO_GID}` 启动服务。为保留 Provider 配置与 Agent 目录，Compose 会将以下路径映射到主机侧 `./.docker/`：
 
-- `cli-agent-orchestrator` → `/home/cao/.aws/cli-agent-orchestrator`
-- `amazonq` → `/home/cao/.aws/amazonq`
+- `aws` → `/home/cao/.aws`
 - `claude` → `/home/cao/.claude`
 - `codex` → `/home/cao/.codex`
 - `openclaw` → `/home/cao/.openclaw`
@@ -236,37 +235,90 @@ OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
 - `copilot` → `/home/cao/.copilot`
 - `codebuddy` → `/home/cao/.codebuddy`
 
-首次启动时，如果这些主机目录为空，容器入口脚本只会初始化 Provider 实际需要的配置文件或 Agent 子目录，例如：
+需要注意：这里不能直接“把容器内 `/home/cao/...` 已经存在的文件映射到宿主机”。因为 bind mount 一旦生效，容器里对应目标路径会被宿主机目录遮蔽，原来镜像中该路径下的文件将无法直接透出到宿主机。
 
-- `~/.claude/settings.json`
-- `~/.codex/config.toml`
-- `~/.openclaw/openclaw.json`
-- `~/.codebuddy/settings.json`
-- `~/.aws/cli-agent-orchestrator/agent-context`
-- `~/.aws/amazonq/cli-agents`
-- `~/.kiro/agents`
-- `~/.qoder/agents`
-- `~/.copilot/agents`
-- `~/.codebuddy/agents`
+因此当前实现采用的是“宿主机侧复制初始化”而不是“镜像内备份”：
 
-入口脚本不会再复制整个 `/home/cao` 或整个 provider 根目录，因此不会把过大的缓存/历史文件一并初始化到宿主机；后续若目标路径中已有内容，则不会覆盖。
+1. 先构建镜像，但不启动服务容器
+2. 在宿主机执行初始化脚本 `scripts/docker_init_bind_mounts.sh`
+3. 该脚本会用 `docker create` 创建一个临时容器，再通过 `docker cp` 把容器里 `/home/cao/...` 的已有内容复制到宿主机 `./.docker/` 对应目录
+4. 复制完成后删除临时容器，最后再执行 `docker compose up`
 
-这样既避免映射整个 `/home/cao`，也避免首次启动时复制整个 provider 目录，从而减少无关文件落盘，同时保证容器内命令始终以非 root 用户运行。
+首次初始化时，如果这些主机目录为空，初始化脚本会把容器里已有目录内容复制到宿主机挂载目录。例如：
+
+- `~/.aws/*`
+- `~/.claude/*`
+- `~/.codex/*`
+- `~/.openclaw/*`
+- `~/.codebuddy/*`
+- `~/.kiro/*`
+- `~/.qoder/*`
+- `~/.copilot/*`
+
+执行初始化的脚本是 `scripts/docker_init_bind_mounts.sh`。这个脚本运行在宿主机侧，只处理 Compose 映射的那些目录；后续若目标路径中已有内容，则不会覆盖。因此初始化本质上是“首次空目录时执行一次”，之后再执行 `docker compose up` 时就不需要再初始化。
+
+这样既避免映射整个 `/home/cao`，也不会因为在镜像内额外保存一份备份目录而增大镜像体积。
+
+初始化脚本依赖本地已经构建好的镜像 `cao-dashboard`。如果镜像不存在，脚本会提示先执行构建。
+
+首次启动请按下面顺序执行：
 
 ```bash
-docker compose up --build
+docker compose build
+bash scripts/docker_init_bind_mounts.sh
+docker compose up
 ```
+
+如果你想单独排查初始化过程，可以单独执行：
+
+```bash
+bash scripts/docker_init_bind_mounts.sh
+```
+
+推荐使用方式：
+
+1. 第一次启动或首次部署时执行：
+
+```bash
+docker compose build
+bash scripts/docker_init_bind_mounts.sh
+docker compose up
+```
+
+这三步会完成镜像构建、宿主机挂载目录初始化和服务启动。
+
+2. 后续日常启动时直接执行：
+
+```bash
+docker compose up
+```
+
+如果宿主机挂载目录已经存在内容，就不需要再次初始化。
+
+3. 如需强制重新初始化某个挂载目录，需要先停止容器并清空对应宿主机目录，再重新启动：
+
+```bash
+docker compose down
+rm -rf ./.docker/aws
+bash scripts/docker_init_bind_mounts.sh
+docker compose up
+```
+
+请只删除需要重建的目录，避免误删其他 Provider 的本地配置。若只想重建 AWS 相关内容，删除 `./.docker/aws` 即可。
 
 可选环境变量：
 
 ```bash
-CAO_CONSOLE_PASSWORD=change-me docker compose up --build
+bash scripts/docker_init_bind_mounts.sh
+CAO_CONSOLE_PASSWORD=change-me docker compose up
 ```
 
 如需匹配宿主机 UID/GID，避免挂载目录权限不一致，可在构建和启动前设置：
 
 ```bash
-CAO_UID=$(id -u) CAO_GID=$(id -g) docker compose up --build
+CAO_UID=$(id -u) CAO_GID=$(id -g) docker compose build
+CAO_UID=$(id -u) CAO_GID=$(id -g) bash scripts/docker_init_bind_mounts.sh
+CAO_UID=$(id -u) CAO_GID=$(id -g) docker compose up
 ```
 
 如需恢复旧行为，在容器启动时再次执行安装流程，可设置：

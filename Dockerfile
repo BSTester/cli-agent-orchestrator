@@ -28,7 +28,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid "${CAO_GID}" cao \
     && useradd --uid "${CAO_UID}" --gid "${CAO_GID}" --create-home --shell /bin/bash cao \
-    && mkdir -p /opt/cao/home-template \
     && chown -R cao:cao /opt/cao /home/cao
 
 WORKDIR /opt/cao
@@ -50,9 +49,7 @@ RUN python -m pip install --no-cache-dir /opt/cao \
 USER cao
 
 RUN CAO_SKIP_TOOL_INSTALL=1 /bin/bash /opt/cao/scripts/install_services.sh \
-    && npm install -g @anthropic-ai/claude-code @openai/codex \
-    && mkdir -p /opt/cao/home-template \
-    && cp -a /home/cao/. /opt/cao/home-template/
+    && npm install -g @anthropic-ai/claude-code @openai/codex
 
 EXPOSE 8000 9889
 

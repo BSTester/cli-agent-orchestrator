@@ -22,13 +22,8 @@ services:
       - "9889:9889"
     volumes:
       - type: bind
-        source: ./.docker/cli-agent-orchestrator
-        target: /home/cao/.aws/cli-agent-orchestrator
-        bind:
-          create_host_path: true
-      - type: bind
-        source: ./.docker/amazonq
-        target: /home/cao/.aws/amazonq
+        source: ./.docker/aws
+        target: /home/cao/.aws
         bind:
           create_host_path: true
       - type: bind
