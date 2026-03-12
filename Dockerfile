@@ -12,34 +12,14 @@ ENV PYTHONUNBUFFERED=1 \
     CAO_SERVER_URL=http://127.0.0.1:9889 \
     CAO_TOOL_SPEC=/opt/cao \
     CAO_RUNTIME_DIR=/home/cao/.local/state/cli-agent-orchestrator/runtime \
-    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
-    PIP_TRUSTED_HOST=mirrors.aliyun.com \
+    PIP_INDEX_URL=https://pypi.org/simple \
+    PIP_TRUSTED_HOST=pypi.org \
     NPM_CONFIG_PREFIX=/home/cao/.local \
-    NPM_CONFIG_REGISTRY=https://registry.npmmirror.com/ \
+    NPM_CONFIG_REGISTRY=https://registry.npmjs.org/ \
     PATH=/home/cao/.local/bin:/home/cao/.cargo/bin:/usr/local/bin:${PATH}
 
 RUN set -e \
     && printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries \
-    && if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-        sed -i \
-            -e 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' \
-            -e 's|http://security.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
-            -e 's|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
-            -e 's|https://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' \
-            -e 's|https://security.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
-            -e 's|https://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
-            /etc/apt/sources.list.d/debian.sources; \
-    fi \
-    && if [ -f /etc/apt/sources.list ]; then \
-        sed -i \
-            -e 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' \
-            -e 's|http://security.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
-            -e 's|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
-            -e 's|https://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' \
-            -e 's|https://security.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
-            -e 's|https://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
-            /etc/apt/sources.list; \
-    fi \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \
