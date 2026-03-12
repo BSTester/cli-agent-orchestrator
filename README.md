@@ -224,16 +224,34 @@ OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
 
 仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。镜像构建时会直接复制仓库内源码、`scripts/` 和本地 `extensions/openclaw-cao-tools/` 到容器，并在构建阶段完成依赖/CLI 安装；容器启动时默认只启动服务，不会重复安装。
 
-容器默认以非 root 用户 `cao` 运行。为避免覆盖镜像内已安装的 CLI，同时保留自定义 Agent 配置，Compose 只会将以下目录映射到主机侧 `./.docker/`：
+容器默认以非 root 用户 `cao` 运行，Compose 会显式以 `${CAO_UID}:${CAO_GID}` 启动服务。为避免覆盖镜像内已安装的 CLI，同时保留必要的 Provider 配置与 Agent 目录，Compose 会将以下路径映射到主机侧 `./.docker/`：
 
-- `cao-agent-context` → `/home/cao/.aws/cli-agent-orchestrator/agent-context`
-- `q-cli-agents` → `/home/cao/.aws/amazonq/cli-agents`
-- `kiro-agents` → `/home/cao/.kiro/agents`
-- `qoder-agents` → `/home/cao/.qoder/agents`
-- `copilot-agents` → `/home/cao/.copilot/agents`
-- `codebuddy-agents` → `/home/cao/.codebuddy/agents`
+- `cli-agent-orchestrator` → `/home/cao/.aws/cli-agent-orchestrator`
+- `amazonq` → `/home/cao/.aws/amazonq`
+- `claude` → `/home/cao/.claude`
+- `codex` → `/home/cao/.codex`
+- `openclaw` → `/home/cao/.openclaw`
+- `kiro` → `/home/cao/.kiro`
+- `qoder` → `/home/cao/.qoder`
+- `copilot` → `/home/cao/.copilot`
+- `codebuddy` → `/home/cao/.codebuddy`
 
-这样只持久化 Agent 配置文件，不再映射整个 `/home/cao`，从而避免把镜像内的 `claude`、`qodercli`、`copilot` 等命令目录遮住。
+首次启动时，如果这些主机目录为空，容器入口脚本只会初始化 Provider 实际需要的配置文件或 Agent 子目录，例如：
+
+- `~/.claude/settings.json`
+- `~/.codex/config.toml`
+- `~/.openclaw/openclaw.json`
+- `~/.codebuddy/settings.json`
+- `~/.aws/cli-agent-orchestrator/agent-context`
+- `~/.aws/amazonq/cli-agents`
+- `~/.kiro/agents`
+- `~/.qoder/agents`
+- `~/.copilot/agents`
+- `~/.codebuddy/agents`
+
+入口脚本不会再复制整个 `/home/cao` 或整个 provider 根目录，因此不会把过大的缓存/历史文件一并初始化到宿主机；后续若目标路径中已有内容，则不会覆盖。
+
+这样既避免映射整个 `/home/cao`，也避免首次启动时复制整个 provider 目录，从而减少无关文件落盘，同时保证容器内命令始终以非 root 用户运行。
 
 ```bash
 docker compose up --build
@@ -245,7 +263,7 @@ docker compose up --build
 CAO_CONSOLE_PASSWORD=change-me docker compose up --build
 ```
 
-如需匹配宿主机 UID/GID，避免挂载目录权限不一致，可在构建前设置：
+如需匹配宿主机 UID/GID，避免挂载目录权限不一致，可在构建和启动前设置：
 
 ```bash
 CAO_UID=$(id -u) CAO_GID=$(id -g) docker compose up --build

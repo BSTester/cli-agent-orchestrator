@@ -1,36 +1,67 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { ErrorBanner, InfoHint, PageShell, PrimaryButton, SectionCard, TextInput } from "@/components/ConsoleTheme";
-import { caoRequest } from "@/lib/cao";
+import { caoRequest, type ProviderGuideSummary } from "@/lib/cao";
+
+const DEFAULT_LOGIN_PATH = "/dashboard";
+const ONBOARDING_PATH = "/settings";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [nextPath, setNextPath] = useState("/dashboard");
 
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [loginContext] = useState(() => {
+    if (typeof window === "undefined") {
+      return {
+        nextPath: DEFAULT_LOGIN_PATH,
+        hasExplicitNextPath: false,
+      };
+    }
+
+    const nextFromQuery = new URLSearchParams(window.location.search).get("next");
+    return {
+      nextPath: nextFromQuery || DEFAULT_LOGIN_PATH,
+      hasExplicitNextPath: Boolean(nextFromQuery),
+    };
+  });
+  const { nextPath, hasExplicitNextPath } = loginContext;
+
+  const resolveNextPath = useCallback(async (preferredPath: string, preferredPathIsExplicit: boolean) => {
+    if (preferredPathIsExplicit) {
+      return preferredPath;
+    }
+
+    const result = await caoRequest<ProviderGuideSummary>("GET", "/console/provider-config/summary");
+    if (result.ok && result.data.should_show_guide) {
+      return ONBOARDING_PATH;
+    }
+
+    return DEFAULT_LOGIN_PATH;
+  }, []);
 
   useEffect(() => {
     let canceled = false;
-    const fromQuery = new URLSearchParams(window.location.search).get("next") || "/dashboard";
-    setNextPath(fromQuery);
 
     async function checkExistingLogin() {
       const result = await caoRequest<{ authenticated: boolean }>("GET", "/auth/me");
       if (!canceled && result.ok && result.data.authenticated) {
-        router.replace(fromQuery);
+        const targetPath = await resolveNextPath(nextPath, hasExplicitNextPath);
+        if (!canceled) {
+          router.replace(targetPath);
+        }
       }
     }
 
-    checkExistingLogin();
+    void checkExistingLogin();
     return () => {
       canceled = true;
     };
-  }, [router]);
+  }, [hasExplicitNextPath, nextPath, resolveNextPath, router]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -47,7 +78,8 @@ export default function LoginPage() {
       return;
     }
 
-    router.replace(nextPath);
+    const targetPath = await resolveNextPath(nextPath, hasExplicitNextPath);
+    router.replace(targetPath);
   }
 
   return (

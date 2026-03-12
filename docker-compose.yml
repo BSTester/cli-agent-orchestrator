@@ -6,6 +6,7 @@ services:
       args:
         CAO_UID: ${CAO_UID:-1000}
         CAO_GID: ${CAO_GID:-1000}
+    user: "${CAO_UID:-1000}:${CAO_GID:-1000}"
     environment:
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 9889
@@ -19,12 +20,53 @@ services:
       - "8000:8000"
       - "9889:9889"
     volumes:
-      - ./.docker/cli-agent-orchestrator:/home/cao/.aws/cli-agent-orchestrator
-      - ./.docker/claude:/home/cao/.claude
-      - ./.docker/codex:/home/cao/.codex
-      - ./.docker/openclaw:/home/cao/.openclaw
-      - ./.docker/kiro:/home/cao/.kiro
-      - ./.docker/qoder:/home/cao/.qoder
-      - ./.docker/copilot:/home/cao/.copilot
-      - ./.docker/codebuddy:/home/cao/.codebuddy
-      - ./.docker/workspace:/home/cao/workspace
+      - type: bind
+        source: ./.docker/cli-agent-orchestrator
+        target: /home/cao/.aws/cli-agent-orchestrator
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./.docker/amazonq
+        target: /home/cao/.aws/amazonq
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./.docker/claude
+        target: /home/cao/.claude
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./.docker/codex
+        target: /home/cao/.codex
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./.docker/openclaw
+        target: /home/cao/.openclaw
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./.docker/kiro
+        target: /home/cao/.kiro
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./.docker/qoder
+        target: /home/cao/.qoder
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./.docker/copilot
+        target: /home/cao/.copilot
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./.docker/codebuddy
+        target: /home/cao/.codebuddy
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./.docker/workspace
+        target: /home/cao/workspace
+        bind:
+          create_host_path: true

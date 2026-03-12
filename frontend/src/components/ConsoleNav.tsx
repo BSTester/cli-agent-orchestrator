@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
-import ProviderConfigGuide from "@/components/ProviderConfigGuide";
 import { SecondaryButton } from "@/components/ConsoleTheme";
 import { caoRequest } from "@/lib/cao";
 
@@ -19,10 +18,6 @@ const navItems = [
 export default function ConsoleNav() {
   const pathname = usePathname();
   const router = useRouter();
-
-  const normalizedPathname = pathname.endsWith("/") && pathname !== "/"
-    ? pathname.slice(0, -1)
-    : pathname;
 
   async function handleLogout() {
     await caoRequest("POST", "/auth/logout");
@@ -48,7 +43,7 @@ export default function ConsoleNav() {
         <div style={{ fontWeight: 700, color: "var(--text-bright)" }}>一人无限智能</div>
         <nav style={{ display: "flex", gap: 16 }}>
           {navItems.map((item) => {
-            const active = normalizedPathname === item.href;
+            const active = pathname === item.href || (pathname === `${item.href}/` && item.href !== "/");
             return (
               <Link
                 key={item.href}
@@ -72,14 +67,6 @@ export default function ConsoleNav() {
           退出登录
         </SecondaryButton>
       </header>
-
-      {normalizedPathname !== "/settings" ? (
-        <ProviderConfigGuide
-          variant="modal"
-          defaultOpen={false}
-          autoOpen
-        />
-      ) : null}
     </>
   );
 }
