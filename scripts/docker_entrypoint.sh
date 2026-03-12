@@ -4,21 +4,22 @@ set -euo pipefail
 HOME_TEMPLATE_DIR="/opt/cao/home-template"
 RUNTIME_DIR="${CAO_RUNTIME_DIR:-${HOME:-/home/cao}/.local/state/cli-agent-orchestrator/runtime}"
 RUNTIME_LOG_DIR="$RUNTIME_DIR/logs"
-PERSISTENT_HOME_DIRS=(
-	".aws/cli-agent-orchestrator"
-	".aws/amazonq"
-	".claude"
-	".codex"
-	".openclaw"
-	".kiro"
-	".qoder"
-	".copilot"
-	".codebuddy"
+PERSISTENT_PROVIDER_PATHS=(
+	".aws/cli-agent-orchestrator/agent-context"
+	".aws/amazonq/cli-agents"
+	".claude/settings.json"
+	".codex/config.toml"
+	".openclaw/openclaw.json"
+	".kiro/agents"
+	".qoder/agents"
+	".copilot/agents"
+	".codebuddy/agents"
+	".codebuddy/settings.json"
 )
 
-seed_persistent_home_dirs() {
+seed_persistent_provider_paths() {
 	if [[ -z "${HOME:-}" ]]; then
-		echo "[WARN] HOME 未设置，跳过 home 配置目录初始化。"
+		echo "[WARN] HOME 未设置，跳过 provider 配置初始化。"
 		return
 	fi
 
@@ -29,22 +30,33 @@ seed_persistent_home_dirs() {
 	fi
 
 	local relative_path
-	for relative_path in "${PERSISTENT_HOME_DIRS[@]}"; do
+	for relative_path in "${PERSISTENT_PROVIDER_PATHS[@]}"; do
 		local src="$HOME_TEMPLATE_DIR/$relative_path"
 		local dest="$HOME/$relative_path"
 
-		if [[ ! -d "$src" ]]; then
+		if [[ ! -e "$src" && ! -L "$src" ]]; then
 			continue
 		fi
 
-		mkdir -p "$dest"
+		if [[ -d "$src" ]]; then
+			mkdir -p "$dest"
 
-		if [[ -n "$(find "$dest" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+			if [[ -n "$(find "$dest" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+				continue
+			fi
+
+			echo "[INFO] 初始化 provider 配置目录：$dest"
+			cp -a "$src/." "$dest/"
 			continue
 		fi
 
-		echo "[INFO] 初始化 home 配置目录：$dest"
-		cp -a "$src/." "$dest/"
+		if [[ -e "$dest" || -L "$dest" ]]; then
+			continue
+		fi
+
+		mkdir -p "$(dirname "$dest")"
+		echo "[INFO] 初始化 provider 配置文件：$dest"
+		cp -a "$src" "$dest"
 	done
 }
 
@@ -75,7 +87,7 @@ repair_cli_from_template() {
 	hash -r 2>/dev/null || true
 }
 
-seed_persistent_home_dirs
+seed_persistent_provider_paths
 repair_cli_from_template "claude" ".local/bin/claude" ".local/lib/node_modules/@anthropic-ai"
 repair_cli_from_template "codex" ".local/bin/codex" ".local/lib/node_modules/@openai"
 repair_cli_from_template "copilot" ".local/bin/copilot" ".local/lib/node_modules/@github"
