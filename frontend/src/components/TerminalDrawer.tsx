@@ -1,12 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 import { SecondaryButton } from "@/components/ConsoleTheme";
 import { caoRequest } from "@/lib/cao";
+import {
+  detectAuthLinksFromTerminalOutput,
+  mergeTerminalOutput,
+  type DetectedAuthLink,
+} from "@/lib/authLinkDetection";
 
 type TerminalDrawerProps = {
   terminalId: string;
@@ -15,13 +20,26 @@ type TerminalDrawerProps = {
   onClose: () => void;
   /** When false the primary button shows "最小化" to hide the drawer without destroying the session */
   canClose?: boolean;
+  authLinkAssist?: boolean;
 };
 
-export default function TerminalDrawer({ terminalId, title, subtitle, onClose, canClose = true }: TerminalDrawerProps) {
+export default function TerminalDrawer({
+  terminalId,
+  title,
+  subtitle,
+  onClose,
+  canClose = true,
+  authLinkAssist = false,
+}: TerminalDrawerProps) {
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const outputBufferRef = useRef("");
+  const attemptedAutoOpenUrlsRef = useRef<Set<string>>(new Set());
+  const [authLinks, setAuthLinks] = useState<DetectedAuthLink[]>([]);
+  const [authAssistNotice, setAuthAssistNotice] = useState("");
+  const [copyLabels, setCopyLabels] = useState<Record<string, string>>({});
 
   const disconnectTerminal = useCallback(() => {
     if (wsRef.current) {
@@ -34,6 +52,55 @@ export default function TerminalDrawer({ terminalId, title, subtitle, onClose, c
     }
     fitAddonRef.current = null;
   }, []);
+
+  useEffect(() => {
+    outputBufferRef.current = "";
+    attemptedAutoOpenUrlsRef.current = new Set();
+    setAuthLinks([]);
+    setAuthAssistNotice("");
+    setCopyLabels({});
+  }, [terminalId, authLinkAssist]);
+
+  async function copyAuthLink(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyLabels((previous) => ({ ...previous, [url]: "已复制" }));
+    } catch {
+      setCopyLabels((previous) => ({ ...previous, [url]: "复制失败" }));
+    }
+    window.setTimeout(() => {
+      setCopyLabels((previous) => ({ ...previous, [url]: "复制" }));
+    }, 1200);
+  }
+
+  const openAuthLink = useCallback((url: string) => {
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (opened) {
+      setAuthAssistNotice("已在新窗口打开认证链接；如未完成登录，可继续使用下方候选链接。");
+      return true;
+    }
+    setAuthAssistNotice("浏览器拦截了自动打开，请点击下方候选链接或复制后在浏览器中继续。");
+    return false;
+  }, []);
+
+  useEffect(() => {
+    if (!authLinkAssist || authLinks.length === 0) {
+      return;
+    }
+
+    const highConfidenceLinks = authLinks.filter((item) => item.confidence === "high");
+    if (highConfidenceLinks.length !== 1) {
+      setAuthAssistNotice("已检测到候选认证链接，请确认后点击继续登录。");
+      return;
+    }
+
+    const link = highConfidenceLinks[0];
+    if (attemptedAutoOpenUrlsRef.current.has(link.url)) {
+      return;
+    }
+    attemptedAutoOpenUrlsRef.current.add(link.url);
+    openAuthLink(link.url);
+  }, [authLinkAssist, authLinks, openAuthLink]);
 
   useEffect(() => {
     if (!terminalId || !terminalContainerRef.current) {
@@ -225,6 +292,10 @@ export default function TerminalDrawer({ terminalId, title, subtitle, onClose, c
       ws.onmessage = (event) => {
         if (typeof event.data === "string") {
           term.write(event.data);
+          if (authLinkAssist) {
+            outputBufferRef.current = mergeTerminalOutput(outputBufferRef.current, event.data);
+            setAuthLinks(detectAuthLinksFromTerminalOutput(outputBufferRef.current).slice(0, 6));
+          }
         }
       };
 
@@ -294,7 +365,7 @@ export default function TerminalDrawer({ terminalId, title, subtitle, onClose, c
       term?.__caoCleanup?.();
       disconnectTerminal();
     };
-  }, [disconnectTerminal, terminalId]);
+  }, [authLinkAssist, disconnectTerminal, terminalId]);
 
   return (
     <div
@@ -389,8 +460,104 @@ export default function TerminalDrawer({ terminalId, title, subtitle, onClose, c
             minHeight: 0,
             background: "var(--surface)",
             padding: "10px 14px 14px",
+            gap: 10,
           }}
         >
+          {authLinkAssist && authLinks.length > 0 ? (
+            <section
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                background: "var(--surface2)",
+                padding: "10px 12px",
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              <div style={{ display: "grid", gap: 4 }}>
+                <div style={{ color: "var(--text-bright)", fontWeight: 700, fontSize: 13 }}>
+                  已检测到登录相关链接
+                </div>
+                <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+                  {authAssistNotice ||
+                    "仅在高置信度且唯一的认证链接场景自动尝试新窗口打开；其他链接请人工确认后点击。"}
+                </div>
+              </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {authLinks.map((item) => {
+                  const isHigh = item.confidence === "high";
+                  const label =
+                    item.confidence === "high"
+                      ? "高置信度认证链接"
+                      : item.confidence === "possible"
+                      ? "候选认证链接"
+                      : "待人工确认链接";
+                  return (
+                    <div
+                      key={item.url}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 8,
+                        padding: "8px 10px",
+                        display: "grid",
+                        gap: 6,
+                        background: "var(--surface)",
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: isHigh ? "var(--success)" : "#d29922",
+                          }}
+                        >
+                          {label}
+                        </span>
+                        <span style={{ color: "var(--text-dim)", fontSize: 12 }}>{item.reason}</span>
+                      </div>
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          color: "var(--accent)",
+                          fontSize: 12,
+                          wordBreak: "break-all",
+                          textDecoration: "underline",
+                        }}
+                      >
+                        {item.url}
+                      </a>
+                      <div style={{ color: "var(--text-dim)", fontSize: 12, wordBreak: "break-word" }}>
+                        上下文：{item.context}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <SecondaryButton
+                          type="button"
+                          onClick={() => {
+                            openAuthLink(item.url);
+                          }}
+                          style={{ padding: "6px 10px" }}
+                        >
+                          打开链接
+                        </SecondaryButton>
+                        <SecondaryButton
+                          type="button"
+                          onClick={() => {
+                            void copyAuthLink(item.url);
+                          }}
+                          style={{ padding: "6px 10px" }}
+                        >
+                          {copyLabels[item.url] || "复制"}
+                        </SecondaryButton>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
           <section
             style={{
               flex: 1,
