@@ -235,6 +235,8 @@ OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
 - `copilot` → `/home/cao/.copilot`
 - `codebuddy` → `/home/cao/.codebuddy`
 
+其中 CAO 的 SQLite 数据库也会随 `.aws` 一并持久化，容器内路径为 `/home/cao/.aws/cli-agent-orchestrator/db/cli-agent-orchestrator.db`，宿主机对应路径为 `./.docker/aws/cli-agent-orchestrator/db/cli-agent-orchestrator.db`。
+
 需要注意：这里不能直接“把容器内 `/home/cao/...` 已经存在的文件映射到宿主机”。因为 bind mount 一旦生效，容器里对应目标路径会被宿主机目录遮蔽，原来镜像中该路径下的文件将无法直接透出到宿主机。
 
 因此当前实现采用的是“宿主机侧复制初始化”而不是“镜像内备份”：

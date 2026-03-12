@@ -1,5 +1,6 @@
 """Tests for the control panel FastAPI interface layer."""
 
+import json
 import sqlite3
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -496,28 +497,127 @@ def test_read_openclaw_saved_settings_maps_existing_config(tmp_path: Path) -> No
             }
 
 
-        def test_save_provider_config_file_openclaw_restarts_gateway(tmp_path: Path) -> None:
-            config_path = tmp_path / "openclaw.json"
+def test_read_codex_saved_settings_reads_auth_json_env_api_key(tmp_path: Path) -> None:
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    config_path.write_text(
+        """
+model = "gpt-5-codex"
+model_provider = "api"
 
-            with (
-                patch("cli_agent_orchestrator.control_panel.main._provider_settings_path", return_value=config_path),
-                patch(
-                    "cli_agent_orchestrator.control_panel.main._restart_openclaw_gateway",
-                    return_value={"command": "openclaw gateway restart", "stdout": "ok", "stderr": ""},
-                ),
-            ):
-                payload = control_panel_main._save_provider_config_file(
-                    "openclaw",
-                    '{"channels":{"feishu":{"enabled":true}}}',
-                )
-
-            assert payload == {
-                "provider_id": "openclaw",
-                "path": str(config_path),
-                "content": '{\n  "channels": {\n    "feishu": {\n      "enabled": true\n    }\n  }\n}\n',
-                "gateway": {"command": "openclaw gateway restart", "stdout": "ok", "stderr": ""},
+[model_providers.api]
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+        """.strip(),
+        encoding="utf-8",
+    )
+    auth_path = codex_dir / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "auth_mode": "apikey",
+                "ENV": {
+                    "OPENAI_API_KEY": "env-secret",
+                },
             }
-            assert config_path.read_text(encoding="utf-8") == payload["content"]
+        ),
+        encoding="utf-8",
+    )
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._provider_settings_path", return_value=config_path),
+        patch("cli_agent_orchestrator.control_panel.main.Path.home", return_value=tmp_path),
+        patch.dict("cli_agent_orchestrator.control_panel.main.os.environ", {}, clear=True),
+    ):
+        payload = control_panel_main._read_codex_saved_settings()
+
+    assert payload == {
+        "mode": "api",
+        "api_base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-5-codex",
+        "api_key": "env-secret",
+    }
+
+
+def test_write_claude_settings_keeps_single_api_key(tmp_path: Path) -> None:
+    with patch("cli_agent_orchestrator.control_panel.main.Path.home", return_value=tmp_path):
+        settings_path = control_panel_main._write_claude_settings(
+            "https://api.anthropic.test",
+            "secret-key",
+            "claude-sonnet-4-6",
+        )
+
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    env_payload = payload["env"]
+    assert env_payload["ANTHROPIC_BASE_URL"] == "https://api.anthropic.test"
+    assert env_payload["ANTHROPIC_API_KEY"] == "secret-key"
+    assert env_payload["ANTHROPIC_MODEL"] == "claude-sonnet-4-6"
+    assert "ANTHROPIC_AUTH_TOKEN" not in env_payload
+    assert "ANTHROPIC_API_TOKEN" not in env_payload
+
+
+def test_write_codex_config_uses_openai_api_key_env(tmp_path: Path) -> None:
+    with patch("cli_agent_orchestrator.control_panel.main.Path.home", return_value=tmp_path):
+        config_path = control_panel_main._write_codex_config("gpt-5-codex", "https://api.openai.com/v1")
+
+    config_content = config_path.read_text(encoding="utf-8")
+    assert 'api_key_env = "OPENAI_API_KEY"' in config_content
+    assert 'base_url = "https://api.openai.com/v1"' in config_content
+    assert 'model = "gpt-5-codex"' in config_content
+
+
+def test_write_codex_auth_writes_openai_api_key_and_env(tmp_path: Path) -> None:
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    auth_path = codex_dir / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "API_KEY": "stale-key",
+                "OPENROUTER_API_KEY": "keep-me",
+                "ENV": {
+                    "API_KEY": "stale-key",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("cli_agent_orchestrator.control_panel.main.Path.home", return_value=tmp_path):
+        saved_path = control_panel_main._write_codex_auth("new-secret")
+
+    payload = json.loads(saved_path.read_text(encoding="utf-8"))
+    assert payload["auth_mode"] == "apikey"
+    assert payload["OPENAI_API_KEY"] == "new-secret"
+    assert payload["OPENROUTER_API_KEY"] == "keep-me"
+    assert "API_KEY" not in payload
+    assert payload["ENV"]["OPENAI_API_KEY"] == "new-secret"
+    assert "API_KEY" not in payload["ENV"]
+
+
+def test_save_provider_config_file_openclaw_restarts_gateway(tmp_path: Path) -> None:
+    config_path = tmp_path / "openclaw.json"
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main._provider_settings_path", return_value=config_path),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._restart_openclaw_gateway",
+            return_value={"command": "openclaw gateway restart", "stdout": "ok", "stderr": ""},
+        ),
+    ):
+        payload = control_panel_main._save_provider_config_file(
+            "openclaw",
+            '{"channels":{"feishu":{"enabled":true}}}',
+        )
+
+    assert payload == {
+        "provider_id": "openclaw",
+        "path": str(config_path),
+        "content": '{\n  "channels": {\n    "feishu": {\n      "enabled": true\n    }\n  }\n}\n',
+        "gateway": {"command": "openclaw gateway restart", "stdout": "ok", "stderr": ""},
+    }
+    assert config_path.read_text(encoding="utf-8") == payload["content"]
 
 
 def test_console_provider_config_onboarding(client: TestClient) -> None:
@@ -602,6 +702,72 @@ def test_console_provider_config_apply_claude_api(client: TestClient, tmp_path: 
             "api_base_url": "https://example.invalid/v1",
             "api_key": "secret-key",
             "default_model": "claude-sonnet-4-6",
+            "compatibility": None,
+        },
+    )
+    mock_set_onboarding.assert_called_once_with(completed=True)
+
+
+def test_console_provider_config_apply_codex_api(client: TestClient, tmp_path: Path) -> None:
+    login(client)
+
+    config_path = tmp_path / "config.toml"
+    auth_path = tmp_path / "auth.json"
+    runtime_settings = {
+        "mode": "api",
+        "api_base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-5-codex",
+        "updated_at": "2025-01-01T00:00:00+00:00",
+    }
+    onboarding = {
+        "dismissed": True,
+        "dismissed_at": "2025-01-01T00:00:00+00:00",
+        "completed_at": "2025-01-01T00:00:00+00:00",
+    }
+
+    with (
+        patch(
+            "cli_agent_orchestrator.control_panel.main._write_codex_config",
+            return_value=config_path,
+        ) as mock_write_config,
+        patch(
+            "cli_agent_orchestrator.control_panel.main._write_codex_auth",
+            return_value=auth_path,
+        ) as mock_write_auth,
+        patch(
+            "cli_agent_orchestrator.control_panel.main.update_provider_runtime_settings",
+            return_value=runtime_settings,
+        ) as mock_update_runtime,
+        patch(
+            "cli_agent_orchestrator.control_panel.main.set_onboarding_state",
+            return_value=onboarding,
+        ) as mock_set_onboarding,
+    ):
+        response = client.post(
+            "/console/provider-config/apply",
+            json={
+                "provider_id": "codex",
+                "mode": "api",
+                "api_base_url": "https://api.openai.com/v1",
+                "api_key": "secret-key",
+                "default_model": "gpt-5-codex",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["provider_id"] == "codex"
+    assert payload["saved_path"] == str(config_path)
+    mock_write_config.assert_called_once_with("gpt-5-codex", "https://api.openai.com/v1")
+    mock_write_auth.assert_called_once_with("secret-key")
+    mock_update_runtime.assert_called_once_with(
+        "codex",
+        {
+            "mode": "api",
+            "api_base_url": "https://api.openai.com/v1",
+            "api_key": "secret-key",
+            "default_model": "gpt-5-codex",
             "compatibility": None,
         },
     )

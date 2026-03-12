@@ -1959,11 +1959,28 @@ def _write_codex_config(default_model: str, api_base_url: str) -> Path:
         {
             "name": _toml_string("IDE API"),
             "base_url": _toml_string(api_base_url),
-            "api_key_env": _toml_string("API_KEY"),
+            "api_key_env": _toml_string("OPENAI_API_KEY"),
         },
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _write_codex_auth(api_key: str) -> Path:
+    path = Path.home() / ".codex" / "auth.json"
+    payload = _read_json_file(path)
+    payload["auth_mode"] = "apikey"
+    payload["OPENAI_API_KEY"] = api_key
+    payload.pop("API_KEY", None)
+
+    env_payload = payload.get("ENV")
+    env_data = dict(env_payload) if isinstance(env_payload, dict) else {}
+    env_data["OPENAI_API_KEY"] = api_key
+    env_data.pop("API_KEY", None)
+    payload["ENV"] = env_data
+
+    _write_json_file(path, payload)
     return path
 
 
@@ -1973,8 +1990,9 @@ def _write_claude_settings(api_base_url: str, api_key: str, default_model: str) 
     env_payload = payload.get("env")
     env_data = dict(env_payload) if isinstance(env_payload, dict) else {}
     env_data["ANTHROPIC_BASE_URL"] = api_base_url
-    env_data["ANTHROPIC_AUTH_TOKEN"] = api_key
     env_data["ANTHROPIC_API_KEY"] = api_key
+    env_data.pop("ANTHROPIC_AUTH_TOKEN", None)
+    env_data.pop("ANTHROPIC_API_TOKEN", None)
     env_data["ANTHROPIC_MODEL"] = default_model
     payload["env"] = env_data
     _write_json_file(path, payload)
@@ -2128,7 +2146,10 @@ def _read_claude_saved_settings() -> Dict[str, Any]:
 
     api_base_url = str(env_data.get("ANTHROPIC_BASE_URL") or "").strip() or None
     api_key = str(
-        env_data.get("ANTHROPIC_API_KEY") or env_data.get("ANTHROPIC_AUTH_TOKEN") or ""
+        env_data.get("ANTHROPIC_API_KEY")
+        or env_data.get("ANTHROPIC_AUTH_TOKEN")
+        or env_data.get("ANTHROPIC_API_TOKEN")
+        or ""
     ).strip() or None
     default_model = str(env_data.get("ANTHROPIC_MODEL") or "").strip() or None
 
@@ -2167,15 +2188,17 @@ def _read_codex_saved_settings() -> Dict[str, Any]:
     auth_payload = _read_json_file(auth_path)
     if isinstance(auth_payload, dict):
         auth_mode = str(auth_payload.get("auth_mode") or "").strip().lower()
+        auth_env_payload = auth_payload.get("ENV")
+        auth_env_data = dict(auth_env_payload) if isinstance(auth_env_payload, dict) else {}
         if auth_mode == "apikey":
             settings["mode"] = "api"
             if api_key_env and not settings.get("api_key"):
-                auth_key = str(auth_payload.get(api_key_env) or "").strip()
+                auth_key = str(auth_payload.get(api_key_env) or auth_env_data.get(api_key_env) or "").strip()
                 if auth_key:
                     settings["api_key"] = auth_key
             if not settings.get("api_key"):
                 for candidate in ["API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "ZHIPU_API_KEY"]:
-                    auth_key = str(auth_payload.get(candidate) or "").strip()
+                    auth_key = str(auth_payload.get(candidate) or auth_env_data.get(candidate) or "").strip()
                     if auth_key:
                         settings["api_key"] = auth_key
                         break
@@ -3176,7 +3199,7 @@ async def console_provider_config_apply(payload: ProviderConfigApplyRequest) -> 
     if payload.mode == "api":
         if not api_base_url:
             raise HTTPException(status_code=400, detail="api_base_url is required in API mode")
-        if provider_id in {"claude_code", "openclaw"} and not api_key:
+        if provider_id in {"claude_code", "openclaw", "codex"} and not api_key:
             raise HTTPException(status_code=400, detail="api_key is required in API mode")
         if not default_model:
             raise HTTPException(status_code=400, detail="default_model is required in API mode")
@@ -3191,6 +3214,7 @@ async def console_provider_config_apply(payload: ProviderConfigApplyRequest) -> 
             )
         elif provider_id == "codex" and payload.mode == "api":
             saved_path = str(await asyncio.to_thread(_write_codex_config, default_model, api_base_url))
+            await asyncio.to_thread(_write_codex_auth, api_key)
         elif provider_id == "openclaw" and payload.mode == "api":
             compatibility = payload.compatibility or "openai"
             if (payload.api_key or "").strip():

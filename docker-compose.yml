@@ -21,6 +21,8 @@ services:
       - "8000:8000"
       - "9889:9889"
     volumes:
+      # Persist CAO data under ~/.aws, including the SQLite database at
+      # /home/cao/.aws/cli-agent-orchestrator/db/cli-agent-orchestrator.db.
       - type: bind
         source: ./.docker/aws
         target: /home/cao/.aws
