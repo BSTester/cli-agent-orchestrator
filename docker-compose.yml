@@ -1,5 +1,6 @@
 services:
   cao:
+    image: cao-dashboard
     build:
       context: .
       dockerfile: Dockerfile
