@@ -22,6 +22,11 @@ require_cmd() {
   command -v "$cmd" >/dev/null 2>&1 || die "缺少命令: $cmd"
 }
 
+has_cmd() {
+  local cmd="$1"
+  command -v "$cmd" >/dev/null 2>&1
+}
+
 is_running_from_pid() {
   local pid_file="$1"
   if [[ ! -f "$pid_file" ]]; then
@@ -77,6 +82,36 @@ wait_for_health() {
   die "$name 健康检查超时，请查看日志。"
 }
 
+openclaw_gateway_running() {
+  local status_output="$1"
+  [[ -n "$status_output" ]] || return 1
+  grep -Eiq 'Runtime:[[:space:]]*running\b|state[[:space:]]+active\b|sub[[:space:]]+running\b' <<<"$status_output"
+}
+
+ensure_openclaw_gateway() {
+  local gateway_enabled="${OPENCLAW_GATEWAY_ENABLE:-1}"
+  if [[ "$gateway_enabled" != "1" ]]; then
+    info "已跳过 OpenClaw gateway 启动（OPENCLAW_GATEWAY_ENABLE=$gateway_enabled）。"
+    return
+  fi
+
+  require_cmd openclaw
+
+  info "检查 OpenClaw gateway 状态..."
+
+  local status_output
+  status_output="$(openclaw gateway status 2>&1 || true)"
+
+  if openclaw_gateway_running "$status_output"; then
+    info "OpenClaw gateway 已在运行，执行重启。"
+    openclaw gateway restart >/dev/null 2>&1 || die "OpenClaw gateway 重启失败"
+    return
+  fi
+
+  info "OpenClaw gateway 未运行，执行启动。"
+  openclaw gateway start >/dev/null 2>&1 || die "OpenClaw gateway 启动失败"
+}
+
 main() {
   local root_dir
   if [[ -n "${BASH_SOURCE[0]-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
@@ -99,6 +134,8 @@ main() {
   require_cmd curl
   require_cmd cao-server
   require_cmd cao-control-panel
+
+  ensure_openclaw_gateway
 
   start_service \
     "cao-server" \

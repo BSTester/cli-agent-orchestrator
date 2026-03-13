@@ -440,11 +440,11 @@ def test_detect_claude_status_missing_settings_file_treated_as_unconfigured(tmp_
 def test_detect_codebuddy_status_timeout_treated_as_unconfigured() -> None:
         with (
             patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/codebuddy"),
-            patch("cli_agent_orchestrator.control_panel.main.get_provider_runtime_settings", return_value={}),
+            patch("cli_agent_orchestrator.control_panel.main._detect_codebuddy_auth_cache", return_value=False),
             patch(
                 "cli_agent_orchestrator.control_panel.main._run_provider_command",
                 side_effect=subprocess.TimeoutExpired(
-                    cmd=["codebuddy", "config", "get", "model"],
+                    cmd=["codebuddy", "-p", "/hi", "--dangerously-skip-permissions"],
                     timeout=25,
                 ),
             ),
@@ -457,22 +457,55 @@ def test_detect_codebuddy_status_timeout_treated_as_unconfigured() -> None:
         assert payload["details"] == ""
 
 
-def test_detect_codebuddy_status_uses_cli_probe_even_when_settings_file_missing(tmp_path: Path) -> None:
+def test_detect_codebuddy_status_does_not_treat_model_as_login(tmp_path: Path) -> None:
         missing_path = tmp_path / "settings.json"
-        process = MagicMock(returncode=0, stdout="glm-5.0\n", stderr="")
+        status_process = MagicMock(
+            returncode=1,
+            stdout="Authentication required. Please use /login command to sign in to your account\n",
+            stderr="",
+        )
+        model_process = MagicMock(returncode=0, stdout="glm-5.0\n", stderr="")
 
         with (
             patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/codebuddy"),
             patch("cli_agent_orchestrator.control_panel.main._provider_settings_path", return_value=missing_path),
-            patch("cli_agent_orchestrator.control_panel.main.get_provider_runtime_settings", return_value={}),
-            patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+            patch("cli_agent_orchestrator.control_panel.main._detect_codebuddy_auth_cache", return_value=False),
+            patch(
+                "cli_agent_orchestrator.control_panel.main._run_provider_command",
+                side_effect=[status_process, model_process],
+            ),
+        ):
+            payload = control_panel_main._detect_codebuddy_status()
+
+        assert payload["installed"] is True
+        assert payload["configured"] is False
+        assert payload["detected_mode"] is None
+        assert payload["details"] == (
+            "model=glm-5.0 · Authentication required. Please use /login command to sign in to your account"
+        )
+        assert payload["settings_path"] == str(missing_path)
+
+
+def test_detect_codebuddy_status_recognizes_status_output_as_logged_in(tmp_path: Path) -> None:
+        missing_path = tmp_path / "settings.json"
+        status_process = MagicMock(returncode=0, stdout="Signed in as forpeng@foxmail.co\n", stderr="")
+        model_process = MagicMock(returncode=0, stdout="glm-5.0\n", stderr="")
+
+        with (
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/codebuddy"),
+            patch("cli_agent_orchestrator.control_panel.main._provider_settings_path", return_value=missing_path),
+            patch("cli_agent_orchestrator.control_panel.main._detect_codebuddy_auth_cache", return_value=True),
+            patch(
+                "cli_agent_orchestrator.control_panel.main._run_provider_command",
+                side_effect=[status_process, model_process],
+            ),
         ):
             payload = control_panel_main._detect_codebuddy_status()
 
         assert payload["installed"] is True
         assert payload["configured"] is True
         assert payload["detected_mode"] == "account"
-        assert payload["details"] == "model=glm-5.0"
+        assert payload["details"] == "model=glm-5.0 · Signed in as forpeng@foxmail.co · auth cache present"
         assert payload["settings_path"] == str(missing_path)
 
 
@@ -482,9 +515,12 @@ def test_detect_qoder_status_recognizes_account_output() -> None:
             stdout="Version: 0.1.29\nAccount: alice@example.com\n",
             stderr="",
         )
+        auth_path = Path("/tmp/qoder-auth-id")
 
         with (
             patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/qodercli"),
+            patch("cli_agent_orchestrator.control_panel.main._qoder_auth_path", return_value=auth_path),
+            patch("cli_agent_orchestrator.control_panel.main._file_has_non_empty_text", return_value=False),
             patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
         ):
             payload = control_panel_main._detect_qoder_status()
@@ -493,6 +529,66 @@ def test_detect_qoder_status_recognizes_account_output() -> None:
         assert payload["configured"] is True
         assert payload["detected_mode"] == "account"
         assert "Account: alice@example.com" in payload["details"]
+        assert payload["settings_path"] == str(auth_path)
+
+
+def test_detect_qoder_status_recognizes_username_email_output() -> None:
+        process = MagicMock(
+            returncode=0,
+            stdout="Version: 0.1.29\nUsername: 贝克街的捉虫师\nEmail: forpeng@foxmail.co\n",
+            stderr="",
+        )
+        auth_path = Path("/tmp/qoder-auth-id")
+
+        with (
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/qodercli"),
+            patch("cli_agent_orchestrator.control_panel.main._qoder_auth_path", return_value=auth_path),
+            patch("cli_agent_orchestrator.control_panel.main._file_has_non_empty_text", return_value=False),
+            patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+        ):
+            payload = control_panel_main._detect_qoder_status()
+
+        assert payload["installed"] is True
+        assert payload["configured"] is True
+        assert payload["detected_mode"] == "account"
+        assert "Username: 贝克街的捉虫师" in payload["details"]
+        assert "Email: forpeng@foxmail.co" in payload["details"]
+
+
+def test_detect_qoder_status_falls_back_to_auth_file_marker() -> None:
+        process = MagicMock(returncode=0, stdout="Version: 0.1.29\nAccount: Not logged in\n", stderr="")
+        auth_path = Path("/tmp/qoder-auth-id")
+
+        with (
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/qodercli"),
+            patch("cli_agent_orchestrator.control_panel.main._qoder_auth_path", return_value=auth_path),
+            patch("cli_agent_orchestrator.control_panel.main._file_has_non_empty_text", return_value=True),
+            patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+        ):
+            payload = control_panel_main._detect_qoder_status()
+
+        assert payload["installed"] is True
+        assert payload["configured"] is False
+        assert payload["detected_mode"] is None
+        assert payload["settings_path"] == str(auth_path)
+
+
+def test_detect_qoder_status_uses_auth_file_only_when_status_probe_unavailable() -> None:
+        process = MagicMock(returncode=1, stdout="", stderr="")
+        auth_path = Path("/tmp/qoder-auth-id")
+
+        with (
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/qodercli"),
+            patch("cli_agent_orchestrator.control_panel.main._qoder_auth_path", return_value=auth_path),
+            patch("cli_agent_orchestrator.control_panel.main._file_has_non_empty_text", return_value=True),
+            patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+        ):
+            payload = control_panel_main._detect_qoder_status()
+
+        assert payload["installed"] is True
+        assert payload["configured"] is True
+        assert payload["detected_mode"] == "account"
+        assert payload["details"] == "auth id present"
 
 
 def test_console_provider_config_summary_treats_codebuddy_timeout_as_unconfigured(
@@ -520,7 +616,7 @@ def test_console_provider_config_summary_treats_codebuddy_timeout_as_unconfigure
                 ],
             ),
             patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/codebuddy"),
-            patch("cli_agent_orchestrator.control_panel.main.get_provider_runtime_settings", return_value={}),
+            patch("cli_agent_orchestrator.control_panel.main._detect_codebuddy_auth_cache", return_value=False),
             patch(
                 "cli_agent_orchestrator.control_panel.main.load_provider_runtime_config",
                 return_value={
@@ -536,7 +632,7 @@ def test_console_provider_config_summary_treats_codebuddy_timeout_as_unconfigure
             patch(
                 "cli_agent_orchestrator.control_panel.main._run_provider_command",
                 side_effect=subprocess.TimeoutExpired(
-                    cmd=["codebuddy", "config", "get", "model"],
+                    cmd=["codebuddy", "-p", "/hi", "--dangerously-skip-permissions"],
                     timeout=25,
                 ),
             ),

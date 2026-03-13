@@ -1867,6 +1867,14 @@ def _provider_settings_path(provider_id: str) -> Optional[Path]:
     return mapping.get(provider_id)
 
 
+def _qoder_auth_path() -> Path:
+    return Path.home() / ".qoder" / ".auth" / "id"
+
+
+def _codebuddy_auth_dir() -> Path:
+    return Path.home() / ".codebuddy" / "local_storage"
+
+
 def _provider_has_config_file(provider_id: str) -> bool:
     path = _provider_settings_path(provider_id)
     return bool(path and path.exists())
@@ -1885,6 +1893,70 @@ def _read_json_file(path: Path) -> Dict[str, Any]:
 def _write_json_file(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+
+def _file_has_non_empty_text(path: Path) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        return bool(path.read_text(encoding="utf-8", errors="ignore").strip())
+    except OSError:
+        return False
+
+
+def _directory_contains_auth_marker(directory: Path, markers: List[bytes]) -> bool:
+    if not directory.exists() or not directory.is_dir():
+        return False
+
+    try:
+        for candidate in directory.glob("*.info"):
+            if not candidate.is_file():
+                continue
+            try:
+                content = candidate.read_bytes()
+            except OSError:
+                continue
+            if any(marker in content for marker in markers):
+                return True
+    except OSError:
+        return False
+
+    return False
+
+
+def _parse_qoder_status(stdout: str) -> bool:
+    normalized = stdout.strip()
+    if not normalized:
+        return False
+
+    if re.search(r"not\s+(?:logged|signed)\s+in", normalized, re.IGNORECASE):
+        return False
+
+    account_match = re.search(r"^Account\s*:\s*(.+)$", normalized, re.IGNORECASE | re.MULTILINE)
+    if account_match:
+        account_value = account_match.group(1).strip()
+        if account_value and not re.search(r"not\s+(?:logged|signed)\s+in", account_value, re.IGNORECASE):
+            return True
+
+    has_username = bool(re.search(r"^Username\s*:\s*.+$", normalized, re.IGNORECASE | re.MULTILINE))
+    has_email = bool(re.search(r"^Email\s*:\s*.+$", normalized, re.IGNORECASE | re.MULTILINE))
+    if has_username or has_email:
+        return True
+
+    return bool(
+        re.search(
+            r"(?:logged|signed)\s+in\s+as|current\s+account\s*:",
+            normalized,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _detect_codebuddy_auth_cache() -> bool:
+    return _directory_contains_auth_marker(
+        _codebuddy_auth_dir(),
+        [b'"userId"', b'"creator"', b'"https://copilot.tencent.com"'],
+    )
 
 
 def _parse_toml_file(path: Path) -> Dict[str, Any]:
@@ -2462,21 +2534,30 @@ def _detect_kiro_status() -> Dict[str, Any]:
 
 def _detect_qoder_status() -> Dict[str, Any]:
     installed = shutil.which("qodercli") is not None
+    auth_path = _qoder_auth_path()
     details = ""
     configured = False
+    status_probe_negative = False
+    status_probe_available = False
     if installed:
         result = _run_provider_command(["qodercli", "status"])
         stdout = (result.stdout or "").strip()
         details = stdout or (result.stderr or "").strip()
-        has_account_line = bool(re.search(r"^Account\s*:\s*(.+)$", stdout, re.IGNORECASE | re.MULTILINE))
-        not_logged_in = bool(re.search(r"not\s+logged\s+in", stdout, re.IGNORECASE))
-        configured = result.returncode == 0 and has_account_line and not not_logged_in
+        status_probe_available = bool(stdout or result.stderr)
+        status_probe_negative = bool(re.search(r"not\s+(?:logged|signed)\s+in", stdout, re.IGNORECASE))
+        configured = result.returncode == 0 and _parse_qoder_status(stdout)
+
+    if not configured and not status_probe_negative and not status_probe_available and _file_has_non_empty_text(auth_path):
+        configured = True
+        if not details:
+            details = "auth id present"
+
     return {
         "installed": installed,
         "configured": configured,
         "detected_mode": "account" if configured else None,
         "details": details,
-        "settings_path": None,
+        "settings_path": str(auth_path),
     }
 
 
@@ -2507,21 +2588,39 @@ def _detect_copilot_status() -> Dict[str, Any]:
 def _detect_codebuddy_status() -> Dict[str, Any]:
     installed = shutil.which("codebuddy") is not None
     settings_path = _provider_settings_path("codebuddy")
-    runtime_settings = get_provider_runtime_settings("codebuddy")
-    configured = bool(runtime_settings.get("login_completed_at"))
+    auth_cache_detected = _detect_codebuddy_auth_cache()
+    configured = False
     details = ""
     if installed:
         try:
-            result = _run_provider_command(["codebuddy", "config", "get", "model"])
+            status_result = _run_provider_command(
+                ["codebuddy", "-p", "/hi", "--dangerously-skip-permissions"]
+            )
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.info("CodeBuddy status probe failed; treating as unconfigured: %s", exc)
         else:
-            stdout = (result.stdout or "").strip()
-            stderr = (result.stderr or "").strip()
-            details = stdout or stderr
-            if result.returncode == 0 and stdout:
-                configured = True
-                details = f"model={stdout.splitlines()[0]}"
+            status_stdout = (status_result.stdout or "").strip()
+            status_stderr = (status_result.stderr or "").strip()
+            status_text = status_stdout or status_stderr
+            auth_required = bool(re.search(r"authentication\s+required", status_text, re.IGNORECASE))
+            configured = status_result.returncode == 0 and bool(status_text) and not auth_required
+            details = status_text
+
+            try:
+                model_result = _run_provider_command(["codebuddy", "config", "get", "model"])
+            except (OSError, subprocess.TimeoutExpired):
+                model_result = None
+
+            if model_result is not None:
+                model_stdout = (model_result.stdout or "").strip()
+                model_stderr = (model_result.stderr or "").strip()
+                if model_result.returncode == 0 and model_stdout:
+                    model_details = f"model={model_stdout.splitlines()[0]}"
+                    details = f"{model_details} · {status_text}" if status_text else model_details
+                elif not details:
+                    details = model_stdout or model_stderr
+    if auth_cache_detected:
+        details = f"{details} · auth cache present" if details else "auth cache present"
     return {
         "installed": installed,
         "configured": configured,
