@@ -343,6 +343,35 @@ def test_build_provider_action_metadata_supports_console_slash_flow() -> None:
     }
 
 
+def test_build_provider_action_metadata_uses_kiro_device_flow_login() -> None:
+    item = {
+        "id": "kiro_cli",
+        "label": "Kiro CLI",
+        "command": "kiro-cli",
+        "supports_account_login": True,
+        "supports_api_config": False,
+        "default_selected": True,
+        "login_command": "kiro-cli login --use-device-flow",
+        "logout_command": "kiro-cli logout",
+    }
+
+    with patch(
+        "cli_agent_orchestrator.control_panel.main._probe_cli_subcommand",
+        return_value=True,
+    ):
+        payload = control_panel_main._build_provider_action_metadata(item)
+
+    assert payload == {
+        "console_command": None,
+        "login_command": "kiro-cli login --use-device-flow",
+        "logout_command": "kiro-cli logout",
+        "login_via_console": False,
+        "logout_via_console": False,
+        "login_supported": True,
+        "logout_supported": True,
+    }
+
+
 def test_detect_codex_status_marks_api_key_login_as_configured() -> None:
         process = MagicMock(returncode=0, stdout="Logged in using an API key - demo***1234", stderr="")
 
@@ -724,7 +753,7 @@ def test_write_codex_config_uses_openai_api_key_env(tmp_path: Path) -> None:
     assert 'model = "gpt-5-codex"' in config_content
 
 
-def test_write_codex_auth_writes_openai_api_key_and_env(tmp_path: Path) -> None:
+def test_write_codex_auth_writes_openai_api_key_at_top_level(tmp_path: Path) -> None:
     codex_dir = tmp_path / ".codex"
     codex_dir.mkdir()
     auth_path = codex_dir / "auth.json"
@@ -749,8 +778,32 @@ def test_write_codex_auth_writes_openai_api_key_and_env(tmp_path: Path) -> None:
     assert payload["OPENAI_API_KEY"] == "new-secret"
     assert payload["OPENROUTER_API_KEY"] == "keep-me"
     assert "API_KEY" not in payload
-    assert payload["ENV"]["OPENAI_API_KEY"] == "new-secret"
-    assert "API_KEY" not in payload["ENV"]
+    assert "ENV" not in payload
+
+
+def test_write_codex_auth_preserves_unrelated_env_entries(tmp_path: Path) -> None:
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    auth_path = codex_dir / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "ENV": {
+                    "CUSTOM_FLAG": "keep-me",
+                    "OPENAI_API_KEY": "stale-key",
+                    "API_KEY": "stale-key",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("cli_agent_orchestrator.control_panel.main.Path.home", return_value=tmp_path):
+        saved_path = control_panel_main._write_codex_auth("new-secret")
+
+    payload = json.loads(saved_path.read_text(encoding="utf-8"))
+    assert payload["OPENAI_API_KEY"] == "new-secret"
+    assert payload["ENV"] == {"CUSTOM_FLAG": "keep-me"}
 
 
 def test_save_provider_config_file_openclaw_restarts_gateway(tmp_path: Path) -> None:

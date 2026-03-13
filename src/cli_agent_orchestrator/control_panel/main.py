@@ -134,7 +134,7 @@ CONTROL_PANEL_PROVIDER_GUIDES: List[Dict[str, Any]] = [
         "supports_account_login": True,
         "supports_api_config": False,
         "default_selected": True,
-        "login_command": "kiro-cli login",
+        "login_command": "kiro-cli login --use-device-flow",
         "logout_command": "kiro-cli logout",
     },
     {
@@ -1981,9 +1981,12 @@ def _write_codex_auth(api_key: str) -> Path:
 
     env_payload = payload.get("ENV")
     env_data = dict(env_payload) if isinstance(env_payload, dict) else {}
-    env_data["OPENAI_API_KEY"] = api_key
+    env_data.pop("OPENAI_API_KEY", None)
     env_data.pop("API_KEY", None)
-    payload["ENV"] = env_data
+    if env_data:
+        payload["ENV"] = env_data
+    else:
+        payload.pop("ENV", None)
 
     _write_json_file(path, payload)
     return path
