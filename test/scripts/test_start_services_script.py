@@ -303,11 +303,12 @@ exit 0
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert gateway_pid_file.exists(), "openclaw-gateway PID file was not created"
         assert "脚本托管模式" in result.stdout
+        assert "继续启动 CAO 其余服务" in result.stdout
         gateway_calls = gateway_log.read_text(encoding="utf-8").splitlines()
         assert gateway_calls[0] == "gateway status"
         assert "gateway install --force" in gateway_calls
         assert "gateway" in gateway_calls
-        assert gateway_calls[-1] == "gateway status"
+        assert gateway_calls[-1] == "gateway"
     finally:
         _kill_pid_file(gateway_pid_file)
         _kill_pid_file(server_pid_file)
@@ -315,3 +316,52 @@ exit 0
         gateway_pid_file.unlink(missing_ok=True)
         server_pid_file.unlink(missing_ok=True)
         panel_pid_file.unlink(missing_ok=True)
+
+
+def test_start_services_fails_when_managed_gateway_process_exits_immediately(
+    tmp_path: Path,
+) -> None:
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir)
+    gateway_log = tmp_path / "openclaw-gateway.log"
+    _make_stub_command(
+        bin_dir / "openclaw",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+log_file="{gateway_log}"
+echo "$*" >> "$log_file"
+
+if [[ "${{1-}}" == "gateway" && "${{2-}}" == "status" ]]; then
+    cat <<'EOF'
+systemd user services are unavailable; install/enable systemd or run the gateway under your supervisor.
+EOF
+    exit 0
+fi
+
+if [[ "${{1-}}" == "gateway" && "${{2-}}" == "install" ]]; then
+    exit 1
+fi
+
+if [[ "${{1-}}" == "gateway" && $# -eq 1 ]]; then
+    exit 1
+fi
+
+exit 0
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "OpenClaw gateway 进程已退出" in result.stderr

@@ -121,6 +121,19 @@ wait_for_openclaw_gateway() {
   die "OpenClaw gateway 启动超时，请查看 gateway 日志。"
 }
 
+ensure_process_started() {
+  local name="$1"
+  local pid_file="$2"
+  local startup_delay="${3:-0.2}"
+
+  sleep "$startup_delay"
+  if is_running_from_pid "$pid_file"; then
+    return
+  fi
+
+  die "$name 进程已退出，请查看日志。"
+}
+
 install_openclaw_gateway_service_if_possible() {
   if ! has_cmd openclaw; then
     return 1
@@ -154,7 +167,8 @@ start_openclaw_gateway_foreground() {
     "$log_file" \
     openclaw gateway
 
-  wait_for_openclaw_gateway
+  ensure_process_started "OpenClaw gateway" "$pid_file"
+  info "OpenClaw gateway 已进入后台启动流程，继续启动 CAO 其余服务。"
 }
 
 ensure_openclaw_gateway() {
