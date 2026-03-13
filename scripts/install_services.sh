@@ -310,56 +310,136 @@ build_openclaw_install_cmd() {
     "$SHARP_IGNORE_GLOBAL_LIBVIPS"
 }
 
-install_agent_clis() {
+provider_cli_command() {
+  local provider_id="$1"
+  case "$provider_id" in
+    claude_code)
+      echo "claude"
+      ;;
+    codex)
+      echo "codex"
+      ;;
+    codebuddy)
+      echo "codebuddy"
+      ;;
+    kiro_cli)
+      echo "kiro-cli"
+      ;;
+    qoder_cli)
+      echo "qodercli"
+      ;;
+    copilot)
+      echo "copilot"
+      ;;
+    openclaw)
+      echo "openclaw"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+install_provider_cli() {
+  local provider_id="$1"
+
+  case "$provider_id" in
+    claude_code)
+      install_npm_global_package "claude" "@anthropic-ai/claude-code"
+      ;;
+    codex)
+      install_npm_global_package "codex" "@openai/codex"
+      ;;
+    codebuddy)
+      install_npm_global_package "codebuddy" "@tencent-ai/codebuddy-code"
+      ;;
+    kiro_cli)
+      if has_cmd kiro-cli; then
+        info "kiro-cli 已安装，跳过。"
+      else
+        info "安装 kiro-cli（官方方式）..."
+        if ! curl -fsSL https://cli.kiro.dev/install | bash; then
+          print_manual_install_command "kiro-cli" "curl -fsSL https://cli.kiro.dev/install | bash"
+        fi
+        ensure_tool_path
+        if ! has_cmd kiro-cli; then
+          print_manual_install_command "kiro-cli" "curl -fsSL https://cli.kiro.dev/install | bash"
+        fi
+      fi
+      ;;
+    qoder_cli)
+      if has_cmd qodercli; then
+        info "qodercli 已安装，跳过。"
+      else
+        info "安装 qodercli（官方方式）..."
+        if ! curl -fsSL https://qoder.com/install | bash; then
+          print_manual_install_command "qodercli" "curl -fsSL https://qoder.com/install | bash"
+        fi
+        ensure_tool_path
+        if ! has_cmd qodercli; then
+          print_manual_install_command "qodercli" "curl -fsSL https://qoder.com/install | bash"
+        fi
+      fi
+      ;;
+    copilot)
+      install_npm_global_package "copilot" "@github/copilot"
+      ;;
+    openclaw)
+      if has_cmd openclaw; then
+        info "openclaw 已安装，跳过。"
+      else
+        local openclaw_install_cmd="${OPENCLAW_INSTALL_CMD:-$(build_openclaw_install_cmd)}"
+        info "安装 openclaw（静默模式，跳过引导配置）..."
+        if ! bash -lc "$openclaw_install_cmd"; then
+          print_manual_install_command "openclaw" "$openclaw_install_cmd"
+        fi
+        ensure_tool_path
+        if ! has_cmd openclaw; then
+          print_manual_install_command "openclaw" "$openclaw_install_cmd"
+        fi
+      fi
+      ;;
+    *)
+      die "不支持的 provider CLI: $provider_id"
+      ;;
+  esac
+}
+
+install_missing_agent_clis() {
+  local providers=(claude_code codex codebuddy kiro_cli qoder_cli copilot openclaw)
+  local missing_providers=()
+  local provider_id=""
+  local command_name=""
+
   ensure_nodejs
   ensure_npm_global_prefix
   ensure_tool_path
 
-  install_npm_global_package "claude" "@anthropic-ai/claude-code"
-  install_npm_global_package "codex" "@openai/codex"
-  install_npm_global_package "codebuddy" "@tencent-ai/codebuddy-code"
+  for provider_id in "${providers[@]}"; do
+    command_name="$(provider_cli_command "$provider_id")" || continue
+    if ! has_cmd "$command_name"; then
+      missing_providers+=("$provider_id")
+    fi
+  done
 
-  if has_cmd kiro-cli; then
-    info "kiro-cli 已安装，跳过。"
-  else
-    info "安装 kiro-cli（官方方式）..."
-    if ! curl -fsSL https://cli.kiro.dev/install | bash; then
-      print_manual_install_command "kiro-cli" "curl -fsSL https://cli.kiro.dev/install | bash"
-    fi
-    ensure_tool_path
-    if ! has_cmd kiro-cli; then
-      print_manual_install_command "kiro-cli" "curl -fsSL https://cli.kiro.dev/install | bash"
-    fi
+  if [[ ${#missing_providers[@]} -eq 0 ]]; then
+    info "7 个 provider CLI 已全部安装，无需补装。"
+    return
   fi
 
-  if has_cmd qodercli; then
-    info "qodercli 已安装，跳过。"
-  else
-    info "安装 qodercli（官方方式）..."
-    if ! curl -fsSL https://qoder.com/install | bash; then
-      print_manual_install_command "qodercli" "curl -fsSL https://qoder.com/install | bash"
-    fi
-    ensure_tool_path
-    if ! has_cmd qodercli; then
-      print_manual_install_command "qodercli" "curl -fsSL https://qoder.com/install | bash"
-    fi
-  fi
+  info "检测到缺失 provider CLI：${missing_providers[*]}"
+  for provider_id in "${missing_providers[@]}"; do
+    install_provider_cli "$provider_id"
+  done
+}
 
-  install_npm_global_package "copilot" "@github/copilot"
+install_agent_clis() {
+  local providers=(claude_code codex codebuddy kiro_cli qoder_cli copilot openclaw)
+  local provider_id=""
 
-  if has_cmd openclaw; then
-    info "openclaw 已安装，跳过。"
-  else
-    local openclaw_install_cmd="${OPENCLAW_INSTALL_CMD:-$(build_openclaw_install_cmd)}"
-    info "安装 openclaw（静默模式，跳过引导配置）..."
-    if ! bash -lc "$openclaw_install_cmd"; then
-      print_manual_install_command "openclaw" "$openclaw_install_cmd"
-    fi
-    ensure_tool_path
-    if ! has_cmd openclaw; then
-      print_manual_install_command "openclaw" "$openclaw_install_cmd"
-    fi
-  fi
+  for provider_id in "${providers[@]}"; do
+    install_provider_cli "$provider_id"
+  done
 }
 
 merge_openclaw_plugin_config() {
@@ -566,4 +646,6 @@ main() {
   info "安装流程完成。"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -54,8 +54,8 @@ RUN python -m pip install --no-cache-dir /opt/cao \
 
 USER cao
 
-RUN CAO_SKIP_TOOL_INSTALL=1 /bin/bash /opt/cao/scripts/install_services.sh \
-    && npm install -g @anthropic-ai/claude-code @openai/codex
+RUN CAO_SKIP_TOOL_INSTALL=1 /bin/bash /opt/cao/scripts/install_services.sh
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 EXPOSE 8000 9889
 

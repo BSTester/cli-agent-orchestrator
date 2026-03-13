@@ -214,6 +214,51 @@ exit 0
     assert "copilot 自动安装失败，请手动执行：npm install -g @github/copilot" in result.stderr
 
 
+def test_install_missing_agent_clis_only_repairs_missing_provider(tmp_path: Path) -> None:
+        script_path = _script_path()
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        _prepare_stub_tools(bin_dir, tmp_path)
+        (bin_dir / "copilot").unlink()
+
+        npm_log = tmp_path / "npm.log"
+        _make_stub_command(
+                bin_dir / "npm",
+                f"""#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${{1-}}" == "config" && "${{2-}}" == "get" && "${{3-}}" == "prefix" ]]; then
+    echo "$HOME/.npm-global"
+    exit 0
+fi
+echo "$*" >> "{npm_log}"
+if [[ "${{1-}}" == "install" && "${{2-}}" == "-g" && "${{3-}}" == "@github/copilot" ]]; then
+    exit 0
+fi
+exit 0
+""",
+        )
+
+        result = subprocess.run(
+                ["bash", "-lc", f"source '{script_path}'; install_missing_agent_clis"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={
+                        "PATH": f"{bin_dir}:/usr/bin:/bin",
+                        "HOME": str(tmp_path),
+                },
+        )
+
+        assert result.returncode == 0
+        assert npm_log.exists()
+        npm_log_content = npm_log.read_text(encoding="utf-8")
+        assert "install -g @github/copilot" in npm_log_content
+        assert "@anthropic-ai/claude-code" not in npm_log_content
+        assert "@openai/codex" not in npm_log_content
+        assert "@tencent-ai/codebuddy-code" not in npm_log_content
+        assert "检测到缺失 provider CLI：copilot" in result.stdout
+
+
 def test_codebuddy_cli_install_failure_prints_manual_command(tmp_path: Path) -> None:
         script_path = _script_path()
         bin_dir = tmp_path / "bin"

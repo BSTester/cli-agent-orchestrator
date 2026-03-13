@@ -1867,6 +1867,11 @@ def _provider_settings_path(provider_id: str) -> Optional[Path]:
     return mapping.get(provider_id)
 
 
+def _provider_has_config_file(provider_id: str) -> bool:
+    path = _provider_settings_path(provider_id)
+    return bool(path and path.exists())
+
+
 def _read_json_file(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -2282,6 +2287,9 @@ def _read_openclaw_saved_settings() -> Dict[str, Any]:
 
 
 def _get_provider_saved_settings(provider_id: str) -> Dict[str, Any]:
+    if _provider_settings_path(provider_id) is not None and not _provider_has_config_file(provider_id):
+        return {}
+
     runtime_settings = get_provider_runtime_settings(provider_id)
     readers = {
         "claude_code": _read_claude_saved_settings,
@@ -2342,6 +2350,16 @@ def _merge_openclaw_feishu_config(
 
 def _detect_claude_status() -> Dict[str, Any]:
     installed = shutil.which("claude") is not None
+    settings_path = _provider_settings_path("claude_code")
+    if settings_path and not settings_path.exists():
+        return {
+            "installed": installed,
+            "configured": False,
+            "detected_mode": None,
+            "details": "",
+            "settings_path": str(settings_path),
+        }
+
     runtime_settings = _get_provider_saved_settings("claude_code")
     details = ""
     configured = False
@@ -2371,12 +2389,22 @@ def _detect_claude_status() -> Dict[str, Any]:
         "configured": configured,
         "detected_mode": detected_mode,
         "details": details,
-        "settings_path": str(_provider_settings_path("claude_code")) if _provider_settings_path("claude_code") else None,
+        "settings_path": str(settings_path) if settings_path else None,
     }
 
 
 def _detect_codex_status() -> Dict[str, Any]:
     installed = shutil.which("codex") is not None
+    settings_path = _provider_settings_path("codex")
+    if settings_path and not settings_path.exists():
+        return {
+            "installed": installed,
+            "configured": False,
+            "detected_mode": None,
+            "details": "",
+            "settings_path": str(settings_path),
+        }
+
     runtime_settings = _get_provider_saved_settings("codex")
     details = ""
     configured = False
@@ -2401,7 +2429,7 @@ def _detect_codex_status() -> Dict[str, Any]:
         "configured": configured,
         "detected_mode": detected_mode,
         "details": details,
-        "settings_path": str(_provider_settings_path("codex")) if _provider_settings_path("codex") else None,
+        "settings_path": str(settings_path) if settings_path else None,
     }
 
 
@@ -2473,8 +2501,17 @@ def _detect_copilot_status() -> Dict[str, Any]:
 
 def _detect_codebuddy_status() -> Dict[str, Any]:
     installed = shutil.which("codebuddy") is not None
-    runtime_settings = get_provider_runtime_settings("codebuddy")
     settings_path = _provider_settings_path("codebuddy")
+    if settings_path and not settings_path.exists():
+        return {
+            "installed": installed,
+            "configured": False,
+            "detected_mode": None,
+            "details": "",
+            "settings_path": str(settings_path),
+        }
+
+    runtime_settings = get_provider_runtime_settings("codebuddy")
     configured = bool(runtime_settings.get("login_completed_at"))
     details = ""
     if installed:
@@ -2500,8 +2537,17 @@ def _detect_codebuddy_status() -> Dict[str, Any]:
 
 def _detect_openclaw_status() -> Dict[str, Any]:
     installed = shutil.which("openclaw") is not None
-    runtime_settings = _get_provider_saved_settings("openclaw")
     config_path = _provider_settings_path("openclaw")
+    if config_path and not config_path.exists():
+        return {
+            "installed": installed,
+            "configured": False,
+            "detected_mode": None,
+            "details": "",
+            "settings_path": str(config_path),
+        }
+
+    runtime_settings = _get_provider_saved_settings("openclaw")
     payload = _read_json_file(config_path) if config_path else {}
     configured = bool(runtime_settings.get("api_key"))
     details = ""

@@ -224,6 +224,8 @@ OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
 
 仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。镜像构建时会直接复制仓库内源码、`scripts/` 和本地 `extensions/openclaw-cao-tools/` 到容器，并在构建阶段完成依赖/CLI 安装；容器启动时默认只启动服务，不会重复安装。
 
+容器启动前会额外校验 7 个内置 provider CLI（Claude Code、Codex、CodeBuddy、Kiro CLI、Qoder CLI、GitHub Copilot CLI、OpenClaw）是否仍然可用；如果检测到某个 provider 缺失，只会针对缺失项单独补装，不会重新全量安装全部 provider。若需关闭这一步，可设置 `CAO_VERIFY_AGENT_CLIS_ON_START=0`。
+
 容器默认以非 root 用户 `cao` 运行，Compose 会显式以 `${CAO_UID}:${CAO_GID}` 启动服务。为保留 Provider 配置与 Agent 目录，Compose 会将以下路径映射到主机侧 `./.docker/`：
 
 - `aws` → `/home/cao/.aws`

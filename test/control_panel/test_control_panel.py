@@ -385,6 +385,29 @@ def test_detect_claude_status_prefers_api_saved_settings() -> None:
         assert payload["details"] == "claude-sonnet-4-5"
 
 
+def test_detect_claude_status_missing_settings_file_treated_as_unconfigured(tmp_path: Path) -> None:
+    missing_path = tmp_path / "settings.json"
+
+    with (
+        patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/claude"),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._provider_settings_path",
+            return_value=missing_path,
+        ),
+        patch("cli_agent_orchestrator.control_panel.main._run_provider_command") as run_mock,
+        patch("cli_agent_orchestrator.control_panel.main._get_provider_saved_settings") as saved_mock,
+    ):
+        payload = control_panel_main._detect_claude_status()
+
+    run_mock.assert_not_called()
+    saved_mock.assert_not_called()
+    assert payload["installed"] is True
+    assert payload["configured"] is False
+    assert payload["detected_mode"] is None
+    assert payload["details"] == ""
+    assert payload["settings_path"] == str(missing_path)
+
+
 def test_detect_codebuddy_status_timeout_treated_as_unconfigured() -> None:
         with (
             patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/codebuddy"),
@@ -460,6 +483,62 @@ def test_console_provider_config_summary_treats_codebuddy_timeout_as_unconfigure
         assert payload["providers"][0]["id"] == "codebuddy"
         assert payload["providers"][0]["status"]["installed"] is True
         assert payload["providers"][0]["status"]["configured"] is False
+
+
+def test_console_provider_config_summary_skips_missing_config_file(client: TestClient, tmp_path: Path) -> None:
+        login(client)
+        missing_path = tmp_path / "settings.json"
+
+        with (
+            patch(
+                "cli_agent_orchestrator.control_panel.main.CONTROL_PANEL_PROVIDER_GUIDES",
+                [
+                    {
+                        "id": "claude_code",
+                        "label": "Claude Code",
+                        "command": "claude",
+                        "supports_account_login": True,
+                        "supports_api_config": True,
+                        "default_selected": True,
+                    }
+                ],
+            ),
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/claude"),
+            patch(
+                "cli_agent_orchestrator.control_panel.main._provider_settings_path",
+                return_value=missing_path,
+            ),
+            patch(
+                "cli_agent_orchestrator.control_panel.main.load_provider_runtime_config",
+                return_value={
+                    "version": 1,
+                    "onboarding": {
+                        "dismissed": False,
+                        "dismissed_at": None,
+                        "completed_at": None,
+                    },
+                    "providers": {
+                        "claude_code": {
+                            "mode": "api",
+                            "api_key": "secret-key",
+                            "default_model": "claude-sonnet-4-5",
+                        }
+                    },
+                },
+            ),
+            patch("cli_agent_orchestrator.control_panel.main._run_provider_command") as run_mock,
+        ):
+            response = client.get("/console/provider-config/summary")
+
+        run_mock.assert_not_called()
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["should_show_guide"] is True
+        assert len(payload["providers"]) == 1
+        assert payload["providers"][0]["id"] == "claude_code"
+        assert payload["providers"][0]["status"]["configured"] is False
+        assert payload["providers"][0]["status"]["settings_path"] == str(missing_path)
+        assert payload["providers"][0]["saved_settings"] == {}
 
 
 def test_read_openclaw_saved_settings_maps_existing_config(tmp_path: Path) -> None:
