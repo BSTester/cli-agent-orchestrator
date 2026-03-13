@@ -33,6 +33,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends no
 RUN rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid "${CAO_GID}" cao
 RUN useradd --uid "${CAO_UID}" --gid "${CAO_GID}" --create-home --shell /bin/bash cao
+RUN mkdir -p /opt/cao
 RUN chown -R cao:cao /opt/cao /home/cao
 
 WORKDIR /opt/cao
