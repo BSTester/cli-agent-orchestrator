@@ -2052,7 +2052,7 @@ def _write_openclaw_api_settings(
 def _read_provider_config_file(provider_id: str) -> Dict[str, Any]:
     path = _provider_settings_path(provider_id)
     if path is None:
-      raise HTTPException(status_code=404, detail=f"{provider_id} does not expose a config file")
+                raise HTTPException(status_code=404, detail=f"{provider_id} does not expose a config file")
 
     if path.exists():
         content = path.read_text(encoding="utf-8")
@@ -2478,12 +2478,17 @@ def _detect_codebuddy_status() -> Dict[str, Any]:
     configured = bool(runtime_settings.get("login_completed_at"))
     details = ""
     if installed:
-        result = _run_provider_command(["codebuddy", "config", "get", "model"])
-        stdout = (result.stdout or "").strip()
-        if stdout:
-            details = f"model={stdout.splitlines()[0]}"
-    if settings_path and settings_path.exists() and not configured:
-        configured = True
+        try:
+            result = _run_provider_command(["codebuddy", "config", "get", "model"])
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.info("CodeBuddy status probe failed; treating as unconfigured: %s", exc)
+        else:
+            stdout = (result.stdout or "").strip()
+            stderr = (result.stderr or "").strip()
+            details = stdout or stderr
+            if result.returncode == 0 and stdout:
+                configured = True
+                details = f"model={stdout.splitlines()[0]}"
     return {
         "installed": installed,
         "configured": configured,

@@ -243,7 +243,7 @@ OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
 
 1. 先构建镜像，但不启动服务容器
 2. 在宿主机执行初始化脚本 `scripts/docker_init_bind_mounts.sh`
-3. 该脚本会用 `docker create` 创建一个临时容器，再通过 `docker cp` 把容器里 `/home/cao/...` 的已有内容复制到宿主机 `./.docker/` 对应目录
+3. 该脚本会先读取当前 `docker compose` 解析后的 bind mount 配置，自动识别宿主机 `source` 与容器 `target` 的对应关系；随后再用 `docker create` 创建一个临时容器，并通过 `docker cp` 把容器里 `/home/cao/...` 的已有内容复制到这些实际宿主机目录
 4. 复制完成后删除临时容器，最后再执行 `docker compose up`
 
 首次初始化时，如果这些主机目录为空，初始化脚本会把容器里已有目录内容复制到宿主机挂载目录。例如：
@@ -257,7 +257,7 @@ OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
 - `~/.qoder/*`
 - `~/.copilot/*`
 
-执行初始化的脚本是 `scripts/docker_init_bind_mounts.sh`。这个脚本运行在宿主机侧，只处理 Compose 映射的那些目录；后续若目标路径中已有内容，则不会覆盖。因此初始化本质上是“首次空目录时执行一次”，之后再执行 `docker compose up` 时就不需要再初始化。
+执行初始化的脚本是 `scripts/docker_init_bind_mounts.sh`。这个脚本运行在宿主机侧，只处理 Compose 映射的那些目录，并且会以当前 Compose 实际配置为准自动识别宿主机路径；即使你把默认的 `./.docker/...` 改成别的 bind source，初始化也会跟随新的映射位置复制。后续若目标路径中已有内容，则不会覆盖。因此初始化本质上是“首次空目录时执行一次”，之后再执行 `docker compose up` 时就不需要再初始化。
 
 这样既避免映射整个 `/home/cao`，也不会因为在镜像内额外保存一份备份目录而增大镜像体积。
 

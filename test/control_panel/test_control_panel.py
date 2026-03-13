@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -382,6 +383,83 @@ def test_detect_claude_status_prefers_api_saved_settings() -> None:
         assert payload["configured"] is True
         assert payload["detected_mode"] == "api"
         assert payload["details"] == "claude-sonnet-4-5"
+
+
+def test_detect_codebuddy_status_timeout_treated_as_unconfigured() -> None:
+        with (
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/codebuddy"),
+            patch("cli_agent_orchestrator.control_panel.main.get_provider_runtime_settings", return_value={}),
+            patch(
+                "cli_agent_orchestrator.control_panel.main._run_provider_command",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd=["codebuddy", "config", "get", "model"],
+                    timeout=25,
+                ),
+            ),
+        ):
+            payload = control_panel_main._detect_codebuddy_status()
+
+        assert payload["installed"] is True
+        assert payload["configured"] is False
+        assert payload["detected_mode"] is None
+        assert payload["details"] == ""
+
+
+def test_console_provider_config_summary_treats_codebuddy_timeout_as_unconfigured(
+    client: TestClient,
+) -> None:
+        login(client)
+
+        with (
+            patch(
+                "cli_agent_orchestrator.control_panel.main.CONTROL_PANEL_PROVIDER_GUIDES",
+                [
+                    {
+                        "id": "codebuddy",
+                        "label": "CodeBuddy",
+                        "command": "codebuddy",
+                        "supports_account_login": True,
+                        "supports_api_config": False,
+                        "default_selected": True,
+                        "console_command": "codebuddy",
+                        "login_command": "/login",
+                        "logout_command": "/logout",
+                        "login_via_console": True,
+                        "logout_via_console": True,
+                    }
+                ],
+            ),
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/codebuddy"),
+            patch("cli_agent_orchestrator.control_panel.main.get_provider_runtime_settings", return_value={}),
+            patch(
+                "cli_agent_orchestrator.control_panel.main.load_provider_runtime_config",
+                return_value={
+                    "version": 1,
+                    "onboarding": {
+                        "dismissed": False,
+                        "dismissed_at": None,
+                        "completed_at": None,
+                    },
+                    "providers": {},
+                },
+            ),
+            patch(
+                "cli_agent_orchestrator.control_panel.main._run_provider_command",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd=["codebuddy", "config", "get", "model"],
+                    timeout=25,
+                ),
+            ),
+        ):
+            response = client.get("/console/provider-config/summary")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["should_show_guide"] is True
+        assert len(payload["providers"]) == 1
+        assert payload["providers"][0]["id"] == "codebuddy"
+        assert payload["providers"][0]["status"]["installed"] is True
+        assert payload["providers"][0]["status"]["configured"] is False
 
 
 def test_read_openclaw_saved_settings_maps_existing_config(tmp_path: Path) -> None:
