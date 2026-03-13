@@ -18,22 +18,22 @@ ENV PYTHONUNBUFFERED=1 \
     NPM_CONFIG_REGISTRY=https://registry.npmjs.org/ \
     PATH=/home/cao/.local/bin:/home/cao/.cargo/bin:/usr/local/bin:${PATH}
 
-RUN set -e \
-    && printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries \
-    && apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        git \
-        gnupg \
-        tmux \
-        unzip \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid "${CAO_GID}" cao \
-    && useradd --uid "${CAO_UID}" --gid "${CAO_GID}" --create-home --shell /bin/bash cao \
-    && chown -R cao:cao /opt/cao /home/cao
+RUN set -e
+RUN printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries
+RUN apt-get update
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    gnupg \
+    tmux \
+    unzip
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs
+RUN rm -rf /var/lib/apt/lists/*
+RUN groupadd --gid "${CAO_GID}" cao
+RUN useradd --uid "${CAO_UID}" --gid "${CAO_GID}" --create-home --shell /bin/bash cao
+RUN chown -R cao:cao /opt/cao /home/cao
 
 WORKDIR /opt/cao
 
