@@ -11,6 +11,8 @@ OPENCLAW_NPM_LOGLEVEL="${OPENCLAW_NPM_LOGLEVEL:-error}"
 SHARP_IGNORE_GLOBAL_LIBVIPS="${SHARP_IGNORE_GLOBAL_LIBVIPS:-1}"
 OPENCLAW_CAO_PLUGIN_ENABLE="${OPENCLAW_CAO_PLUGIN_ENABLE:-1}"
 OPENCLAW_CAO_PLUGIN_ID="${OPENCLAW_CAO_PLUGIN_ID:-cao-tools}"
+OPENCLAW_GATEWAY_INSTALL_ENABLE="${OPENCLAW_GATEWAY_INSTALL_ENABLE:-0}"
+OPENCLAW_GATEWAY_INSTALL_FORCE="${OPENCLAW_GATEWAY_INSTALL_FORCE:-0}"
 CAO_SKIP_TOOL_INSTALL="${CAO_SKIP_TOOL_INSTALL:-0}"
 NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.local}"
 
@@ -308,6 +310,63 @@ build_openclaw_install_cmd() {
     "$OPENCLAW_NO_ONBOARD" \
     "$OPENCLAW_NPM_LOGLEVEL" \
     "$SHARP_IGNORE_GLOBAL_LIBVIPS"
+}
+
+openclaw_gateway_service_loaded() {
+  local status_output="$1"
+  [[ -n "$status_output" ]] || return 1
+
+  grep -Eiq 'Service:[[:space:]]*.*\((enabled|loaded|registered)\)' <<<"$status_output"
+}
+
+install_openclaw_gateway_service() {
+  if [[ "$OPENCLAW_GATEWAY_INSTALL_ENABLE" != "1" ]]; then
+    return
+  fi
+
+  if ! has_cmd openclaw; then
+    warn "未检测到 openclaw，跳过 OpenClaw gateway 服务安装。"
+    return
+  fi
+
+  local os_name
+  os_name="$(uname -s)"
+  case "$os_name" in
+    Linux|Darwin)
+      ;;
+    *)
+      info "当前系统不支持 OpenClaw gateway 服务自动安装，跳过。"
+      return
+      ;;
+  esac
+
+  if [[ "$os_name" == "Linux" ]] && ! has_cmd systemctl; then
+    warn "未检测到 systemctl，跳过 OpenClaw gateway 服务安装；启动阶段将按需回退为脚本托管模式。"
+    return
+  fi
+
+  local status_output
+  status_output="$(openclaw gateway status 2>&1 || true)"
+  if [[ "$OPENCLAW_GATEWAY_INSTALL_FORCE" != "1" ]] && openclaw_gateway_service_loaded "$status_output"; then
+    info "OpenClaw gateway 服务已安装，跳过。"
+    return
+  fi
+
+  local install_cmd=(openclaw gateway install)
+  local manual_cmd="openclaw gateway install"
+  if [[ "$OPENCLAW_GATEWAY_INSTALL_FORCE" == "1" ]]; then
+    install_cmd+=(--force)
+    manual_cmd+=" --force"
+  fi
+
+  info "安装 OpenClaw gateway 服务..."
+  if ! "${install_cmd[@]}" >/dev/null 2>&1; then
+    print_manual_install_command "OpenClaw gateway 服务" "$manual_cmd"
+    warn "OpenClaw gateway 服务自动安装失败；若当前环境缺少可用 systemd，启动阶段将回退为脚本托管模式。"
+    return
+  fi
+
+  info "OpenClaw gateway 服务安装完成。"
 }
 
 provider_cli_command() {
@@ -641,6 +700,7 @@ main() {
   install_default_agent_profiles
   install_agent_clis
   install_openclaw_cao_plugin
+  install_openclaw_gateway_service
   install_skills_discovery_for_all_agents
 
   info "安装流程完成。"

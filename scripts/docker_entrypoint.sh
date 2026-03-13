@@ -9,7 +9,7 @@ RUNTIME_LOG_DIR="$RUNTIME_DIR/logs"
 mkdir -p "$RUNTIME_LOG_DIR"
 # Keep these filenames aligned with scripts/start_services.sh, which writes logs
 # under $CAO_RUNTIME_DIR/logs when the Docker image runs script-only bootstraps.
-touch "$RUNTIME_LOG_DIR/cao-server.log" "$RUNTIME_LOG_DIR/cao-control-panel.log"
+touch "$RUNTIME_LOG_DIR/openclaw-gateway.log" "$RUNTIME_LOG_DIR/cao-server.log" "$RUNTIME_LOG_DIR/cao-control-panel.log"
 
 ensure_runtime_provider_clis() {
 	if [[ "$CAO_VERIFY_AGENT_CLIS_ON_START" != "1" ]]; then
@@ -33,4 +33,4 @@ else
 	bash "$SCRIPT_DIR/start_services.sh" "$@"
 fi
 
-exec tail -F "$RUNTIME_LOG_DIR/cao-server.log" "$RUNTIME_LOG_DIR/cao-control-panel.log"
+exec tail -F "$RUNTIME_LOG_DIR/openclaw-gateway.log" "$RUNTIME_LOG_DIR/cao-server.log" "$RUNTIME_LOG_DIR/cao-control-panel.log"

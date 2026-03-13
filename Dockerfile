@@ -24,8 +24,11 @@ RUN apt-get update
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    dbus \
+    dbus-user-session \
     git \
     gnupg \
+    systemd \
     tmux \
     unzip
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -54,7 +57,7 @@ RUN python -m pip install --no-cache-dir /opt/cao \
 
 USER cao
 
-RUN CAO_SKIP_TOOL_INSTALL=1 /bin/bash /opt/cao/scripts/install_services.sh
+RUN CAO_SKIP_TOOL_INSTALL=1 OPENCLAW_GATEWAY_INSTALL_ENABLE=1 /bin/bash /opt/cao/scripts/install_services.sh
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 EXPOSE 8000 9889

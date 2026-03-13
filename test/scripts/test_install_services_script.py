@@ -34,6 +34,7 @@ exit 0
         "git",
         "python3",
         "node",
+        "systemctl",
         "tmux",
         "codex",
         "claude",
@@ -380,6 +381,52 @@ exit 0
         "SHARP_IGNORE_GLOBAL_LIBVIPS=1",
         "ARGS=install -g openclaw@latest",
     ]
+
+
+def test_openclaw_gateway_service_install_runs_when_enabled(tmp_path: Path) -> None:
+        script_path = _script_path()
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        _prepare_stub_tools(bin_dir, tmp_path)
+
+        gateway_log = tmp_path / "openclaw-gateway.log"
+        _make_stub_command(
+                bin_dir / "openclaw",
+                f"""#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> "{gateway_log}"
+if [[ "${{1-}}" == "gateway" && "${{2-}}" == "status" ]]; then
+    cat <<'EOF'
+Service: systemd (disabled)
+Runtime: stopped (state inactive)
+EOF
+    exit 0
+fi
+if [[ "${{1-}}" == "gateway" && "${{2-}}" == "install" ]]; then
+    exit 0
+fi
+exit 0
+""",
+        )
+
+        result = subprocess.run(
+                ["bash", str(script_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={
+                        "PATH": f"{bin_dir}:/usr/bin:/bin",
+                        "HOME": str(tmp_path),
+                        "OPENCLAW_GATEWAY_INSTALL_ENABLE": "1",
+                },
+        )
+
+        assert result.returncode == 0
+        assert gateway_log.read_text(encoding="utf-8").splitlines() == [
+                "plugins install -l " + str(tmp_path / ".openclaw" / "extensions" / "cao-tools-local"),
+                "gateway status",
+                "gateway install",
+        ]
 
 
 def test_attempts_codebuddy_auto_install_when_binary_missing(tmp_path: Path) -> None:

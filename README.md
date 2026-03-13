@@ -224,6 +224,16 @@ OPENCLAW_CAO_PLUGIN_ENABLE=0 bash scripts/install_services.sh
 
 仓库现在提供基于 `pyd4vinci/scrapling` 的 Docker 启动方式。镜像构建时会直接复制仓库内源码、`scripts/` 和本地 `extensions/openclaw-cao-tools/` 到容器，并在构建阶段完成依赖/CLI 安装；容器启动时默认只启动服务，不会重复安装。
 
+Docker 镜像现在会额外安装 `systemd` / `systemctl` 与 `dbus-user-session`，并在构建阶段尝试执行一次 `openclaw gateway install`。不过需要注意：大多数普通 Docker 容器里并不存在完整的 systemd 用户会话，因此即使镜像内有 `systemctl` 命令，OpenClaw gateway 服务安装也可能无法真正托管成功。
+
+为避免这类环境直接卡死，`scripts/start_services.sh` 已改为以下策略：
+
+1. 优先使用 `openclaw gateway start/restart` 管理已安装的 gateway 服务；
+2. 若服务未安装，会先尝试 `openclaw gateway install --force`；
+3. 若当前容器没有可用 systemd 用户会话，自动回退为脚本托管模式，直接后台运行 `openclaw gateway`。
+
+这意味着 Docker 场景下即使 systemd 不可用，gateway 仍然可以随 CAO 一起启动。
+
 容器启动前会额外校验 7 个内置 provider CLI（Claude Code、Codex、CodeBuddy、Kiro CLI、Qoder CLI、GitHub Copilot CLI、OpenClaw）是否仍然可用；如果检测到某个 provider 缺失，只会针对缺失项单独补装，不会重新全量安装全部 provider。若需关闭这一步，可设置 `CAO_VERIFY_AGENT_CLIS_ON_START=0`。
 
 容器默认以非 root 用户 `cao` 运行，Compose 会显式以 `${CAO_UID}:${CAO_GID}` 启动服务。为保留 Provider 配置与 Agent 目录，Compose 会将以下路径映射到主机侧 `./.docker/`：
