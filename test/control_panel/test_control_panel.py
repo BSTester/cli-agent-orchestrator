@@ -457,6 +457,44 @@ def test_detect_codebuddy_status_timeout_treated_as_unconfigured() -> None:
         assert payload["details"] == ""
 
 
+def test_detect_codebuddy_status_uses_cli_probe_even_when_settings_file_missing(tmp_path: Path) -> None:
+        missing_path = tmp_path / "settings.json"
+        process = MagicMock(returncode=0, stdout="glm-5.0\n", stderr="")
+
+        with (
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/codebuddy"),
+            patch("cli_agent_orchestrator.control_panel.main._provider_settings_path", return_value=missing_path),
+            patch("cli_agent_orchestrator.control_panel.main.get_provider_runtime_settings", return_value={}),
+            patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+        ):
+            payload = control_panel_main._detect_codebuddy_status()
+
+        assert payload["installed"] is True
+        assert payload["configured"] is True
+        assert payload["detected_mode"] == "account"
+        assert payload["details"] == "model=glm-5.0"
+        assert payload["settings_path"] == str(missing_path)
+
+
+def test_detect_qoder_status_recognizes_account_output() -> None:
+        process = MagicMock(
+            returncode=0,
+            stdout="Version: 0.1.29\nAccount: alice@example.com\n",
+            stderr="",
+        )
+
+        with (
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/qodercli"),
+            patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+        ):
+            payload = control_panel_main._detect_qoder_status()
+
+        assert payload["installed"] is True
+        assert payload["configured"] is True
+        assert payload["detected_mode"] == "account"
+        assert "Account: alice@example.com" in payload["details"]
+
+
 def test_console_provider_config_summary_treats_codebuddy_timeout_as_unconfigured(
     client: TestClient,
 ) -> None:

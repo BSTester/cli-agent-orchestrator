@@ -2468,7 +2468,9 @@ def _detect_qoder_status() -> Dict[str, Any]:
         result = _run_provider_command(["qodercli", "status"])
         stdout = (result.stdout or "").strip()
         details = stdout or (result.stderr or "").strip()
-        configured = result.returncode == 0 and "Username:" in stdout
+        has_account_line = bool(re.search(r"^Account\s*:\s*(.+)$", stdout, re.IGNORECASE | re.MULTILINE))
+        not_logged_in = bool(re.search(r"not\s+logged\s+in", stdout, re.IGNORECASE))
+        configured = result.returncode == 0 and has_account_line and not not_logged_in
     return {
         "installed": installed,
         "configured": configured,
@@ -2505,15 +2507,6 @@ def _detect_copilot_status() -> Dict[str, Any]:
 def _detect_codebuddy_status() -> Dict[str, Any]:
     installed = shutil.which("codebuddy") is not None
     settings_path = _provider_settings_path("codebuddy")
-    if settings_path and not settings_path.exists():
-        return {
-            "installed": installed,
-            "configured": False,
-            "detected_mode": None,
-            "details": "",
-            "settings_path": str(settings_path),
-        }
-
     runtime_settings = get_provider_runtime_settings("codebuddy")
     configured = bool(runtime_settings.get("login_completed_at"))
     details = ""
