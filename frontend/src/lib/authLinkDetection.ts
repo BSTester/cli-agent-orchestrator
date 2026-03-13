@@ -12,7 +12,8 @@ export type DetectedAuthLink = {
 
 const ANSI_PATTERN = /\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
-const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
+const URL_CONTINUATION_CHAR = /[A-Za-z0-9\-._~:/?#[\]@!$&()*+,;=%]/;
+const URL_PATTERN = /https?:\/\/(?:[^\s<>"'`]|(?:\n(?=[A-Za-z0-9\-._~:/?#[\]@!$&()*+,;=%])))+/gi;
 const AUTH_URL_PATTERN =
   /(login|sign(?:-|%20|\s)?in|oauth|authorize|authorise|auth|device|verify|verification|activate|consent|sso)/i;
 const AUTH_CONTEXT_PATTERN =
@@ -22,7 +23,7 @@ const NEGATIVE_URL_PATTERN = /(docs?|documentation|readme|tutorial|guide|help|pr
 const NEGATIVE_CONTEXT_PATTERN = /(documentation|docs?|readme|example|for more information|learn more|help center|privacy policy|terms of service)/i;
 
 function trimTrailingUrlPunctuation(url: string): string {
-  let trimmed = url.trim().replace(/[.,;:'"]+$/g, "");
+  let trimmed = url.replace(/\n+/g, "").trim().replace(/[.,;:'"]+$/g, "");
 
   while (trimmed.endsWith(")")) {
     const opens = (trimmed.match(/\(/g) || []).length;
@@ -99,6 +100,14 @@ export function detectAuthLinksFromTerminalOutput(text: string): DetectedAuthLin
     const url = trimTrailingUrlPunctuation(rawUrl);
     if (!url) {
       continue;
+    }
+
+    if (rawUrl.includes("\n")) {
+      const trailingIndex = (match.index ?? 0) + rawUrl.length;
+      const trailingChar = normalized[trailingIndex] || "";
+      if (trailingChar && URL_CONTINUATION_CHAR.test(trailingChar)) {
+        continue;
+      }
     }
 
     const start = match.index ?? 0;

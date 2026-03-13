@@ -820,7 +820,7 @@ export default function ProviderConfigGuide({
               <InfoHint
                 text={
                   isKiro
-                    ? "Kiro 登录会直接执行 kiro-cli login；终端检测到高置信度认证链接时会尝试自动打开新窗口。若浏览器完成认证后回调仍无法自动到达容器，请将完整 callback URL 粘贴到下方并点击确认，由容器内发起请求。"
+                    ? "Kiro 登录会直接执行 kiro-cli login --use-device-flow；终端检测到高置信度认证链接时会尝试自动打开新窗口。若浏览器完成认证后回调仍无法自动到达容器，请将完整 callback URL 粘贴到下方并点击确认，由容器内发起请求。"
                     : provider.id === "copilot"
                     ? "Copilot 会在打开终端后直接执行 copilot login 进入 device flow；若终端里出现认证链接，面板会自动识别并展示候选链接。"
                     : `点击${showLogoutAction ? "退出" : "登录"}后会打开终端并直接执行 ${
