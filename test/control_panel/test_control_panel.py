@@ -563,7 +563,17 @@ def test_detect_qoder_status_falls_back_to_auth_file_marker() -> None:
             patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/qodercli"),
             patch("cli_agent_orchestrator.control_panel.main._qoder_auth_path", return_value=auth_path),
             patch("cli_agent_orchestrator.control_panel.main._file_has_non_empty_text", return_value=True),
-            patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+            patch(
+                "cli_agent_orchestrator.control_panel.main._run_provider_command",
+                side_effect=[
+                    process,
+                    MagicMock(
+                        returncode=1,
+                        stdout="Authentication required. Please login first.\n",
+                        stderr="",
+                    ),
+                ],
+            ),
         ):
             payload = control_panel_main._detect_qoder_status()
 
@@ -573,15 +583,42 @@ def test_detect_qoder_status_falls_back_to_auth_file_marker() -> None:
         assert payload["settings_path"] == str(auth_path)
 
 
+def test_detect_qoder_status_recognizes_prompt_probe_as_logged_in() -> None:
+        status_process = MagicMock(returncode=1, stdout="", stderr="")
+        prompt_process = MagicMock(returncode=0, stdout="Hello from Qoder\n", stderr="")
+        auth_path = Path("/tmp/qoder-auth-id")
+
+        with (
+            patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/qodercli"),
+            patch("cli_agent_orchestrator.control_panel.main._qoder_auth_path", return_value=auth_path),
+            patch("cli_agent_orchestrator.control_panel.main._file_has_non_empty_text", return_value=False),
+            patch(
+                "cli_agent_orchestrator.control_panel.main._run_provider_command",
+                side_effect=[status_process, prompt_process],
+            ),
+        ):
+            payload = control_panel_main._detect_qoder_status()
+
+        assert payload["installed"] is True
+        assert payload["configured"] is True
+        assert payload["detected_mode"] == "account"
+        assert payload["details"] == "prompt probe succeeded"
+        assert payload["settings_path"] == str(auth_path)
+
+
 def test_detect_qoder_status_uses_auth_file_only_when_status_probe_unavailable() -> None:
-        process = MagicMock(returncode=1, stdout="", stderr="")
+        status_process = MagicMock(returncode=1, stdout="", stderr="")
+        prompt_process = MagicMock(returncode=1, stdout="", stderr="")
         auth_path = Path("/tmp/qoder-auth-id")
 
         with (
             patch("cli_agent_orchestrator.control_panel.main.shutil.which", return_value="/usr/bin/qodercli"),
             patch("cli_agent_orchestrator.control_panel.main._qoder_auth_path", return_value=auth_path),
             patch("cli_agent_orchestrator.control_panel.main._file_has_non_empty_text", return_value=True),
-            patch("cli_agent_orchestrator.control_panel.main._run_provider_command", return_value=process),
+            patch(
+                "cli_agent_orchestrator.control_panel.main._run_provider_command",
+                side_effect=[status_process, prompt_process],
+            ),
         ):
             payload = control_panel_main._detect_qoder_status()
 

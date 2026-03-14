@@ -1952,6 +1952,19 @@ def _parse_qoder_status(stdout: str) -> bool:
     )
 
 
+def _provider_probe_requires_auth(output: str) -> bool:
+    normalized = output.strip()
+    if not normalized:
+        return False
+    return bool(
+        re.search(
+            r"authentication\s+required|auth(?:entication)?\s+required|please\s+(?:log\s*in|login|sign\s*in)|not\s+(?:logged|signed)\s+in|/login\b",
+            normalized,
+            re.IGNORECASE,
+        )
+    )
+
+
 def _detect_codebuddy_auth_cache() -> bool:
     return _directory_contains_auth_marker(
         _codebuddy_auth_dir(),
@@ -2539,6 +2552,8 @@ def _detect_qoder_status() -> Dict[str, Any]:
     configured = False
     status_probe_negative = False
     status_probe_available = False
+    prompt_probe_negative = False
+    prompt_probe_available = False
     if installed:
         result = _run_provider_command(["qodercli", "status"])
         stdout = (result.stdout or "").strip()
@@ -2547,7 +2562,31 @@ def _detect_qoder_status() -> Dict[str, Any]:
         status_probe_negative = bool(re.search(r"not\s+(?:logged|signed)\s+in", stdout, re.IGNORECASE))
         configured = result.returncode == 0 and _parse_qoder_status(stdout)
 
-    if not configured and not status_probe_negative and not status_probe_available and _file_has_non_empty_text(auth_path):
+        if not configured:
+            try:
+                prompt_result = _run_provider_command(["qodercli", "-p", "hi"])
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                logger.info("Qoder status prompt probe failed; continuing with other signals: %s", exc)
+            else:
+                prompt_stdout = (prompt_result.stdout or "").strip()
+                prompt_stderr = (prompt_result.stderr or "").strip()
+                prompt_text = prompt_stdout or prompt_stderr
+                prompt_probe_available = bool(prompt_text)
+                prompt_probe_negative = _provider_probe_requires_auth(prompt_text)
+                if prompt_result.returncode == 0 and prompt_probe_available and not prompt_probe_negative:
+                    configured = True
+                    details = f"{details} · prompt probe succeeded" if details else "prompt probe succeeded"
+                elif not details:
+                    details = prompt_text
+
+    if (
+        not configured
+        and not status_probe_negative
+        and not status_probe_available
+        and not prompt_probe_negative
+        and not prompt_probe_available
+        and _file_has_non_empty_text(auth_path)
+    ):
         configured = True
         if not details:
             details = "auth id present"

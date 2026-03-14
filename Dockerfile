@@ -12,11 +12,12 @@ ENV PYTHONUNBUFFERED=1 \
     CAO_SERVER_URL=http://127.0.0.1:9889 \
     CAO_TOOL_SPEC=/opt/cao \
     CAO_RUNTIME_DIR=/home/cao/.local/state/cli-agent-orchestrator/runtime \
+    PLAYWRIGHT_BROWSERS_PATH=/home/cao/.cache/ms-playwright \
     PIP_INDEX_URL=https://pypi.org/simple \
     PIP_TRUSTED_HOST=pypi.org \
     NPM_CONFIG_PREFIX=/home/cao/.local \
     NPM_CONFIG_REGISTRY=https://registry.npmjs.org/ \
-    PATH=/home/cao/.local/bin:/home/cao/.cargo/bin:/usr/local/bin:${PATH}
+    PATH=/home/cao/.local/bin:/home/cao/.cargo/bin:/app/.venv/bin:/usr/local/bin:${PATH}
 
 RUN set -e
 RUN printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries
@@ -37,7 +38,9 @@ RUN rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid "${CAO_GID}" cao
 RUN useradd --uid "${CAO_UID}" --gid "${CAO_GID}" --create-home --shell /bin/bash cao
 RUN mkdir -p /opt/cao
-RUN chown -R cao:cao /opt/cao /home/cao
+RUN mkdir -p /home/cao/.cache \
+    && if [ -d /root/.cache/ms-playwright ]; then cp -a /root/.cache/ms-playwright /home/cao/.cache/ms-playwright; fi \
+    && chown -R cao:cao /opt/cao /home/cao
 
 WORKDIR /opt/cao
 
