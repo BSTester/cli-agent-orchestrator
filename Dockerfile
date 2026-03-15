@@ -17,7 +17,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_TRUSTED_HOST=pypi.org \
     NPM_CONFIG_PREFIX=/home/cao/.local \
     NPM_CONFIG_REGISTRY=https://registry.npmjs.org/ \
-    PATH=/home/cao/.local/bin:/home/cao/.cargo/bin:/app/.venv/bin:/usr/local/bin:${PATH}
+    PATH=/home/cao/.local/bin:/home/cao/.cargo/bin:/usr/local/bin:/app/.venv/bin:${PATH}
 
 RUN set -e
 RUN printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries
@@ -29,6 +29,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     dbus-user-session \
     git \
     gnupg \
+    sudo \
     systemd \
     tmux \
     unzip
@@ -37,6 +38,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends no
 RUN rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid "${CAO_GID}" cao
 RUN useradd --uid "${CAO_UID}" --gid "${CAO_GID}" --create-home --shell /bin/bash cao
+RUN echo "cao ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 RUN mkdir -p /opt/cao
 RUN mkdir -p /home/cao/.cache \
     && if [ -d /root/.cache/ms-playwright ]; then cp -a /root/.cache/ms-playwright /home/cao/.cache/ms-playwright; fi \
@@ -55,7 +57,7 @@ COPY --chmod=755 scripts/install_and_start_services.sh /opt/cao/scripts/install_
 COPY --chmod=755 scripts/docker_entrypoint.sh /opt/cao/scripts/docker_entrypoint.sh
 COPY scripts/docker_healthcheck.py /opt/cao/scripts/docker_healthcheck.py
 
-RUN python -m pip install --no-cache-dir /opt/cao \
+RUN /usr/local/bin/python -m pip install --no-cache-dir /opt/cao \
     && chown -R cao:cao /opt/cao
 
 USER cao
