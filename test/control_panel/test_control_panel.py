@@ -258,6 +258,93 @@ def test_console_provider_config_summary(client: TestClient) -> None:
     assert response.json() == summary
 
 
+def test_console_provider_config_onboarding_status_is_lightweight(client: TestClient) -> None:
+    login(client)
+
+    with (
+        patch(
+            "cli_agent_orchestrator.control_panel.main.CONTROL_PANEL_PROVIDER_GUIDES",
+            [{"id": "kiro_cli"}],
+        ),
+        patch(
+            "cli_agent_orchestrator.control_panel.main.load_provider_runtime_config",
+            return_value={
+                "version": 1,
+                "onboarding": {
+                    "dismissed": False,
+                    "dismissed_at": None,
+                    "completed_at": None,
+                },
+                "providers": {},
+            },
+        ),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_provider_saved_settings",
+            return_value={},
+        ),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._run_provider_command",
+            side_effect=AssertionError("onboarding status should not run provider commands"),
+        ),
+    ):
+        response = client.get("/console/provider-config/onboarding-status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "should_show_guide": True,
+        "onboarding": {
+            "dismissed": False,
+            "dismissed_at": None,
+            "completed_at": None,
+        },
+    }
+
+
+def test_console_provider_config_onboarding_status_hides_guide_when_runtime_configured(
+    client: TestClient,
+) -> None:
+    login(client)
+
+    with (
+        patch(
+            "cli_agent_orchestrator.control_panel.main.CONTROL_PANEL_PROVIDER_GUIDES",
+            [{"id": "qoder_cli"}],
+        ),
+        patch(
+            "cli_agent_orchestrator.control_panel.main.load_provider_runtime_config",
+            return_value={
+                "version": 1,
+                "onboarding": {
+                    "dismissed": False,
+                    "dismissed_at": None,
+                    "completed_at": None,
+                },
+                "providers": {
+                    "qoder_cli": {
+                        "mode": "account",
+                        "login_completed_at": "2026-03-15T10:00:00+00:00",
+                    }
+                },
+            },
+        ),
+        patch(
+            "cli_agent_orchestrator.control_panel.main._get_provider_saved_settings",
+            return_value={"mode": "account", "login_completed_at": "2026-03-15T10:00:00+00:00"},
+        ),
+    ):
+        response = client.get("/console/provider-config/onboarding-status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "should_show_guide": False,
+        "onboarding": {
+            "dismissed": False,
+            "dismissed_at": None,
+            "completed_at": None,
+        },
+    }
+
+
 def test_console_provider_config_single_provider(client: TestClient) -> None:
     login(client)
 

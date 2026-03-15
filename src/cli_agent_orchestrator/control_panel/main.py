@@ -2739,25 +2739,69 @@ def _build_provider_guide_item(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _build_provider_guide_summary() -> Dict[str, Any]:
-    runtime_config = load_provider_runtime_config()
+def _provider_has_onboarding_configuration_hint(provider_id: str) -> bool:
+    saved_settings = _get_provider_saved_settings(provider_id)
+    mode = str(saved_settings.get("mode") or "").strip().lower()
+    if mode == "account":
+        return True
+
+    for key in ["api_key", "api_base_url", "default_model", "login_completed_at"]:
+        if str(saved_settings.get(key) or "").strip():
+            return True
+
+    if provider_id == "copilot":
+        env_tokens = [
+            os.getenv("COPILOT_GITHUB_TOKEN"),
+            os.getenv("GH_TOKEN"),
+            os.getenv("GITHUB_TOKEN"),
+        ]
+        if any(bool(str(token or "").strip()) for token in env_tokens):
+            return True
+
+        config_dir = Path.home() / ".copilot"
+        if config_dir.exists():
+            return any(item.is_file() and item.name != "mcp-config.json" for item in config_dir.iterdir())
+
+    if provider_id == "qoder_cli":
+        return _file_has_non_empty_text(_qoder_auth_path())
+
+    if provider_id == "codebuddy":
+        return _detect_codebuddy_auth_cache()
+
+    if provider_id == "codex":
+        auth_payload = _read_json_file(Path.home() / ".codex" / "auth.json")
+        return isinstance(auth_payload, dict) and bool(auth_payload)
+
+    return False
+
+
+def _build_provider_onboarding_status(runtime_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    runtime_config = runtime_config or load_provider_runtime_config()
     onboarding = runtime_config.get("onboarding", {})
     dismissed = bool(onboarding.get("dismissed"))
     completed_at = onboarding.get("completed_at")
+
+    any_configured = any(
+        _provider_has_onboarding_configuration_hint(str(item["id"]))
+        for item in CONTROL_PANEL_PROVIDER_GUIDES
+    )
+
+    return {
+        "should_show_guide": not dismissed and not completed_at and not any_configured,
+        "onboarding": onboarding,
+    }
+
+
+def _build_provider_guide_summary() -> Dict[str, Any]:
+    runtime_config = load_provider_runtime_config()
     provider_summaries: List[Dict[str, Any]] = []
-    any_configured = False
 
     for item in CONTROL_PANEL_PROVIDER_GUIDES:
         provider_summary = _build_provider_guide_item(item)
-        status_payload = provider_summary["status"]
-        configured = bool(status_payload.get("configured"))
-        any_configured = any_configured or configured
         provider_summaries.append(provider_summary)
 
-    should_show_guide = not dismissed and not completed_at and not any_configured
     return {
-        "should_show_guide": should_show_guide,
-        "onboarding": onboarding,
+        **_build_provider_onboarding_status(runtime_config),
         "providers": provider_summaries,
     }
 
@@ -3327,6 +3371,11 @@ async def me(request: Request) -> Dict[str, Any]:
         "authenticated": expires_at is not None,
         "session_expires_at": int(expires_at) if expires_at else None,
     }
+
+
+@app.get("/console/provider-config/onboarding-status")
+async def console_provider_config_onboarding_status() -> Dict[str, Any]:
+    return await asyncio.to_thread(_build_provider_onboarding_status)
 
 
 @app.get("/console/provider-config/summary")

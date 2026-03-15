@@ -389,6 +389,15 @@ export interface ProviderGuideSummary {
   providers: ProviderGuideProvider[];
 }
 
+export interface ProviderGuideOnboardingStatus {
+  should_show_guide: boolean;
+  onboarding: {
+    dismissed?: boolean;
+    dismissed_at?: string | null;
+    completed_at?: string | null;
+  };
+}
+
 export interface OpenClawFeishuConfigPayload {
   enabled: boolean;
   domain: "feishu" | "lark";

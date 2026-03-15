@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { ErrorBanner, InfoHint, PageShell, PrimaryButton, SectionCard, TextInput } from "@/components/ConsoleTheme";
-import { caoRequest, type ProviderGuideSummary } from "@/lib/cao";
+import { caoRequest, type ProviderGuideOnboardingStatus } from "@/lib/cao";
 
 const DEFAULT_LOGIN_PATH = "/dashboard";
 const ONBOARDING_PATH = "/settings";
@@ -36,7 +36,10 @@ export default function LoginPage() {
       return preferredPath;
     }
 
-    const result = await caoRequest<ProviderGuideSummary>("GET", "/console/provider-config/summary");
+    const result = await caoRequest<ProviderGuideOnboardingStatus>(
+      "GET",
+      "/console/provider-config/onboarding-status"
+    );
     if (result.ok && result.data.should_show_guide) {
       return ONBOARDING_PATH;
     }
