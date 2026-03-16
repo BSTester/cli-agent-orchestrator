@@ -140,7 +140,7 @@ uv run pytest -m e2e test/e2e/test_supervisor_orchestration.py -v -k ClaudeCode 
 3. **Authentication Issues**:
    ```bash
    claude setup-token
-   # Or set ANTHROPIC_API_KEY environment variable
+   # Or set ANTHROPIC_AUTH_TOKEN environment variable
    ```
 
 4. **Status Stuck on ERROR**:

@@ -2083,8 +2083,8 @@ def _write_claude_settings(api_base_url: str, api_key: str, default_model: str) 
     env_payload = payload.get("env")
     env_data = dict(env_payload) if isinstance(env_payload, dict) else {}
     env_data["ANTHROPIC_BASE_URL"] = api_base_url
-    env_data["ANTHROPIC_API_KEY"] = api_key
-    env_data.pop("ANTHROPIC_AUTH_TOKEN", None)
+    env_data["ANTHROPIC_AUTH_TOKEN"] = api_key
+    env_data.pop("ANTHROPIC_API_KEY", None)
     env_data.pop("ANTHROPIC_API_TOKEN", None)
     env_data["ANTHROPIC_MODEL"] = default_model
     payload["env"] = env_data
@@ -2239,8 +2239,8 @@ def _read_claude_saved_settings() -> Dict[str, Any]:
 
     api_base_url = str(env_data.get("ANTHROPIC_BASE_URL") or "").strip() or None
     api_key = str(
-        env_data.get("ANTHROPIC_API_KEY")
-        or env_data.get("ANTHROPIC_AUTH_TOKEN")
+        env_data.get("ANTHROPIC_AUTH_TOKEN")
+        or env_data.get("ANTHROPIC_API_KEY")
         or env_data.get("ANTHROPIC_API_TOKEN")
         or ""
     ).strip() or None
