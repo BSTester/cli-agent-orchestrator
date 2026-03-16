@@ -995,9 +995,9 @@ def test_write_claude_settings_keeps_single_api_key(tmp_path: Path) -> None:
     payload = json.loads(settings_path.read_text(encoding="utf-8"))
     env_payload = payload["env"]
     assert env_payload["ANTHROPIC_BASE_URL"] == "https://api.anthropic.test"
-    assert env_payload["ANTHROPIC_API_KEY"] == "secret-key"
+    assert env_payload["ANTHROPIC_AUTH_TOKEN"] == "secret-key"
     assert env_payload["ANTHROPIC_MODEL"] == "claude-sonnet-4-6"
-    assert "ANTHROPIC_AUTH_TOKEN" not in env_payload
+    assert "ANTHROPIC_API_KEY" not in env_payload
     assert "ANTHROPIC_API_TOKEN" not in env_payload
 
 
