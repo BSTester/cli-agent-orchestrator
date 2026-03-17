@@ -250,12 +250,30 @@ class TestOpenClawProviderInitialization:
 
     @patch("cli_agent_orchestrator.providers.openclaw.tmux_client")
     @patch("cli_agent_orchestrator.providers.openclaw.wait_until_status")
-    def test_switch_to_openclaw_agent_skips_status_wait(self, mock_wait_status, mock_tmux) -> None:
+    def test_switch_to_openclaw_agent_resets_bootstrap_state(
+        self, mock_wait_status, mock_tmux
+    ) -> None:
         provider = OpenClawProvider("t1", "s1", "w1", "ceo")
         provider._openclaw_agent_name = "ceo"
         provider._input_received = True
         provider._input_received_at = 1_234_567_890.0
         provider._saw_processing_after_input = True
+
+        provider._switch_to_openclaw_agent()
+
+        mock_tmux.send_keys.assert_called_once_with("s1", "w1", "/agent ceo")
+        mock_wait_status.assert_not_called()
+        assert provider._input_received is False
+        assert provider._input_received_at is None
+        assert provider._saw_processing_after_input is False
+
+    @patch("cli_agent_orchestrator.providers.openclaw.tmux_client")
+    @patch("cli_agent_orchestrator.providers.openclaw.wait_until_status")
+    def test_switch_to_openclaw_agent_leaves_default_state_reset(
+        self, mock_wait_status, mock_tmux
+    ) -> None:
+        provider = OpenClawProvider("t1", "s1", "w1", "ceo")
+        provider._openclaw_agent_name = "ceo"
 
         provider._switch_to_openclaw_agent()
 
