@@ -95,10 +95,13 @@ def _contains_openclaw_agent_id(output: str, agent_name: str) -> bool:
 class OpenClawProvider(SimpleTuiProvider):
     """Provider for OpenClaw CLI (`openclaw`)."""
 
+    _STARTUP_PROMPT_TIMEOUT = 60.0
+    _INITIALIZATION_TIMEOUT = 120.0
     _RUNNING_STATUS_BAR_PATTERN = r"^\s*(?:[⠁-⣿]\s+)?running\s+[•·].*\|\s*connected\s*$"
     _IDLE_PROMPT_PATTERN = (
         r"(?:^[ \t]*[oO]pen[cC]law[ \t]*[>❯›][ \t]*$|"
         r"[>❯›][ \t]+Type your message|"
+        r"^(?:gateway\s+)?connected\s*$|"
         r"(?:gateway\s+)?connected\s*\|\s*idle|"
         r"ctrl\+j[ \t]+for[ \t]+newline|"
         r"shift\+tab\s+switch\s+mode)"
@@ -131,6 +134,8 @@ class OpenClawProvider(SimpleTuiProvider):
             idle_prompt_pattern_log=self._IDLE_PROMPT_PATTERN,
             processing_patterns=self._PROCESSING_PATTERNS,
             exit_command="C-c",
+            startup_prompt_timeout=self._STARTUP_PROMPT_TIMEOUT,
+            initialization_timeout=self._INITIALIZATION_TIMEOUT,
         )
 
     def _run_openclaw_command(self, args: list[str]) -> subprocess.CompletedProcess[str]:

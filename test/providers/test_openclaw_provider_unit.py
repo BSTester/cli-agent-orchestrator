@@ -65,6 +65,19 @@ def test_openclaw_status_bar_idle_without_gateway_detected_as_idle(mock_tmux) ->
 
 
 @patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
+def test_openclaw_connected_line_without_idle_detected_as_idle(mock_tmux) -> None:
+    mock_tmux.get_history.return_value = (
+        "OpenClaw v0.1\n"
+        "connected\n"
+        "agent ceo (ceo) | session main (openclaw-tui) | moonshot/kimi-k2.5 | tokens ?/256k\n"
+    )
+
+    provider = OpenClawProvider("t3c", "s3", "w3")
+
+    assert provider.get_status() == TerminalStatus.IDLE
+
+
+@patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
 def test_openclaw_running_status_bar_detected_as_processing(mock_tmux) -> None:
     mock_tmux.get_history.return_value = (
         "❯  Type your message\n"
@@ -159,6 +172,12 @@ class TestOpenClawProviderInitialization:
         assert mock_simple_tmux.send_keys.call_args_list == [
             call("s1", "w1", "CAO_TERMINAL_ID=t1 openclaw tui"),
         ]
+        mock_simple_wait_status.assert_called_once_with(
+            provider,
+            TerminalStatus.IDLE,
+            timeout=120.0,
+            polling_interval=1.0,
+        )
         assert mock_tmux.send_keys.call_args_list == [
             call("s1", "w1", "/agent ceo"),
             call(
@@ -225,6 +244,12 @@ class TestOpenClawProviderInitialization:
         # OpenClaw agent IDs use normalized kebab-case names.
         mock_simple_tmux.send_keys.assert_called_once_with(
             "s1", "w1", "CAO_TERMINAL_ID=t1 openclaw tui"
+        )
+        mock_simple_wait_status.assert_called_once_with(
+            provider,
+            TerminalStatus.IDLE,
+            timeout=120.0,
+            polling_interval=1.0,
         )
         assert mock_tmux.send_keys.call_args_list == [
             call("s1", "w1", "/agent code-supervisor"),
