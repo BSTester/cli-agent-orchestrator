@@ -217,3 +217,16 @@ class TestGetHistory:
 
         assert history == "shell prompt\n$"
         pane.cmd.assert_called_once_with("capture-pane", "-e", "-p", "-S", f"-{TMUX_HISTORY_LINES}")
+
+
+class TestKillWindow:
+    def test_uses_window_kill_api(self, client):
+        window = MagicMock()
+        session = MagicMock()
+        session.windows.get.return_value = window
+        client.server.sessions.get.return_value = session
+
+        result = client.kill_window("sess", "win")
+
+        assert result is True
+        window.kill.assert_called_once_with()
