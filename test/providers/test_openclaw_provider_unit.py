@@ -65,7 +65,7 @@ def test_openclaw_status_bar_idle_without_gateway_detected_as_idle(mock_tmux) ->
 
 
 @patch("cli_agent_orchestrator.providers.simple_tui.tmux_client")
-def test_openclaw_connected_line_without_idle_detected_as_idle(mock_tmux) -> None:
+def test_openclaw_standalone_connected_line_detected_as_idle(mock_tmux) -> None:
     mock_tmux.get_history.return_value = (
         "OpenClaw v0.1\n"
         "connected\n"
