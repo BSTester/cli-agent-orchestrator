@@ -43,6 +43,9 @@ class SimpleTuiProvider(BaseProvider):
         error_patterns: Optional[Iterable[str]] = None,
         auto_accept_input: str = "",
         exit_command: str = "C-d",
+        shell_ready_timeout: float = 10.0,
+        startup_prompt_timeout: float = 20.0,
+        initialization_timeout: float = 60.0,
     ):
         super().__init__(terminal_id, session_name, window_name)
         self._start_command = start_command
@@ -92,6 +95,9 @@ class SimpleTuiProvider(BaseProvider):
         )
         self._auto_accept_input = auto_accept_input
         self._exit_command = exit_command
+        self._shell_ready_timeout = shell_ready_timeout
+        self._startup_prompt_timeout = startup_prompt_timeout
+        self._initialization_timeout = initialization_timeout
         self._initialized = False
         self._input_received = False
         self._input_received_at: Optional[float] = None
@@ -172,14 +178,28 @@ class SimpleTuiProvider(BaseProvider):
             time.sleep(1.0)
 
     def initialize(self) -> bool:
-        if not wait_for_shell(tmux_client, self.session_name, self.window_name, timeout=10.0):
-            raise TimeoutError("Shell initialization timed out after 10 seconds")
+        if not wait_for_shell(
+            tmux_client,
+            self.session_name,
+            self.window_name,
+            timeout=self._shell_ready_timeout,
+        ):
+            raise TimeoutError(
+                f"Shell initialization timed out after {self._shell_ready_timeout:g} seconds"
+            )
 
         tmux_client.send_keys(self.session_name, self.window_name, self._start_command)
-        self._handle_startup_prompts(timeout=20.0)
+        self._handle_startup_prompts(timeout=self._startup_prompt_timeout)
 
-        if not wait_until_status(self, TerminalStatus.IDLE, timeout=60.0, polling_interval=1.0):
-            raise TimeoutError("CLI initialization timed out after 60 seconds")
+        if not wait_until_status(
+            self,
+            TerminalStatus.IDLE,
+            timeout=self._initialization_timeout,
+            polling_interval=1.0,
+        ):
+            raise TimeoutError(
+                f"CLI initialization timed out after {self._initialization_timeout:g} seconds"
+            )
 
         self._initialized = True
         self._input_received = False
