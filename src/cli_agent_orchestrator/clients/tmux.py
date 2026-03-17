@@ -159,7 +159,9 @@ class TmuxClient:
                     try:
                         os.makedirs(workspace_dir, exist_ok=True)
                     except OSError as exc:
-                        logger.warning("Failed to create workspace directory %s: %s", workspace_dir, exc)
+                        logger.warning(
+                            "Failed to create workspace directory %s: %s", workspace_dir, exc
+                        )
                 safe_working_directory = workspace_dir
             else:
                 raise ValueError(
@@ -169,7 +171,9 @@ class TmuxClient:
                 )
 
         # Step 3: Re-check precise boundary against allowed roots.
-        if not any(self._is_within_directory(safe_working_directory, root) for root in allowed_roots):
+        if not any(
+            self._is_within_directory(safe_working_directory, root) for root in allowed_roots
+        ):
             raise ValueError(
                 f"Working directory not allowed: {working_directory} "
                 f"(resolves to {safe_working_directory}, which is outside "
@@ -551,7 +555,7 @@ class TmuxClient:
 
             window = session.windows.get(window_name=window_name)
             if window:
-                window.kill_window()
+                window.kill()
                 logger.info(f"Killed window '{window_name}' in session '{session_name}'")
                 return True
             return False

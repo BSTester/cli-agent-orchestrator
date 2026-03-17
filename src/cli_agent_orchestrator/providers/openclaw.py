@@ -209,21 +209,11 @@ class OpenClawProvider(SimpleTuiProvider):
         if self._openclaw_agent_name is None:
             return
 
-        self.mark_input_received()
         tmux_client.send_keys(
             self.session_name,
             self.window_name,
             f"/agent {self._openclaw_agent_name}",
         )
-
-        if not wait_until_status(
-            self,
-            {TerminalStatus.IDLE, TerminalStatus.COMPLETED},
-            timeout=20.0,
-            polling_interval=1.0,
-        ):
-            raise TimeoutError("OpenClaw agent switch timed out after 20 seconds")
-
         self._reset_bootstrap_state()
 
     def _send_terminal_id_notice(self) -> None:
