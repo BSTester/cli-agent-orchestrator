@@ -318,6 +318,76 @@ exit 0
         panel_pid_file.unlink(missing_ok=True)
 
 
+def test_start_services_warns_and_falls_back_when_gateway_status_is_unknown(
+    tmp_path: Path,
+) -> None:
+    script_path = _script_path()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _prepare_stub_tools(bin_dir)
+    gateway_log = tmp_path / "openclaw-gateway.log"
+    _make_stub_command(
+        bin_dir / "openclaw",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+log_file="{gateway_log}"
+echo "$*" >> "$log_file"
+
+if [[ "${{1-}}" == "gateway" && "${{2-}}" == "status" ]]; then
+    cat <<'EOF'
+Gateway state could not be determined from the current environment.
+EOF
+    exit 0
+fi
+
+if [[ "${{1-}}" == "gateway" && "${{2-}}" == "install" ]]; then
+    exit 1
+fi
+
+if [[ "${{1-}}" == "gateway" && $# -eq 1 ]]; then
+    sleep 5
+    exit 0
+fi
+
+exit 0
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        },
+    )
+
+    repo_root = script_path.parent.parent
+    gateway_pid_file = repo_root / ".runtime" / "pids" / "openclaw-gateway.pid"
+    server_pid_file = repo_root / ".runtime" / "pids" / "cao-server.pid"
+    panel_pid_file = repo_root / ".runtime" / "pids" / "cao-control-panel.pid"
+
+    try:
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert gateway_pid_file.exists(), "openclaw-gateway PID file was not created"
+        assert "[WARN] OpenClaw gateway 服务状态未知，改用脚本托管模式。" in result.stdout
+        assert "继续启动 CAO 其余服务" in result.stdout
+        assert gateway_log.read_text(encoding="utf-8").splitlines() == [
+            "gateway status",
+            "gateway install --force",
+            "gateway",
+        ]
+    finally:
+        _kill_pid_file(gateway_pid_file)
+        _kill_pid_file(server_pid_file)
+        _kill_pid_file(panel_pid_file)
+        gateway_pid_file.unlink(missing_ok=True)
+        server_pid_file.unlink(missing_ok=True)
+        panel_pid_file.unlink(missing_ok=True)
+
+
 def test_start_services_fails_when_managed_gateway_process_exits_immediately(
     tmp_path: Path,
 ) -> None:

@@ -12,6 +12,10 @@ info() {
   echo "[INFO] $*"
 }
 
+warn() {
+  echo "[WARN] $*"
+}
+
 die() {
   echo "[ERROR] $*" >&2
   exit 1
